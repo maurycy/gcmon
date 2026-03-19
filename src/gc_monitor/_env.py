@@ -1,0 +1,211 @@
+"""Environment variable helpers for CLI defaults."""
+
+import os
+from pathlib import Path
+
+from .stats_output import TableFormat
+
+# Environment variable names for CLI options
+ENV_PREFIX = "GC_MONITOR"
+ENV_OUTPUT = f"{ENV_PREFIX}_OUTPUT"
+ENV_RATE = f"{ENV_PREFIX}_RATE"
+ENV_DURATION = f"{ENV_PREFIX}_DURATION"
+ENV_VERBOSE = f"{ENV_PREFIX}_VERBOSE"
+ENV_FORMAT = f"{ENV_PREFIX}_FORMAT"
+ENV_THREAD_ID = f"{ENV_PREFIX}_THREAD_ID"
+ENV_FLUSH_THRESHOLD = f"{ENV_PREFIX}_FLUSH_THRESHOLD"
+ENV_SERVER_HOST = f"{ENV_PREFIX}_SERVER_HOST"
+ENV_SERVER_PORT = f"{ENV_PREFIX}_SERVER_PORT"
+ENV_STATS = f"{ENV_PREFIX}_STATS"
+ENV_TABLE_FORMAT = f"{ENV_PREFIX}_TABLE_FORMAT"
+
+__all__ = [
+    "ENV_DURATION",
+    "ENV_FLUSH_THRESHOLD",
+    "ENV_FORMAT",
+    "ENV_OUTPUT",
+    "ENV_PREFIX",
+    "ENV_RATE",
+    "ENV_SERVER_HOST",
+    "ENV_SERVER_PORT",
+    "ENV_STATS",
+    "ENV_TABLE_FORMAT",
+    "ENV_THREAD_ID",
+    "ENV_VERBOSE",
+    "get_env_duration",
+    "get_env_flush_threshold",
+    "get_env_format",
+    "get_env_output",
+    "get_env_rate",
+    "get_env_server_host",
+    "get_env_server_port",
+    "get_env_stats",
+    "get_env_table_format",
+    "get_env_thread_id",
+    "get_env_verbose",
+]
+
+
+def get_env_output() -> Path:
+    """Get output path from environment variable.
+
+    Returns:
+        Path from GC_MONITOR_OUTPUT env var, or default Path("gc_trace.json").
+    """
+    output_str = os.environ.get(ENV_OUTPUT)
+    if output_str:
+        return Path(output_str)
+    # Check format for default filename
+    format_str = os.environ.get(ENV_FORMAT)
+    if format_str and format_str.lower() == "jsonl":
+        return Path("gc_monitor.jsonl")
+    return Path("gc_trace.json")
+
+
+def get_env_rate() -> float:
+    """Get polling rate from environment variable.
+
+    Returns:
+        Rate from GC_MONITOR_RATE env var, or default 0.1.
+    """
+    rate_str = os.environ.get(ENV_RATE)
+    if rate_str:
+        try:
+            return float(rate_str)
+        except ValueError:
+            pass
+    return 0.1
+
+
+def get_env_duration() -> float | None:
+    """Get monitoring duration from environment variable.
+
+    Returns:
+        Duration from GC_MONITOR_DURATION env var, or None (run until interrupted).
+    """
+    duration_str = os.environ.get(ENV_DURATION)
+    if duration_str:
+        try:
+            return float(duration_str)
+        except ValueError:
+            pass
+    return None
+
+
+def get_env_verbose() -> int:
+    """Get verbose count from environment variable.
+
+    Returns:
+        Verbose count: 0 for no verbose, 1 for INFO, 2+ for DEBUG.
+        GC_MONITOR_VERBOSE can be set to a number (e.g., "2") or
+        truthy value ("1", "true", "yes", "on" -> 1).
+    """
+    verbose_str = os.environ.get(ENV_VERBOSE, "").lower()
+    if not verbose_str:
+        return 0
+    # Try to parse as integer first
+    try:
+        return int(verbose_str)
+    except ValueError:
+        pass
+    # Fall back to boolean interpretation
+    if verbose_str in ("1", "true", "yes", "on"):
+        return 1
+    return 0
+
+
+def get_env_format() -> str:
+    """Get output format from environment variable.
+
+    Returns:
+        Format from GC_MONITOR_FORMAT env var, or default "chrome".
+    """
+    format_str = os.environ.get(ENV_FORMAT)
+    if format_str:
+        format_lower = format_str.lower()
+        if format_lower in ("chrome", "stdout", "jsonl"):
+            return format_lower
+    return "chrome"
+
+
+def get_env_thread_id() -> int:
+    """Get thread ID from environment variable.
+
+    Returns:
+        Thread ID from GC_MONITOR_THREAD_ID env var, or default 0.
+    """
+    thread_id_str = os.environ.get(ENV_THREAD_ID)
+    if thread_id_str:
+        try:
+            return int(thread_id_str)
+        except ValueError:
+            pass
+    return 0
+
+
+def get_env_flush_threshold() -> int:
+    """Get flush threshold from environment variable.
+
+    Returns:
+        Flush threshold from GC_MONITOR_FLUSH_THRESHOLD env var, or default 100.
+    """
+    threshold_str = os.environ.get(ENV_FLUSH_THRESHOLD)
+    if threshold_str:
+        try:
+            return int(threshold_str)
+        except ValueError:
+            pass
+    return 100
+
+
+def get_env_server_host() -> str:
+    """Get server host from environment variable.
+
+    Returns:
+        Host from GC_MONITOR_SERVER_HOST env var, or default "localhost".
+    """
+    host_str = os.environ.get(ENV_SERVER_HOST)
+    if host_str:
+        return host_str
+    return "localhost"
+
+
+def get_env_server_port() -> int:
+    """Get server port from environment variable.
+
+    Returns:
+        Port from GC_MONITOR_SERVER_PORT env var, or default 9999.
+    """
+    port_str = os.environ.get(ENV_SERVER_PORT)
+    if port_str:
+        try:
+            return int(port_str)
+        except ValueError:
+            pass
+    return 9999
+
+
+def get_env_stats() -> bool:
+    """Get stats flag from environment variable.
+
+    Returns:
+        True if GC_MONITOR_STATS is set to a truthy value ("1", "true", "yes", "on").
+    """
+    stats_str = os.environ.get(ENV_STATS, "").lower()
+    if not stats_str:
+        return False
+    return stats_str in ("1", "true", "yes", "on")
+
+
+def get_env_table_format() -> TableFormat:
+    """Get table format from environment variable.
+
+    Returns:
+        TableFormat from GC_MONITOR_TABLE_FORMAT env var, or TableFormat.PLAIN.
+    """
+    val = os.environ.get(ENV_TABLE_FORMAT)
+    if val:
+        val = val.lower()
+        if val == "md" or val == "markdown":
+            return TableFormat.MARKDOWN
+    return TableFormat.PLAIN

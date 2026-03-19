@@ -1,0 +1,597 @@
+"""Tests for Chrome Trace I/O and utility functions."""
+
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import msgspec
+import pytest
+
+from gc_monitor.exporters.chrome_trace_io import (
+    _normalize_jsonl_timestamps,
+    _normalize_trace_timestamps,
+    _parse_events,
+    combine_files,
+    convert_jsonl_to_trace_format,
+    json_to_item,
+    read_jsonl,
+    write_jsonl,
+    write_trace_events,
+)
+from gc_monitor.exporters.chrome_trace_format import (
+    counter_event,
+    inc_event,
+    pause_event,
+    process_meta,
+    thread_meta,
+)
+from gc_monitor.protocol import is_incremental
+
+from tests.helpers import create_mock_stats_item, create_jsonl_record
+
+
+def _make_inc_item(
+    gen: int = 0, ts_start: int = 1000, ts_stop: int = 2000,
+    increment_size: int = 500, alive_size: int = 300,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        gen=gen, iid=1, ts_start=ts_start, ts_stop=ts_stop,
+        collections=1, heap_size=100, collected=10,
+        uncollectable=0, candidates=5, duration=1.0,
+        increment_size=increment_size, alive_size=alive_size,
+        ts_mark_alive_start=ts_start,
+        ts_mark_alive_stop=ts_start + 100,
+        ts_fill_increment_start=ts_start + 100,
+        ts_fill_increment_stop=ts_start + 200,
+        ts_deduce_uncreachable_start=ts_start + 200,
+        ts_deduce_uncreachable_stop=ts_start + 300,
+    )
+
+
+def _make_inc_jsonl_record(
+    pid: int = 1, gen: int = 0, ts_start: int = 1000, ts_stop: int = 2000,
+    increment_size: int = 500, alive_size: int = 300,
+) -> dict:
+    record = create_jsonl_record(pid=pid, gen=gen, ts_start=ts_start, ts_stop=ts_stop)
+    record.update({
+        "increment_size": increment_size,
+        "alive_size": alive_size,
+        "ts_mark_alive_start": ts_start,
+        "ts_mark_alive_stop": ts_start + 100,
+        "ts_fill_increment_start": ts_start + 100,
+        "ts_fill_increment_stop": ts_start + 200,
+        "ts_deduce_uncreachable_start": ts_start + 200,
+        "ts_deduce_uncreachable_stop": ts_start + 300,
+    })
+    return record
+
+
+# =============================================================================
+# json_to_item tests
+# =============================================================================
+
+
+class TestJsonToItem:
+    def test_returns_pid_and_item(self) -> None:
+        data = create_jsonl_record(pid=123, gen=0)
+        pid, item = json_to_item(data)
+        assert pid == 123
+        assert item.gen == 0
+
+    def test_returns_incremental_item(self) -> None:
+        data = _make_inc_jsonl_record(pid=456, gen=1, increment_size=500)
+        pid, item = json_to_item(data)
+        assert pid == 456
+        assert is_incremental(item)
+        assert item.increment_size == 500
+
+    def test_pid_as_string(self) -> None:
+        data = create_jsonl_record(pid=789)
+        data["pid"] = "789"
+        pid, item = json_to_item(data)
+        assert pid == 789
+
+
+# =============================================================================
+# read_jsonl tests
+# =============================================================================
+
+
+class TestReadJsonl:
+    def test_reads_single_record(self, tmp_path: Path) -> None:
+        path = tmp_path / "test.jsonl"
+        record = create_jsonl_record()
+        path.write_text(msgspec.json.encode(record).decode() + "\n", encoding="utf-8")
+
+        result = read_jsonl(path)
+        assert 123 in result
+        assert len(result[123]) == 1
+        assert result[123][0].gen == 0
+
+    def test_reads_multiple_pids(self, tmp_path: Path) -> None:
+        path = tmp_path / "test.jsonl"
+        lines = [
+            msgspec.json.encode(create_jsonl_record(pid=1)).decode(),
+            msgspec.json.encode(create_jsonl_record(pid=2)).decode(),
+        ]
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        result = read_jsonl(path)
+        assert set(result.keys()) == {1, 2}
+
+    def test_ignores_empty_lines(self, tmp_path: Path) -> None:
+        path = tmp_path / "test.jsonl"
+        record = create_jsonl_record()
+        path.write_text(
+            msgspec.json.encode(record).decode() + "\n\n\n",
+            encoding="utf-8",
+        )
+        result = read_jsonl(path)
+        assert len(result[123]) == 1
+
+    def test_returns_empty_dict_for_empty_file(self, tmp_path: Path) -> None:
+        path = tmp_path / "empty.jsonl"
+        path.write_text("", encoding="utf-8")
+        result = read_jsonl(path)
+        assert result == {}
+
+    def test_reads_incremental_record(self, tmp_path: Path) -> None:
+        path = tmp_path / "inc.jsonl"
+        record = _make_inc_jsonl_record(pid=1)
+        path.write_text(msgspec.json.encode(record).decode() + "\n", encoding="utf-8")
+        result = read_jsonl(path)
+        assert is_incremental(result[1][0])
+
+    def test_raises_on_malformed_json(self, tmp_path: Path) -> None:
+        path = tmp_path / "bad.jsonl"
+        path.write_text("not valid json\n", encoding="utf-8")
+        with pytest.raises(msgspec.DecodeError):
+            read_jsonl(path)
+
+    def test_raises_on_non_dict_json(self, tmp_path: Path) -> None:
+        path = tmp_path / "bad.jsonl"
+        path.write_text("[1, 2, 3]\n", encoding="utf-8")
+        with pytest.raises(TypeError):
+            read_jsonl(path)
+
+
+# =============================================================================
+# write_trace_events tests
+# =============================================================================
+
+
+class TestWriteTraceEvents:
+    def test_writes_valid_json_array(self, tmp_path: Path) -> None:
+        path = tmp_path / "trace.json"
+        events = [process_meta(pid=1, name="test")]
+        write_trace_events(path, events)
+
+        content = path.read_text(encoding="utf-8")
+        data = json.loads(content)
+        assert isinstance(data, list)
+        assert data[0]["name"] == "process_name"
+
+    def test_writes_correct_json_array_format(self, tmp_path: Path) -> None:
+        path = tmp_path / "trace.json"
+        e1 = process_meta(pid=1, name="p1")
+        e2 = process_meta(pid=2, name="p2")
+        write_trace_events(path, [e1, e2])
+
+        content = path.read_text(encoding="utf-8").strip()
+        assert content.startswith("[")
+        assert content.endswith("]")
+        data = json.loads(content)
+        assert len(data) == 2
+
+    def test_writes_empty_array(self, tmp_path: Path) -> None:
+        path = tmp_path / "empty.json"
+        write_trace_events(path, [])
+        content = path.read_text(encoding="utf-8").strip()
+        assert content == "[]"
+
+
+# =============================================================================
+# write_jsonl tests
+# =============================================================================
+
+
+class TestWriteJsonl:
+    def test_writes_one_line_per_event(self, tmp_path: Path) -> None:
+        path = tmp_path / "out.jsonl"
+        item = create_mock_stats_item()
+        write_jsonl(path, {12345: [item]})
+
+        lines = path.read_text(encoding="utf-8").strip().split("\n")
+        assert len(lines) == 1
+        record = json.loads(lines[0])
+        assert record["pid"] == 12345
+
+    def test_writes_multiple_pids(self, tmp_path: Path) -> None:
+        path = tmp_path / "out.jsonl"
+        item1 = create_mock_stats_item(gen=0)
+        item2 = create_mock_stats_item(gen=1)
+        write_jsonl(path, {1: [item1], 2: [item2]})
+
+        lines = path.read_text(encoding="utf-8").strip().split("\n")
+        assert len(lines) == 2
+        pids = {json.loads(l)["pid"] for l in lines}
+        assert pids == {1, 2}
+
+    def test_writes_incremental_fields(self, tmp_path: Path) -> None:
+        path = tmp_path / "out.jsonl"
+        item = _make_inc_item(increment_size=500, alive_size=300)
+        write_jsonl(path, {1: [item]})
+        lines = path.read_text(encoding="utf-8").strip().split("\n")
+        record = json.loads(lines[0])
+        assert record["pid"] == 1
+        assert record["increment_size"] == 500
+        assert record["alive_size"] == 300
+
+    def test_empty_items_produces_empty_file(self, tmp_path: Path) -> None:
+        path = tmp_path / "empty.jsonl"
+        write_jsonl(path, {})
+        content = path.read_text(encoding="utf-8")
+        assert content == ""
+
+    def test_multiple_events_per_pid(self, tmp_path: Path) -> None:
+        path = tmp_path / "out.jsonl"
+        item1 = create_mock_stats_item(gen=0)
+        item2 = create_mock_stats_item(gen=1)
+        write_jsonl(path, {1: [item1, item2]})
+        lines = path.read_text(encoding="utf-8").strip().split("\n")
+        assert len(lines) == 2
+        assert all(json.loads(l)["pid"] == 1 for l in lines)
+
+
+# =============================================================================
+# _parse_events tests
+# =============================================================================
+
+
+class TestParseEvents:
+    def test_parses_complete_events(self) -> None:
+        events = [
+            process_meta(pid=1, name="test"),
+            thread_meta(pid=1, tid=1, name="t1"),
+        ]
+        content = json.dumps(events)
+        result = _parse_events(content)
+        assert len(result) == 2
+        assert result[0]["ph"] == "M"
+        assert result[0]["name"] == "process_name"
+
+    def test_parses_counter_event(self) -> None:
+        event = counter_event(
+            pid=1, tid=1, name="G0", ts_us=1000,
+            args={"collected": 10, "uncollectable": 1, "candidates": 5, "heap_size": 1000},
+        )
+        result = _parse_events(json.dumps([event]))
+        assert result[0]["ph"] == "C"
+
+    def test_parses_pause_event(self) -> None:
+        event = pause_event(
+            pid=1, tid=1, name="GC Pause", cat="gc", ts_us=1000, dur_us=500.0,
+            args={"generation": 0, "iid": 1, "collections": 1, "heap_size": 100,
+                  "collected": 10, "uncollectable": 0, "candidates": 5},
+        )
+        result = _parse_events(json.dumps([event]))
+        assert result[0]["ph"] == "X"
+
+    def test_raises_on_invalid_json(self) -> None:
+        with pytest.raises(ValueError):
+            _parse_events("not json")
+
+    def test_raises_on_non_array(self) -> None:
+        with pytest.raises(ValueError, match="Expected JSON array"):
+            _parse_events('{"ph": "M"}')
+
+    def test_parses_incremental_event(self) -> None:
+        event = inc_event(
+            pid=1, tid=1, name="Mark Alive", cat="gc", ts_us=1000, dur_us=200.0,
+            args={"generation": 0, "iid": 1, "increment_size": 500, "alive_size": 300},
+        )
+        result = _parse_events(json.dumps([event]))
+        assert result[0]["ph"] == "X"
+        assert result[0]["args"]["increment_size"] == 500
+
+    def test_parses_bytes_input(self) -> None:
+        event = process_meta(pid=1, name="test")
+        result = _parse_events(json.dumps([event]).encode())
+        assert result[0]["name"] == "process_name"
+
+    def test_skips_non_dict_items(self) -> None:
+        event = process_meta(pid=1, name="test")
+        raw = json.dumps([event, "not a dict", 42])
+        result = _parse_events(raw)
+        assert len(result) == 1
+
+    def test_skips_unknown_ph(self) -> None:
+        raw = json.dumps([
+            {"ph": "R", "name": "resource", "ts": 100, "pid": 1, "tid": 1, "args": {}},
+        ])
+        result = _parse_events(raw)
+        assert len(result) == 0
+
+    def test_skips_unknown_meta_name(self) -> None:
+        raw = json.dumps([
+            {"name": "unknown_meta", "ph": "M", "pid": 1, "args": {"name": "x"}},
+        ])
+        result = _parse_events(raw)
+        assert len(result) == 0
+
+    def test_raises_on_non_dict_args(self) -> None:
+        raw = json.dumps([
+            {"name": "e1", "cat": "c", "ph": "X", "ts": 1000, "dur": 100,
+             "pid": 1, "tid": 1, "args": "not_a_dict"},
+        ])
+        with pytest.raises(ValueError, match="Expected args should dict"):
+            _parse_events(raw)
+
+
+# =============================================================================
+# _normalize_trace_timestamps tests
+# =============================================================================
+
+
+class TestNormalizeTraceTimestamps:
+    def test_normalizes_to_zero(self) -> None:
+        args = {"generation": 0, "iid": 1, "collections": 1, "heap_size": 100,
+                "collected": 10, "uncollectable": 0, "candidates": 5}
+        events: list = [
+            pause_event(pid=1, tid=1, name="e1", cat="c", ts_us=5000, dur_us=100.0, args=args),
+            counter_event(pid=1, tid=1, name="c1", ts_us=3000,
+                          args={"collected": 10, "uncollectable": 0, "candidates": 5, "heap_size": 100}),
+            process_meta(pid=1, name="p"),
+        ]
+        _normalize_trace_timestamps(events)  # type: ignore[arg-type]
+        assert events[0]["ts"] == 2000  # 5000 - 3000
+        assert events[1]["ts"] == 0     # 3000 - 3000
+        assert "ts" not in events[2]    # metadata preserved
+
+    def test_no_timestamp_events_is_noop(self) -> None:
+        events: list = [process_meta(pid=1, name="p")]
+        _normalize_trace_timestamps(events)  # type: ignore[arg-type]
+        assert len(events) == 1
+        assert events[0]["name"] == "process_name"
+
+    def test_single_event_ts_becomes_zero(self) -> None:
+        args = {"generation": 0, "iid": 1, "collections": 1, "heap_size": 100,
+                "collected": 10, "uncollectable": 0, "candidates": 5}
+        events: list = [
+            pause_event(pid=1, tid=1, name="e1", cat="c", ts_us=1000, dur_us=100.0, args=args),
+        ]
+        _normalize_trace_timestamps(events)  # type: ignore[arg-type]
+        assert events[0]["ts"] == 0
+
+    def test_empty_events_is_noop(self) -> None:
+        events: list = []
+        _normalize_trace_timestamps(events)  # type: ignore[arg-type]
+        assert events == []
+
+    def test_negative_timestamps(self) -> None:
+        args = {"generation": 0, "iid": 1, "collections": 1, "heap_size": 100,
+                "collected": 10, "uncollectable": 0, "candidates": 5}
+        events: list = [
+            pause_event(pid=1, tid=1, name="e1", cat="c", ts_us=-100, dur_us=100.0, args=args),
+            pause_event(pid=1, tid=1, name="e2", cat="c", ts_us=-500, dur_us=100.0, args=args),
+        ]
+        _normalize_trace_timestamps(events)  # type: ignore[arg-type]
+        assert events[0]["ts"] == 400  # -100 - (-500)
+        assert events[1]["ts"] == 0
+
+
+# =============================================================================
+# _normalize_jsonl_timestamps tests
+# =============================================================================
+
+
+class TestNormalizeJsonlTimestamps:
+    def test_normalizes_all_timestamps(self) -> None:
+        item = _make_inc_item(ts_start=5000, ts_stop=6000)
+        items = {1: [item]}
+        _normalize_jsonl_timestamps(items)
+        assert item.ts_start == 0
+        assert item.ts_stop == 1000
+        assert item.ts_mark_alive_start == 0
+        assert item.ts_mark_alive_stop == 100
+
+    def test_no_items_is_noop(self) -> None:
+        _normalize_jsonl_timestamps({})
+
+    def test_non_incremental_skips_sub_steps(self) -> None:
+        item = create_mock_stats_item(ts_start=5000, ts_stop=6000)
+        items = {1: [item]}
+        _normalize_jsonl_timestamps(items)
+        assert item.ts_start == 0
+        assert item.ts_stop == 1000
+
+    def test_mixed_types(self) -> None:
+        non_inc = create_mock_stats_item(ts_start=5000, ts_stop=6000)
+        inc = _make_inc_item(ts_start=7000, ts_stop=8000)
+        items = {1: [non_inc, inc]}
+        _normalize_jsonl_timestamps(items)
+        assert non_inc.ts_start == 0
+        assert inc.ts_start == 2000
+        assert inc.ts_mark_alive_start == 2000
+        assert inc.ts_mark_alive_stop == 2100
+
+    def test_multiple_pids(self) -> None:
+        item1 = _make_inc_item(ts_start=10000, ts_stop=11000)
+        item2 = _make_inc_item(ts_start=5000, ts_stop=6000)
+        items = {1: [item1], 2: [item2]}
+        _normalize_jsonl_timestamps(items)
+        assert item1.ts_start == 5000  # 10000 - 5000
+        assert item2.ts_start == 0     # 5000 - 5000
+
+
+# =============================================================================
+# convert_jsonl_to_trace_format tests
+# =============================================================================
+
+
+class TestConvertJsonlToTraceFormat:
+    def test_converts_jsonl_to_trace_events(self, tmp_path: Path) -> None:
+        path = tmp_path / "test.jsonl"
+        record = create_jsonl_record()
+        path.write_text(msgspec.json.encode(record).decode() + "\n", encoding="utf-8")
+
+        events = convert_jsonl_to_trace_format(path)
+        assert len(events) > 0
+        assert any(e["ph"] == "M" for e in events)  # metadata
+        assert any(e["ph"] == "X" for e in events)  # pause
+        assert any(e["ph"] == "C" for e in events)  # counter
+
+    def test_empty_file_returns_empty_list(self, tmp_path: Path) -> None:
+        path = tmp_path / "empty.jsonl"
+        path.write_text("", encoding="utf-8")
+        events = convert_jsonl_to_trace_format(path)
+        assert events == []
+
+    def test_incremental_record_creates_sub_events(self, tmp_path: Path) -> None:
+        path = tmp_path / "inc.jsonl"
+        record = _make_inc_jsonl_record(pid=1, ts_start=1000, ts_stop=5000)
+        path.write_text(msgspec.json.encode(record).decode() + "\n", encoding="utf-8")
+        events = convert_jsonl_to_trace_format(path)
+        pause_events = [e for e in events if e["ph"] == "X"]
+        assert any("Mark Alive" in e["name"] for e in pause_events)
+        assert any("Fill increment" in e["name"] for e in pause_events)
+        assert any("Deduce Unreachable" in e["name"] for e in pause_events)
+
+    def test_multiple_pids_generates_metadata(self, tmp_path: Path) -> None:
+        path = tmp_path / "multi.jsonl"
+        lines = [
+            msgspec.json.encode(create_jsonl_record(pid=1)).decode(),
+            msgspec.json.encode(create_jsonl_record(pid=2)).decode(),
+        ]
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        events = convert_jsonl_to_trace_format(path)
+        process_metas = [e for e in events if e["name"] == "process_name"]
+        assert len(process_metas) == 2
+        assert {e["pid"] for e in process_metas} == {1, 2}
+
+
+# =============================================================================
+# combine_files tests
+# =============================================================================
+
+
+class TestCombineFiles:
+    def test_chrome_to_chrome(self, tmp_path: Path) -> None:
+        f1 = tmp_path / "a.json"
+        f2 = tmp_path / "b.json"
+        out = tmp_path / "out.json"
+        e1 = process_meta(pid=1, name="p1")
+        e2 = process_meta(pid=2, name="p2")
+        f1.write_text(json.dumps([e1]), encoding="utf-8")
+        f2.write_text(json.dumps([e2]), encoding="utf-8")
+
+        combine_files([f1, f2], out, input_format="chrome", output_format="chrome")
+        data = json.loads(out.read_text(encoding="utf-8"))
+        assert len(data) == 2
+
+    def test_jsonl_to_chrome(self, tmp_path: Path) -> None:
+        f1 = tmp_path / "a.jsonl"
+        out = tmp_path / "out.json"
+        f1.write_text(
+            msgspec.json.encode(create_jsonl_record()).decode() + "\n",
+            encoding="utf-8",
+        )
+        combine_files([f1], out, input_format="jsonl", output_format="chrome")
+        data = json.loads(out.read_text(encoding="utf-8"))
+        assert any(e["ph"] == "X" for e in data)
+
+    def test_jsonl_to_jsonl(self, tmp_path: Path) -> None:
+        f1 = tmp_path / "a.jsonl"
+        out = tmp_path / "out.jsonl"
+        r = create_jsonl_record(pid=1)
+        f1.write_text(msgspec.json.encode(r).decode() + "\n", encoding="utf-8")
+        combine_files([f1], out, input_format="jsonl", output_format="jsonl")
+        lines = out.read_text(encoding="utf-8").strip().split("\n")
+        assert json.loads(lines[0])["pid"] == 1
+
+    def test_chrome_to_jsonl_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="not supported"):
+            combine_files([], tmp_path / "out.jsonl",
+                          input_format="chrome", output_format="jsonl")
+
+    def test_normalize_chrome(self, tmp_path: Path) -> None:
+        f1 = tmp_path / "a.json"
+        out = tmp_path / "out.json"
+        args = {"generation": 0, "iid": 1, "collections": 1, "heap_size": 100,
+                "collected": 10, "uncollectable": 0, "candidates": 5}
+        e1 = pause_event(pid=1, tid=1, name="e1", cat="c", ts_us=5000, dur_us=100.0, args=args)
+        e2 = pause_event(pid=1, tid=1, name="e2", cat="c", ts_us=3000, dur_us=100.0, args=args)
+        f1.write_text(json.dumps([e1, e2]), encoding="utf-8")
+        combine_files([f1], out, normalize=True, input_format="chrome", output_format="chrome")
+        data = json.loads(out.read_text(encoding="utf-8"))
+        assert data[0]["ts"] == 2000
+        assert data[1]["ts"] == 0
+
+    def test_jsonl_to_chrome_normalize(self, tmp_path: Path) -> None:
+        f1 = tmp_path / "a.jsonl"
+        out = tmp_path / "out.json"
+        r1 = create_jsonl_record(ts_start=10_000_000, ts_stop=11_000_000)
+        r2 = create_jsonl_record(ts_start=5_000_000, ts_stop=6_000_000)
+        lines = [
+            msgspec.json.encode(r1).decode(),
+            msgspec.json.encode(r2).decode(),
+        ]
+        f1.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        combine_files([f1], out, normalize=True, input_format="jsonl", output_format="chrome")
+        data = json.loads(out.read_text(encoding="utf-8"))
+        pause_events = [e for e in data if e["ph"] == "X"]
+        assert pause_events[0]["ts"] > 0
+        assert pause_events[1]["ts"] == 0
+
+    def test_jsonl_to_jsonl_normalize(self, tmp_path: Path) -> None:
+        f1 = tmp_path / "a.jsonl"
+        out = tmp_path / "out.jsonl"
+        r1 = create_jsonl_record(pid=1, ts_start=10_000_000, ts_stop=11_000_000)
+        r2 = create_jsonl_record(pid=1, ts_start=5_000_000, ts_stop=6_000_000)
+        lines = [
+            msgspec.json.encode(r1).decode(),
+            msgspec.json.encode(r2).decode(),
+        ]
+        f1.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        combine_files([f1], out, normalize=True, input_format="jsonl", output_format="jsonl")
+        records = [json.loads(l) for l in out.read_text(encoding="utf-8").strip().split("\n") if l]
+        assert records[0]["ts_start"] == 5_000_000
+        assert records[1]["ts_start"] == 0
+
+    def test_jsonl_to_jsonl_merges_same_pid(self, tmp_path: Path) -> None:
+        f1 = tmp_path / "a.jsonl"
+        f2 = tmp_path / "b.jsonl"
+        out = tmp_path / "out.jsonl"
+        for f, pid in [(f1, 1), (f2, 2)]:
+            f.write_text(
+                msgspec.json.encode(create_jsonl_record(pid=pid)).decode() + "\n",
+                encoding="utf-8",
+            )
+        combine_files([f1, f2], out, input_format="jsonl", output_format="jsonl")
+        records = [json.loads(l) for l in out.read_text(encoding="utf-8").strip().split("\n") if l]
+        assert len(records) == 2
+        assert {r["pid"] for r in records} == {1, 2}
+
+    def test_jsonl_to_chrome_multiple_files(self, tmp_path: Path) -> None:
+        f1 = tmp_path / "a.jsonl"
+        f2 = tmp_path / "b.jsonl"
+        out = tmp_path / "out.json"
+        for f, pid in [(f1, 1), (f2, 2)]:
+            f.write_text(
+                msgspec.json.encode(create_jsonl_record(pid=pid)).decode() + "\n",
+                encoding="utf-8",
+            )
+        combine_files([f1, f2], out, input_format="jsonl", output_format="chrome")
+        data = json.loads(out.read_text(encoding="utf-8"))
+        process_metas = [e for e in data if e["name"] == "process_name"]
+        assert len(process_metas) == 2
+
+    def test_jsonl_to_jsonl_with_incremental(self, tmp_path: Path) -> None:
+        f1 = tmp_path / "a.jsonl"
+        out = tmp_path / "out.jsonl"
+        record = _make_inc_jsonl_record(pid=1, ts_start=1000, ts_stop=5000)
+        f1.write_text(msgspec.json.encode(record).decode() + "\n", encoding="utf-8")
+        combine_files([f1], out, input_format="jsonl", output_format="jsonl")
+        records = [json.loads(l) for l in out.read_text(encoding="utf-8").strip().split("\n") if l]
+        assert records[0]["increment_size"] == 500
+        assert records[0]["alive_size"] == 300

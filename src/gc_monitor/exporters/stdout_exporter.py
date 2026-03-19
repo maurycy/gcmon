@@ -1,0 +1,42 @@
+"""Stdout exporter for GC monitoring data.
+
+Exports GC events to stdout in a one-line-per-item format (JSONL/NDJSON).
+"""
+
+import contextlib
+import sys
+from typing import override
+
+from ..lock_strategy import LockStrategy
+from ..target_process import TargetProcessMetadata
+from .jsonl_exporter import JsonlExporter
+
+__all__ = ["StdoutExporter"]
+
+
+class StdoutExporter(JsonlExporter):
+    """
+    Exporter that writes GC events to stdout, one JSON object per line.
+
+    Each event is written as a single line of JSON (JSONL/NDJSON format),
+    making it easy to pipe to log aggregators or processing tools.
+
+    Events are buffered in memory and flushed to stdout when the buffer
+    reaches flush_threshold events.
+    """
+
+    def __init__(
+        self,
+        lock: type[LockStrategy],
+        metadata: TargetProcessMetadata,
+        flush_threshold: int = 100,
+    ) -> None:
+        super().__init__(lock, metadata, flush_threshold=flush_threshold)
+
+    def _open_writer(self):
+        return contextlib.nullcontext(sys.stdout)
+
+    @override
+    def close(self) -> None:
+        super().close()
+        sys.stdout.flush()

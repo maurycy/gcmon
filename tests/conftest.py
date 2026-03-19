@@ -1,0 +1,146 @@
+"""Shared pytest fixtures for gc-monitor tests."""
+
+from __future__ import annotations
+
+import logging
+import subprocess
+from unittest.mock import Mock
+
+import pytest
+
+from gc_monitor.monitor import EventsMonitor
+from gc_monitor.protocol import TGCStatsInfo
+from gc_monitor.stats import StreamingStats
+from gc_monitor.target_process import ExternalProcess, TargetProcessMetadata
+from tests.helpers import MockExporter, create_mock_stats_item
+
+
+@pytest.fixture(autouse=True)
+def _caplog_gc_monitor(caplog: pytest.LogCaptureFixture) -> pytest.LogCaptureFixture:
+    """Auto-configure gc_monitor logger to INFO level for caplog."""
+    logger = logging.getLogger("gc_monitor")
+    logger.setLevel(logging.INFO)
+    return caplog
+
+
+DEFAULT_PID: int = 12345
+DEFAULT_METADATA: TargetProcessMetadata = {"pid": DEFAULT_PID}
+
+
+@pytest.fixture
+def mock_stats_item() -> TGCStatsInfo:
+    """Create a mock StatsItem with default values (gen=0).
+
+    Note: ts_start/ts_stop are in nanoseconds (int), duration is in seconds (float).
+
+    Returns:
+        GCStatsItem dict with all required fields.
+    """
+    return create_mock_stats_item()
+
+
+@pytest.fixture
+def mock_stats_item_batch() -> list[TGCStatsInfo]:
+    """Create a batch of mock GCStatsItem instances with incrementing values.
+
+    Returns:
+        List of 3 GCStatsItem dicts with different generations.
+    """
+    items: list[TGCStatsInfo] = []
+    for gen in range(3):
+        item = create_mock_stats_item(
+            gen=gen,
+            ts_start=1_000_000_000 + gen * 100_000_000,
+            ts_stop=1_005_000_000 + gen * 100_000_000,
+            collections=10 * (gen + 1),
+            collected=50 * (gen + 1),
+            uncollectable=gen,
+            candidates=20 * (gen + 1),
+            object_visits=100 * (gen + 1),
+            objects_transitively_reachable=50 * (gen + 1),
+            objects_not_transitively_reachable=30 * (gen + 1),
+            heap_size=1_000_000 * (gen + 1),
+            work_to_do=5 * (gen + 1),
+            duration=0.001 * (gen + 1),
+        )
+        items.append(item)
+    return items
+
+
+@pytest.fixture
+def mock_logger() -> Mock:
+    """Create a mock logger instance.
+
+    Returns:
+        Mock logging.Logger instance.
+    """
+    return Mock(spec=logging.Logger)
+
+
+@pytest.fixture
+def mock_process() -> Mock:
+    """Create a mock subprocess.Popen instance.
+
+    Returns:
+        Mock subprocess.Popen instance with common attributes.
+    """
+    process = Mock(spec=subprocess.Popen)
+    process.pid = 12345
+    process.returncode = 0
+    process.communicate.return_value = (b"stdout data", b"stderr data")
+    return process
+
+
+@pytest.fixture
+def exporter() -> MockExporter:
+    return MockExporter()
+
+
+@pytest.fixture
+def process() -> ExternalProcess:
+    return ExternalProcess(pid=12345)
+
+
+@pytest.fixture
+def stats() -> StreamingStats:
+    return StreamingStats()
+
+
+@pytest.fixture
+def exporter_factory(exporter: MockExporter):
+    return lambda meta: exporter
+
+
+@pytest.fixture
+def monitor(exporter_factory, process: ExternalProcess, stats: StreamingStats) -> EventsMonitor:
+    return EventsMonitor(process, exporter_factory, stats)
+
+
+@pytest.fixture
+def make_monitor(exporter, stats):
+    def _make(pid: int = 12345, exp=None):
+        proc = ExternalProcess(pid=pid)
+        return EventsMonitor(proc, lambda meta: exp or exporter, stats)
+    return _make
+
+
+@pytest.fixture
+def env_module():
+    """Provide the _env module for testing."""
+    from gc_monitor import _env
+    return _env
+
+
+@pytest.fixture
+def env_var_specs():
+    """Specification table for env var getter tests (default/custom/invalid)."""
+    from gc_monitor import _env
+    return [
+        (_env.ENV_OUTPUT, "output", "custom.json", Path("gc_trace.json"), "path"),
+        (_env.ENV_RATE, "rate", "0.05", 0.1, "float"),
+        (_env.ENV_DURATION, "duration", "30.0", None, "float_or_none"),
+        (_env.ENV_THREAD_ID, "thread_id", "9999", 0, "int"),
+        (_env.ENV_FLUSH_THRESHOLD, "flush_threshold", "50", 100, "int"),
+        (_env.ENV_SERVER_HOST, "server_host", "127.0.0.1", "localhost", "str"),
+        (_env.ENV_SERVER_PORT, "server_port", "8888", 9999, "int"),
+    ]
