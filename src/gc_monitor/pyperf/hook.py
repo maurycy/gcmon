@@ -110,6 +110,11 @@ class GCMonitorHook:
         """
         cmd = self._build_command()
 
+        if sys.platform == "win32":
+            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            creationflags = 0
+
         try:
             creationflags = 0
             if sys.platform == "win32":
