@@ -5,80 +5,29 @@ from __future__ import annotations
 import json
 import threading
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
-from unittest.mock import Mock
+from typing import Any, Mapping
 
+from gc_monitor.data import GCStatsInfo, IncrementalGCStatsInfo
 from gc_monitor.exporters.exporter import EventsExporter
-from gc_monitor.protocol import TGCStatsInfo
+from gc_monitor.protocol import TGCStatsInfo, TInstantMsg
 from gc_monitor.target_process import TargetProcessMetadata
 
 # pyright: reportImplicitOverride=none
 
 
 __all__ = [
-    "MockHandler",
     "MockExporter",
-    "MockGCMonitorThread",
     "create_mock_stats_item",
+    "create_mock_incremental_item",
     "create_jsonl_record",
     "assert_valid_chrome_trace_format",
     "assert_is_complete",
     "assert_is_counter",
     "assert_is_process_meta",
     "assert_is_thread_meta",
+    "assert_is_instant_event",
+    "assert_is_instant_msg",
 ]
-
-
-class MockHandler:
-    """Mock MonitorHandler for testing.
-
-    This class simulates a MonitorHandler that returns predefined events
-    on each read() call. It supports event-based synchronization for tests.
-    """
-
-    def __init__(self, events_per_read: list[list[TGCStatsInfo]] | None = None) -> None:
-        """Initialize the mock handler.
-
-        Args:
-            events_per_read: List of event batches to return on each read() call.
-        """
-        self.events_per_read = events_per_read or []
-        self._read_index = 0
-        self._close_called = False
-        self._read_count = 0
-        self._read_event = threading.Event()
-
-    def read(self) -> list[TGCStatsInfo]:
-        """Read and return the next batch of events.
-
-        Returns:
-            List of GCStatsItem instances for this read call.
-        """
-        self._read_count += 1
-        self._read_event.set()  # Signal that read was called
-        if self._read_index < len(self.events_per_read):
-            events = self.events_per_read[self._read_index]
-            self._read_index += 1
-            return events
-        return []
-
-    def close(self) -> None:
-        """Close the handler."""
-        self._close_called = True
-
-    def wait_for_read(self, timeout: float = 1.0) -> bool:
-        """Wait for read() to be called.
-
-        Args:
-            timeout: Maximum time to wait in seconds.
-
-        Returns:
-            True if read() was called within timeout, False otherwise.
-        """
-        result = self._read_event.wait(timeout=timeout)
-        self._read_event.clear()
-        return result
 
 
 class MockExporter(EventsExporter):
@@ -96,6 +45,7 @@ class MockExporter(EventsExporter):
         """
         super().__init__(metadata or {"pid": 0})
         self.events: list[TGCStatsInfo] = []
+        self.instant_events: list[tuple[int, TInstantMsg]] = []
         self._close_called = False
         self._event_added = threading.Event()
 
@@ -108,6 +58,16 @@ class MockExporter(EventsExporter):
         """
         self.events.append(item)
         self._event_added.set()  # Signal that event was added
+
+    def add_instant_event(self, pid: int, item: TInstantMsg) -> None:
+        """Add an instant event to the exporter.
+
+        Args:
+            pid: Process ID.
+            item: The instant message to add.
+        """
+        self.instant_events.append((pid, item))
+        self._event_added.set()
 
     def close(self) -> None:
         """Close the exporter."""
@@ -135,60 +95,6 @@ class MockExporter(EventsExporter):
         return result
 
 
-class MockGCMonitorThread:
-    """Mock GCMonitorThread for testing.
-
-    This class simulates a GCMonitorThread that can be used in tests
-    without actually starting a background thread.
-    """
-
-    def __init__(self) -> None:
-        """Initialize the mock monitor thread."""
-        self.is_running = False
-        self.monitor_count = 0
-        self._monitors: list[Any] = []
-
-    def add_monitor(self, monitor: Any) -> None:
-        """Add a monitor to the thread.
-
-        Args:
-            monitor: The monitor to add.
-        """
-        self._monitors.append(monitor)
-        self.monitor_count = len(self._monitors)
-
-    def remove_monitor(self, monitor: Any) -> bool:
-        """Remove a monitor from the thread.
-
-        Args:
-            monitor: The monitor to remove.
-
-        Returns:
-            True if the monitor was removed, False if not found.
-        """
-        if monitor in self._monitors:
-            self._monitors.remove(monitor)
-            self.monitor_count = len(self._monitors)
-            return True
-        return False
-
-    def start(self) -> None:
-        """Start the monitor thread."""
-        if self.is_running:
-            raise RuntimeError("Thread is already running")
-        self.is_running = True
-
-    def stop(self) -> None:
-        """Stop the monitor thread."""
-        self.is_running = False
-        # Disable all monitors
-        for monitor in self._monitors:
-            if hasattr(monitor, "stop"):
-                monitor.stop()
-        self._monitors.clear()
-        self.monitor_count = 0
-
-
 def create_mock_stats_item(
     gen: int = 0,
     ts_start: int = 1_500_000_000,
@@ -198,53 +104,35 @@ def create_mock_stats_item(
     collected: int = 200,
     uncollectable: int = 10,
     candidates: int = 40,
-    object_visits: int = 600,
-    objects_transitively_reachable: int = 250,
-    objects_not_transitively_reachable: int = 150,
     heap_size: int = 52428800,
-    work_to_do: int = 30,
     duration: float = 0.005,
-) -> TGCStatsInfo:
-    """Create a mock GCStatsItem with specified values.
-
-    This is a factory function for creating GCStatsItem dicts
-    with all required fields.
-
-    Args:
-        gen: GC generation (0, 1, or 2).
-        ts_start: Start timestamp in nanoseconds.
-        ts_stop: Stop timestamp in nanoseconds.
-        iid: Interpreter ID.
-        collections: Number of collections.
-        collected: Number of objects collected.
-        uncollectable: Number of uncollectable objects.
-        candidates: Number of candidate objects.
-        object_visits: Number of object visits.
-        objects_transitively_reachable: Number of transitively reachable objects.
-        objects_not_transitively_reachable: Number of non-transitively reachable objects.
-        heap_size: Heap size in bytes.
-        work_to_do: Amount of work to do.
-        duration: Duration in seconds.
-
-    Returns:
-        GCStatsItem dict with all fields set.
-    """
-    return SimpleNamespace(
+) -> GCStatsInfo:
+    return GCStatsInfo(
         gen=gen,
         iid=iid,
         ts_start=ts_start,
         ts_stop=ts_stop,
+        heap_size=heap_size,
         collections=collections,
         collected=collected,
         uncollectable=uncollectable,
         candidates=candidates,
-        object_visits=object_visits,
-        objects_transitively_reachable=objects_transitively_reachable,
-        objects_not_transitively_reachable=objects_not_transitively_reachable,
-        heap_size=heap_size,
-        work_to_do=work_to_do,
         duration=duration,
     )
+
+
+def create_mock_incremental_item(**kwargs: object) -> IncrementalGCStatsInfo:
+    defaults: dict[str, object] = dict(
+        gen=0, iid=0, ts_start=1_500_000_000, ts_stop=1_505_000_000,
+        heap_size=52428800, collections=50, collected=200, uncollectable=10,
+        candidates=40, duration=0.005,
+        increment_size=1000, alive_size=800,
+        ts_mark_alive_start=1_500_000_000, ts_mark_alive_stop=1_501_000_000,
+        ts_fill_increment_start=1_501_000_000, ts_fill_increment_stop=1_502_000_000,
+        ts_deduce_unreachable_start=1_502_000_000, ts_deduce_unreachable_stop=1_503_000_000,
+    )
+    defaults.update(kwargs)
+    return IncrementalGCStatsInfo(**defaults)  # type: ignore[arg-type]
 
 
 def create_jsonl_record(
@@ -307,7 +195,6 @@ def assert_valid_jsonl_format(file_path: Path) -> list[dict[str, Any]]:
     return data
 
 
-# pyright: reportUnknownVariableType=none, reportUnknownArgumentType=none
 def assert_valid_chrome_trace_format(file_path: Path) -> list[dict[str, Any]]:
     """Validate that a file contains valid Chrome Trace format (JSON array of objects).
 
@@ -390,3 +277,17 @@ def assert_is_thread_meta(event: dict, **expected: Any) -> None:
                 assert event["args"][arg_key] == arg_value
         else:
             assert event[key] == value
+
+
+def assert_is_instant_event(event: dict, **expected: Mapping[str, str|int]) -> None:
+    assert event["ph"] == "I"
+    assert event["s"] == "p"
+
+    for key, value in expected.items():
+        assert event[key] == value
+
+def assert_is_instant_msg(msg: dict[str, Any], **expected: Mapping[str, str|int]) -> None:
+    assert msg["type"] == "i"
+
+    for key, value in expected.items():
+        assert msg[key] == value

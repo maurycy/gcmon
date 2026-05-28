@@ -1,21 +1,28 @@
 """Chrome Trace Event format exporter for GC monitoring data."""
 
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import override
 
+from ..data import ts_to_us
 from ..lock_strategy import LockStrategy
-from ..protocol import TGCStatsInfo, TIncrementalGCStatsInfo
+from ..protocol import TGCStatsInfo, TIncrementalGCStatsInfo, TInstantMsg
 from ..target_process import TargetProcessMetadata
 from .chrome_trace_format import (
+    InstantEvent,
     TraceEvent,
     convert_item_to_trace_format,
+    instant_event,
     process_meta,
     thread_meta,
 )
 from .exporter import EventsExporter
 
+PARENT_PROCESS_NAME = "Parent Process"
+
 __all__ = [
+    "PARENT_PROCESS_NAME",
     "TraceExporter",
 ]
 
@@ -38,6 +45,8 @@ class TraceExporter(EventsExporter):
         super().__init__(metadata)
         self._lock = lock()
         self._events: list[TraceEvent] = []
+        self._control_events: list[InstantEvent] = []
+        self._control_lock: LockStrategy = lock()
         self._flush_threshold = flush_threshold
         self._output_path = output_path
         self._closed = False
@@ -66,9 +75,21 @@ class TraceExporter(EventsExporter):
 
         self._flush(events_to_flush)
 
-    def _flush(self, events: list[TraceEvent]) -> None:
+    @override
+    def add_instant_event(self, pid: int, item: TInstantMsg) -> None:
+        event = instant_event(pid, item.name, ts_to_us(item.ts))
+
+        events: list[InstantEvent] = []
+        with self._control_lock.lock():
+            self._control_events.append(event)
+            events = self._control_events[:]
+            self._control_events.clear()
+
+        self._flush(events)
+
+    def _flush(self, events: Sequence[TraceEvent]) -> None:
         if events:
-            self._write_to_file(events)
+            self._write_to_file(list(events))
 
     def _write_to_file(self, events: list[TraceEvent]) -> None:
         with open(self._output_path, "a", encoding="utf-8") as f:
@@ -91,7 +112,7 @@ class TraceExporter(EventsExporter):
         pid = self._metadata["pid"]
         with open(self._output_path, "w", encoding="utf-8") as f:
             linesep = "\n"
-            f.write(f"[{linesep}{json.dumps(process_meta(pid, 'Parent Process'))}")
+            f.write(f"[{linesep}{json.dumps(process_meta(pid, PARENT_PROCESS_NAME))}")
 
     def _write_finish_marker(self) -> None:
         with open(self._output_path, "a", encoding="utf-8") as f:
@@ -109,11 +130,16 @@ class TraceExporter(EventsExporter):
             return
 
         events: list[TraceEvent] = []
+        control_events: list[InstantEvent] = []
         with self._lock.lock():
             events = self._events[:]
             self._events.clear()
+        with self._control_lock.lock():
+            control_events = self._control_events[:]
+            self._control_events.clear()
 
         self._flush(events)
+        self._flush(control_events)
         self._write_metadata()
         self._write_finish_marker()
         self._closed = True

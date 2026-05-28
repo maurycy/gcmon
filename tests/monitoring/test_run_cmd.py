@@ -12,7 +12,8 @@ import pytest
 
 from gc_monitor.exporters.chrome_trace_io import read_jsonl
 
-from monitoring.conftest import MonitorArgsFactory
+from gc_monitor.control.control_server import ControlServer
+from tests.monitoring.conftest import MonitorArgsFactory
 from tests.helpers import assert_valid_chrome_trace_format
 
 
@@ -26,7 +27,7 @@ def assert_jsonl_format(output_file: Path) -> None:
     assert read_jsonl(output_file)
 
 
-def assert_stdout_format(output:str)->None:
+def assert_stdout_format(output: str) -> None:
     assert "pid" in output
     assert "gen" in output
     assert "ts_start" in output
@@ -39,8 +40,8 @@ def assert_stdout_format(output:str)->None:
     assert "duration" in output
 
 
-def get_long_running_script(*args:list[Any]) -> str:
-    script:str = """
+def get_long_running_script(*args: list[Any]) -> str:
+    script: str = """
 import gc
 import sys
 import time
@@ -161,7 +162,9 @@ class TestCmdRunUnit:
                     target="timeit",
                     is_module=True,
                     passthrough_args=["-n", "1"],
+                    control=mock_runner_cls.call_args[1]["control"],
                 )
+                assert isinstance(mock_runner_cls.call_args[1]["control"], ControlServer)
 
     def test_cmd_run_script_mode(self) -> None:
         """Test cmd_run creates ChildProcessRunner with is_module=False."""
@@ -184,7 +187,9 @@ class TestCmdRunUnit:
                     target="myscript.py",
                     is_module=False,
                     passthrough_args=["arg1"],
+                    control=mock_runner_cls.call_args[1]["control"],
                 )
+                assert isinstance(mock_runner_cls.call_args[1]["control"], ControlServer)
 
     def test_cmd_run_cleanup_called(self) -> None:
         """Test cleanup callback calls runner.terminate()."""
@@ -192,7 +197,7 @@ class TestCmdRunUnit:
 
         args = self._make_run_args(module_name="timeit")
 
-        def mock_loop(process, wait_policy, options, cleanup=None):
+        def mock_loop(process, wait_policy, options, cleanup=None, **kwargs):
             if cleanup is not None:
                 cleanup()
             return 0

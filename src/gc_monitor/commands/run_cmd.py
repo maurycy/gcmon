@@ -9,6 +9,7 @@ from gc_monitor.child_process_runner import ChildProcessRunner
 from gc_monitor.commands.monitoring_base import run_monitoring_loop
 from gc_monitor.commands.monitoring_options import add_monitoring_options, get_monitoring_options
 from gc_monitor.commands.parser_factory import ParserFactory
+from gc_monitor.control.control_server import ControlServer
 from gc_monitor.wait_policy import StartupTimeoutPolicy
 
 logger = logging.getLogger("gc_monitor")
@@ -75,10 +76,12 @@ def cmd_run(args: Namespace) -> int:
     if options is None:
         return 1
 
+    control = ControlServer()
     runner = ChildProcessRunner(
         target=target,
         is_module=is_module,
         passthrough_args=script_args,
+        control=control,
     )
 
     def _cleanup() -> None:
@@ -88,7 +91,12 @@ def cmd_run(args: Namespace) -> int:
     with runner:
         process = runner.start()
         wait_policy = StartupTimeoutPolicy(2)
-        exit_code = run_monitoring_loop(process, wait_policy, options, cleanup=_cleanup)
+        exit_code = run_monitoring_loop(
+            process, wait_policy, options,
+            control_server=control,
+            cleanup=_cleanup,
+            enabled=control.is_enabled,
+        )
         if exit_code != 0:
             return exit_code
 

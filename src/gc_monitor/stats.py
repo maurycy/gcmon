@@ -39,6 +39,9 @@ class Stats:
         self._percentiles: dict[int, float] | None = None
 
     def update(self, value: float) -> None:
+        if self._percentiles is not None:
+            raise RuntimeError("Cannot update Stats after materialize() has been called")
+
         if self._sketch is not None:
             self._sketch.add(value)
 
@@ -80,6 +83,18 @@ class Stats:
     def sum(self) -> float:
         return self._sum
 
+    @property
+    def buffer(self) -> Sequence[float]:
+        return self._data
+
+    @property
+    def has_sketch(self) -> bool:
+        return self._sketch is not None
+
+    @property
+    def percentiles(self) -> dict[int, float] | None:
+        return self._percentiles
+
 
 class Metric(Protocol):
     name: str
@@ -115,7 +130,7 @@ class DeduceUnreachableMetric:
 
     def get_values(self, item: TGCStatsInfo | TIncrementalGCStatsInfo) -> tuple[int, int]:
         assert(is_incremental(item))
-        return item.ts_deduce_uncreachable_start, item.ts_deduce_uncreachable_stop
+        return item.ts_deduce_unreachable_start, item.ts_deduce_unreachable_stop
 
 
 

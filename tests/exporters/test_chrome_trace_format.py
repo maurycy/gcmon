@@ -2,24 +2,24 @@
 
 from types import SimpleNamespace
 
-import pytest
-
 from gc_monitor.exporters.chrome_trace_format import (
     CounterEvent,
     IncrementalEvent,
+    InstantEvent,
     PauseEvent,
     ProcessMeta,
     ThreadMeta,
-    TraceEvent,
     convert_item_to_trace_format,
     convert_to_trace_format,
     counter_event,
     inc_event,
+    instant_event,
     pause_event,
     process_meta,
     thread_meta,
 )
 
+from tests.data_helpers import create_instant_msg
 from tests.helpers import create_mock_stats_item
 
 
@@ -102,6 +102,18 @@ class TestCounterEvent:
         assert event["args"]["heap_size"] == 1024
 
 
+class TestInstantEvent:
+    def test_returns_instant_event(self) -> None:
+        event = instant_event(pid=123, name="start GC monitor", ts_us=5_000)
+        assert event == {
+            "name": "start GC monitor",
+            "ph": "I",
+            "s": "p",
+            "pid": 123,
+            "ts": 5_000,
+        }
+
+
 # =============================================================================
 # convert_item_to_trace_format tests
 # =============================================================================
@@ -117,15 +129,19 @@ def _make_incremental_item(
 ) -> SimpleNamespace:
     base = create_mock_stats_item(gen=gen, ts_start=ts_start, ts_stop=ts_stop)
     return SimpleNamespace(
-        **{k: getattr(base, k) for k in vars(base)},
+        gen=base.gen, iid=base.iid,
+        ts_start=base.ts_start, ts_stop=base.ts_stop,
+        collections=base.collections, heap_size=base.heap_size,
+        collected=base.collected, uncollectable=base.uncollectable,
+        candidates=base.candidates, duration=base.duration,
         increment_size=increment_size,
         alive_size=alive_size,
         ts_mark_alive_start=ts_start,
         ts_mark_alive_stop=ts_start + sub_step_dur,
         ts_fill_increment_start=ts_start + sub_step_dur,
         ts_fill_increment_stop=ts_start + 2 * sub_step_dur,
-        ts_deduce_uncreachable_start=ts_start + 2 * sub_step_dur,
-        ts_deduce_uncreachable_stop=ts_start + 3 * sub_step_dur,
+        ts_deduce_unreachable_start=ts_start + 2 * sub_step_dur,
+        ts_deduce_unreachable_stop=ts_start + 3 * sub_step_dur,
     )
 
 
@@ -202,8 +218,8 @@ class TestConvertItemToTraceFormat:
             ts_mark_alive_stop=1_500_000_000,
             ts_fill_increment_start=1_500_000_000,
             ts_fill_increment_stop=1_501_000_000,
-            ts_deduce_uncreachable_start=1_501_000_000,
-            ts_deduce_uncreachable_stop=1_501_000_000,
+            ts_deduce_unreachable_start=1_501_000_000,
+            ts_deduce_unreachable_stop=1_501_000_000,
         )
         events = convert_item_to_trace_format(pid=12345, item=item)
         names = {e["name"] for e in events if e["ph"] == "X"}
@@ -240,11 +256,6 @@ class TestConvertItemToTraceFormat:
         for event in events:
             if event["ph"] != "M":
                 assert event["tid"] == 42
-
-
-# =============================================================================
-# convert_to_trace_format tests
-# =============================================================================
 
 
 class TestConvertToTraceFormat:
@@ -285,17 +296,35 @@ class TestConvertToTraceFormat:
             assert "ph" in event
 
 
-class TestTraceEventType:
-    def test_trace_event_is_union_of_all_event_types(self) -> None:
-        assert PauseEvent.__annotations__["ph"].__args__ == ("X",)
-        assert CounterEvent.__annotations__["ph"].__args__ == ("C",)
-        assert ProcessMeta.__annotations__["name"].__args__ == ("process_name",)
-        assert ThreadMeta.__annotations__["name"].__args__ == ("thread_name",)
+class TestConvertToTraceFormatWithInstant:
+    def test_instant_msg_only(self) -> None:
+        items = [create_instant_msg(name="start GC monitor", ts=1_500_000_000)]
+        events = convert_to_trace_format({1: items})
+        instants = [e for e in events if e["ph"] == "I"]
+        assert len(instants) == 1
+        assert instants[0]["name"] == "start GC monitor"
+        assert instants[0]["pid"] == 1
+        assert instants[0]["ts"] == 1_500_000  # ns -> us
 
-    def test_pause_event_has_required_fields(self) -> None:
-        required = {"name", "cat", "ph", "ts", "dur", "pid", "tid", "args"}
-        assert set(PauseEvent.__annotations__) == required
+    def test_mixed_gc_stats_and_instant_msg(self) -> None:
+        item = create_mock_stats_item()
+        instant = create_instant_msg(name="stop GC monitor", ts=2_000_000_000)
+        items = {12345: [item, instant]}
+        events = convert_to_trace_format(items)
+        assert any(e["ph"] == "I" for e in events)
+        assert any(e["ph"] == "X" for e in events)
+        assert any(e["ph"] == "C" for e in events)
 
-    def test_counter_event_has_required_fields(self) -> None:
-        required = {"name", "ph", "ts", "pid", "tid", "args"}
-        assert set(CounterEvent.__annotations__) == required
+    def test_multiple_instant_messages(self) -> None:
+        items = [
+            create_instant_msg(name="start GC monitor", ts=1_000_000_000),
+            create_instant_msg(name="stop GC monitor", ts=2_000_000_000),
+        ]
+        events = convert_to_trace_format({1: items})
+        instants = [e for e in events if e["ph"] == "I"]
+        assert len(instants) == 2
+        assert instants[0]["name"] == "start GC monitor"
+        assert instants[0]["ts"] == 1_000_000
+        assert instants[1]["name"] == "stop GC monitor"
+        assert instants[1]["ts"] == 2_000_000
+
