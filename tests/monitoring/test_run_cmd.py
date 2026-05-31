@@ -127,6 +127,7 @@ class TestCmdRunUnit:
             "flush_threshold": 100,
             "stats": False,
             "table_format": None,
+            "control_name": None,
         }
         return Namespace(**{**defaults, **overrides})
 
