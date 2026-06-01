@@ -4,15 +4,15 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import Any, Self, override
+from typing import Self, override
 
-from .control.control_server import ControlServer, set_control_env
+from .control.control_server import set_control_env
 from .target_process import TargetProcess
 from .utils.process_terminator import log_process_output, terminate_process
 
 __all__ = ["ChildProcess", "ChildProcessRunner"]
 
-logger = logging.getLogger("gc_monitor.runner")
+logger = logging.getLogger("gc_monitor")
 
 
 class ChildProcess(TargetProcess):
@@ -31,13 +31,13 @@ class ChildProcessRunner:
         is_module: bool = False,
         passthrough_args: list[str] | None = None,
         env: dict[str, str] | None = None,
-        control: ControlServer | None = None,
+        control_address: str | None = None,
     ) -> None:
         self._target = target
         self._is_module = is_module
         self._passthrough_args = passthrough_args or []
         self._env = env
-        self._control = control
+        self._control_address = control_address
         self._process: subprocess.Popen[bytes] | None = None
         self._stdout_thread: ProcessStdoutReader | None = None
 
@@ -86,8 +86,8 @@ class ChildProcessRunner:
             env.update(self._env)
 
         # Inject control plane address for child processes
-        if self._control is not None:
-            set_control_env(env, self._control.address)
+        if self._control_address is not None:
+            set_control_env(env, self._control_address)
 
         return env
 
@@ -104,10 +104,6 @@ class ChildProcessRunner:
         """
         # Validate target before spawning
         self._validate_target()
-
-        # Start control plane before spawning
-        if self._control is not None:
-            self._control.start()
 
         # Build command and environment
         cmd = self._build_command()
@@ -207,7 +203,7 @@ class ChildProcessRunner:
     def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+    def __exit__(self, *args: object) -> None:
         self.terminate()
 
 

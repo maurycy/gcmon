@@ -1,14 +1,14 @@
 import logging
 import threading
 from collections.abc import Callable
-from typing import Any, Self
+from typing import Self
 
 from .monitor import EventsMonitor
 from .run_policy import Runner
 from .utils import set_on_exit
 from .wait_policy import WaitPolicy
 
-logger = logging.getLogger("gc_monitor.monitor_loop")
+logger = logging.getLogger("gc_monitor")
 
 __all__ = ["MonitorLoop"]
 
@@ -33,7 +33,7 @@ class MonitorLoop:
         self._stop_event.set()
 
     def run(self) -> None:
-        with self._monitor, set_on_exit(self._stop_event):
+        with set_on_exit(self._stop_event):
             for _ in self._runner.run(self._stop_event.is_set):
                 wait: list[bool] = []
                 children: list[int] = [self._monitor.pid, *self._monitor.get_child_pids()]
@@ -56,5 +56,5 @@ class MonitorLoop:
     def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, type_: Any, value: Any, traceback: Any) -> None:
+    def __exit__(self, *args: object) -> None:
         self.close()

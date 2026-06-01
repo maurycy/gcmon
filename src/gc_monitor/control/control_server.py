@@ -4,17 +4,20 @@ import contextlib
 import logging
 import sys
 import threading
+import time
 from multiprocessing.connection import Client, Connection, Listener, wait
 
 if sys.platform == "win32":
     from multiprocessing.connection import PipeConnection
+
+from typing import Self
 
 import msgspec
 
 from gc_monitor.data import instant_msg
 from gc_monitor.exporters.exporter import EventsExporter
 
-logger = logging.getLogger("gc_monitor.control")
+logger = logging.getLogger("gc_monitor")
 
 CONTROL_ADDRESS_ENV = "GC_MONITOR_CONTROL_ADDRESS"
 _PREFIX = "gc-monitor-"
@@ -57,7 +60,7 @@ class ControlServer:
     monitoring enabled via start/stop messages.
     """
 
-    def __init__(self, address: str | None = None) -> None:
+    def __init__(self, exporter: EventsExporter, address: str | None = None) -> None:
         full_address = _make_address(address) if address is not None else None
         self._listener: Listener|None = Listener(full_address)
         assert isinstance(self._listener.address, str)
@@ -65,10 +68,9 @@ class ControlServer:
         self._connections: set[TConnection] = set()
         self._enabled: dict[int, bool] = {}
         self._lock = threading.Lock()
-        self._exporter_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._running = False
-        self._exporter: EventsExporter | None = None
+        self._exporter: EventsExporter = exporter
         self._accept_thread: threading.Thread = threading.Thread(
             target=self._accept_loop, daemon=True
         )
@@ -86,6 +88,8 @@ class ControlServer:
         self._accept_thread.start()
         self._reader_thread.start()
         self._running = True
+
+        logger.info("Running server on %s", self.address)
 
     def _accept_loop(self) -> None:
         conn: TConnection | None = None
@@ -110,6 +114,8 @@ class ControlServer:
                 conn.close()
                 conn = None
 
+        logger.debug("Stoped accept loop")
+
     def _reader_loop(self) -> None:
         while not self._stop_event.is_set():
             with self._lock:
@@ -123,28 +129,16 @@ class ControlServer:
                         break
 
                     msg = self._recv(conn, to_remove)
+                    logger.debug("Got message: %s", msg)
                     if msg is not None:
-                        try:
-                            m = msg.msg
-                            pid = msg.pid
-                            if m == "start":
-                                m = "start GC monitor"
-                                with self._lock:
-                                    self._enabled.pop(pid, None)
-                            elif m == "stop":
-                                m = "stop GC monitor"
-                                with self._lock:
-                                    self._enabled[pid] = False
-
-                            self._add_event(m, pid)
-
-                        except Exception as e:
-                            logger.debug("Error while handling data from child: %s", e)
+                        self._handle_msg(msg)
 
             if to_remove:
                 self._remove_connections(to_remove)
 
             self._stop_event.wait(READER_POLL_INTERVAL)
+
+        self._drain_connections()
 
     def _recv(self, conn: TConnection, to_remove: list[TConnection]) -> ControlMsg | None:
         try:
@@ -158,11 +152,48 @@ class ControlServer:
 
         return None
 
-    def _add_event(self, m:str, pid:int) -> None:
-        with self._exporter_lock:
-            if self._exporter is not None:
-                msg = instant_msg(m)
-                self._exporter.add_instant_event(pid, msg)
+    def _handle_msg(self, msg: ControlMsg) -> None:
+        try:
+            m = msg.msg
+            pid = msg.pid
+            if m == "start":
+                m = "start GC monitor"
+                with self._lock:
+                    self._enabled.pop(pid, None)
+            elif m == "stop":
+                m = "stop GC monitor"
+                with self._lock:
+                    self._enabled[pid] = False
+            self._add_event(m, pid)
+        except Exception as e:
+            logger.debug("Error while handling message: %s", e)
+
+    def _drain_connections(self, timeout: float = 0.5) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._lock:
+                conns = list(self._connections)
+            if not conns:
+                return
+            to_remove: list[TConnection] = []
+            any_data = False
+            for conn in conns:
+                try:
+                    if conn.poll(timeout=0):
+                        msg = self._recv(conn, to_remove)
+                        if msg is not None:
+                            self._handle_msg(msg)
+                            any_data = True
+                except Exception:
+                    to_remove.append(conn)
+            if to_remove:
+                self._remove_connections(to_remove)
+            if not any_data:
+                break
+
+    def _add_event(self, m: str, pid: int) -> None:
+        msg = instant_msg(m)
+        self._exporter.add_instant_event(pid, msg)
 
     def _safe_wait(self, conns: list[TConnection]) -> list[TConnection]:
         try:
@@ -182,6 +213,8 @@ class ControlServer:
             return []
 
     def _remove_connections(self, to_remove: list[TConnection]) -> None:
+        logger.debug("Remove connections: %s", to_remove)
+
         with self._lock:
             self._connections -= set(to_remove)
 
@@ -199,10 +232,6 @@ class ControlServer:
             with contextlib.suppress(Exception):
                 conn.close()
 
-    def set_exporter(self, exporter: EventsExporter) -> None:
-        with self._exporter_lock:
-            self._exporter = exporter
-
     def is_running(self) -> bool:
         return self._running
 
@@ -218,10 +247,8 @@ class ControlServer:
         """Shut down all connections and the listener."""
         self._stop_event.set()
 
-        self._clear_connections()
-
         if self._running:
-            self._reader_thread.join(1)
+            self._reader_thread.join(2)
 
             with contextlib.suppress(Exception), Client(self.address):
                 pass
@@ -233,13 +260,18 @@ class ControlServer:
             self._enabled.clear()
 
         if self._running:
-
             with self._lock:
                 if self._listener is not None:
                     self._listener.close()
                     self._listener = None
 
         self._running = False
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
 
 
 def set_control_env(env: dict[str, str], address: str) -> None:

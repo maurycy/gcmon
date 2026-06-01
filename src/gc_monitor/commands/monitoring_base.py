@@ -2,7 +2,7 @@
 
 import logging
 import os
-from collections.abc import Callable
+from contextlib import ExitStack
 
 from gc_monitor.commands.monitoring_options import MonitoringOptions
 from gc_monitor.control.control_server import ControlServer
@@ -12,7 +12,7 @@ from gc_monitor.monitor_loop import MonitorLoop
 from gc_monitor.run_policy import RunnerFactory
 from gc_monitor.stats import StreamingStats
 from gc_monitor.stats_output import print_stats
-from gc_monitor.target_process import TargetProcess
+from gc_monitor.target_process import ProcessRunnerFactory
 from gc_monitor.utils import replace_signals
 from gc_monitor.wait_policy import WaitPolicy
 
@@ -20,39 +20,46 @@ logger = logging.getLogger("gc_monitor")
 
 
 def run_monitoring_loop(
-    process: TargetProcess,
+    factory: ProcessRunnerFactory,
     wait_policy: WaitPolicy,
     options: MonitoringOptions,
-    control_server: ControlServer,
-    cleanup: Callable[[], None] | None = None,
-    enabled: Callable[[int], bool] | None = None,
+    address: str | None = None,
 ) -> int:
-    """Run monitoring loop.
 
-    Returns:
-        Exit code (0 on success)
-    """
     try:
         logger.info("Self PID: %s", os.getpid())
-        logger.info("Monitoring PID: %s", process.pid)
 
-        run_policy = RunnerFactory(options.duration)
-        exporter_factory = EventsExporterFactory(
-            options.output_format, options.output_path, options.flush_threshold
-        )
-        stats = StreamingStats()
-        monitor = create_monitor(process, exporter_factory, stats)
-        control_server.set_exporter(monitor.exporter)
-        loop = MonitorLoop(monitor, run_policy, wait_policy, rate=options.rate, enabled=enabled)
+        with ExitStack() as stack:
+            exporter_factory = EventsExporterFactory(
+                options.output_format, options.output_path, options.flush_threshold
+            )
+            exporter = exporter_factory()
 
-        def _signal_handler(signum: int, frame: object) -> None:
-            loop.close()
+            control_server = ControlServer(exporter, address=address)
+            control_server.start()
+            stack.enter_context(control_server)
 
-        with replace_signals(_signal_handler):
+            runner = factory(control_server.address)
+            stack.enter_context(runner)
+
+            process = runner.start()
+            logger.info("Monitoring PID: %s", process.pid)
+
+            stats = StreamingStats()
+            monitor = create_monitor(process, exporter, stats)
+
+            stack.enter_context(monitor)
+
+            run_policy = RunnerFactory(options.duration)
+            loop = MonitorLoop(monitor, run_policy, wait_policy, rate=options.rate, enabled=control_server.is_enabled)
+
+            def _signal_handler(signum: int, frame: object) -> None:
+                loop.close()
+
+            stack.enter_context(replace_signals(_signal_handler))
+
             loop.run()
-
-        if cleanup is not None:
-            cleanup()
+            returncode = runner.returncode or 0
 
         logger.info("Monitoring complete.")
         logger.info("Total events: %s", stats.count())
@@ -62,7 +69,7 @@ def run_monitoring_loop(
         if options.show_stats:
             print_stats(stats, table_format=options.table_format)
 
-        return 0
+        return returncode
 
     except Exception as e:
         logger.error("Failed to run GC monitor: %s", e, exc_info=True)

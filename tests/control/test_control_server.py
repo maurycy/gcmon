@@ -17,8 +17,8 @@ from gc_monitor.control.control_server import (
 
 
 @pytest.fixture
-def control_server() -> ControlServer:
-    server = ControlServer()
+def control_server(mock_exporter) -> ControlServer:
+    server = ControlServer(mock_exporter)
     try:
         server.start()
         yield server
@@ -27,13 +27,15 @@ def control_server() -> ControlServer:
 
 
 @pytest.fixture
-def server_not_started() -> ControlServer:
-    return ControlServer()
+def server_not_started(mock_exporter) -> ControlServer:
+    return ControlServer(mock_exporter)
 
 
 @pytest.fixture
 def mock_conn():
-    return MagicMock()
+    m = MagicMock()
+    m.poll.return_value = False
+    return m
 
 
 @pytest.fixture
@@ -75,7 +77,7 @@ class TestControlServerInit:
         assert control_server.is_enabled(0) is True
 
     def test_init_with_custom_name(self) -> None:
-        server = ControlServer(address="my-name")
+        server = ControlServer(MagicMock(), address="my-name")
         try:
             assert "gc-monitor-my-name" in server.address
         finally:
@@ -93,8 +95,8 @@ class TestControlServerInit:
     def test_init_not_running(self, server_not_started) -> None:
         assert server_not_started._running is False
 
-    def test_init_exporter_none(self, server_not_started) -> None:
-        assert server_not_started._exporter is None
+    def test_init_exporter_set(self, server_not_started) -> None:
+        assert server_not_started._exporter is not None
 
     def test_init_threads_not_alive(self, server_not_started) -> None:
         assert not server_not_started._accept_thread.is_alive()
@@ -186,49 +188,41 @@ class TestControlServerEnabled:
 
 
 class TestControlServerExporter:
-    def test_set_exporter_receives_instant_events(self, control_server: ControlServer) -> None:
+    def test_exporter_receives_instant_events(self, mock_exporter) -> None:
         from tests.helpers import MockExporter
 
         exporter = MockExporter()
-        control_server.set_exporter(exporter)
+        server = ControlServer(exporter)
+        server.start()
+        try:
+            _send_msg(server, "stop", 42)
+            assert _wait_msg(server, 42, False)
 
-        _send_msg(control_server, "stop", 42)
-        assert _wait_msg(control_server, 42, False)
+            assert len(exporter.instant_events) >= 1
+            pid, msg = exporter.instant_events[0]
+            assert pid == 42
+            assert msg.name == "stop GC monitor"
+            assert msg.type == "i"
+        finally:
+            server.close()
 
-        assert len(exporter.instant_events) >= 1
-        pid, msg = exporter.instant_events[0]
-        assert pid == 42
-        assert msg.name == "stop GC monitor"
-        assert msg.type == "i"
-
-    def test_exporter_receives_multiple_events(self, control_server: ControlServer) -> None:
+    def test_exporter_receives_multiple_events(self, mock_exporter) -> None:
         from tests.helpers import MockExporter
 
         exporter = MockExporter()
-        control_server.set_exporter(exporter)
+        server = ControlServer(exporter)
+        server.start()
+        try:
+            _send_msg(server, "stop", 1)
+            assert _wait_msg(server, 1, False)
+            _send_msg(server, "start", 1)
+            assert _wait_msg(server, 1, True)
 
-        _send_msg(control_server, "stop", 1)
-        assert _wait_msg(control_server, 1, False)
-        _send_msg(control_server, "start", 1)
-        assert _wait_msg(control_server, 1, True)
-
-        assert len(exporter.instant_events) == 2
-        assert exporter.instant_events[0][1].name == "stop GC monitor"
-        assert exporter.instant_events[1][1].name == "start GC monitor"
-
-    def test_set_exporter_replace(self, control_server) -> None:
-        from tests.helpers import MockExporter
-
-        exporter1 = MockExporter()
-        exporter2 = MockExporter()
-        control_server.set_exporter(exporter1)
-        control_server.set_exporter(exporter2)
-
-        _send_msg(control_server, "stop", 1)
-        assert _wait_msg(control_server, 1, False)
-
-        assert len(exporter1.instant_events) == 0
-        assert len(exporter2.instant_events) >= 1
+            assert len(exporter.instant_events) == 2
+            assert exporter.instant_events[0][1].name == "stop GC monitor"
+            assert exporter.instant_events[1][1].name == "start GC monitor"
+        finally:
+            server.close()
 
 
 # =============================================================================
@@ -238,16 +232,12 @@ class TestControlServerExporter:
 
 class TestControlServerInternal:
     def test_add_event_with_exporter(self, server_not_started, mock_exporter) -> None:
-        server_not_started.set_exporter(mock_exporter)
         server_not_started._add_event("test event", 42)
         mock_exporter.add_instant_event.assert_called_once()
         args = mock_exporter.add_instant_event.call_args[0]
         assert args[0] == 42
         assert args[1].name == "test event"
         assert args[1].type == "i"
-
-    def test_add_event_without_exporter(self, server_not_started) -> None:
-        server_not_started._add_event("test event", 42)
 
     def test_remove_connections_closes_and_removes(self, server_not_started, mock_conn) -> None:
         server_not_started._connections.add(mock_conn)
@@ -502,6 +492,97 @@ class TestControlServerReaderLoop:
         ):
             server_not_started._reader_loop()
 
+    def test_reader_loop_drains_pending_messages(self, server_not_started) -> None:
+        mock_conn = MagicMock()
+        mock_conn.recv.return_value = {"msg": "stop", "pid": 42}
+        mock_conn.poll.side_effect = [True, False]
+        server_not_started._connections.add(mock_conn)
+
+        with (
+            patch("gc_monitor.control.control_server._wait", return_value=[]),
+            patch.object(server_not_started._stop_event, "wait", side_effect=lambda t: server_not_started._stop_event.set()),
+        ):
+            server_not_started._reader_loop()
+
+        assert server_not_started._enabled.get(42) is False
+
+
+# =============================================================================
+# Drain connections tests
+# =============================================================================
+
+
+class TestDrainConnections:
+    def test_drain_no_connections(self, server_not_started) -> None:
+        server_not_started._drain_connections()
+
+    def test_drain_no_data_exits_immediately(self, server_not_started, mock_conn) -> None:
+        server_not_started._connections.add(mock_conn)
+        server_not_started._drain_connections()
+
+    def test_drain_poll_exception_removes_conn(self, server_not_started) -> None:
+        mock_conn = MagicMock()
+        mock_conn.poll.side_effect = OSError("pipe broken")
+        server_not_started._connections.add(mock_conn)
+
+        server_not_started._drain_connections()
+
+        assert mock_conn not in server_not_started._connections
+        mock_conn.close.assert_called_once()
+
+    def test_drain_recv_eof_removes_conn(self, server_not_started) -> None:
+        mock_conn = MagicMock()
+        mock_conn.poll.return_value = True
+        mock_conn.recv.side_effect = EOFError()
+        server_not_started._connections.add(mock_conn)
+
+        server_not_started._drain_connections()
+
+        assert mock_conn not in server_not_started._connections
+        mock_conn.close.assert_called_once()
+
+    def test_drain_handle_msg_error_is_nonfatal(self) -> None:
+        mock_exporter = MagicMock()
+        mock_exporter.add_instant_event.side_effect = ValueError("exporter failure")
+        server_not_started = ControlServer(mock_exporter)
+
+        mock_conn = MagicMock()
+        mock_conn.poll.side_effect = [True, False]
+        mock_conn.recv.return_value = {"msg": "stop", "pid": 42}
+        server_not_started._connections.add(mock_conn)
+
+        server_not_started._drain_connections()
+
+        assert mock_conn in server_not_started._connections
+        mock_conn.close.assert_not_called()
+
+    def test_drain_processes_messages_round_robin(self, server_not_started) -> None:
+        c1 = MagicMock()
+        c1.poll.side_effect = [True, False]
+        c1.recv.return_value = {"msg": "stop", "pid": 1}
+        c2 = MagicMock()
+        c2.poll.side_effect = [True, False]
+        c2.recv.return_value = {"msg": "stop", "pid": 2}
+        server_not_started._connections.update([c1, c2])
+
+        server_not_started._drain_connections()
+
+        assert server_not_started._enabled.get(1) is False
+        assert server_not_started._enabled.get(2) is False
+
+    def test_drain_timeout_expiry(self, server_not_started) -> None:
+        mock_conn = MagicMock()
+        mock_conn.poll.return_value = True
+        mock_conn.recv.return_value = {"msg": "stop", "pid": 999}
+        server_not_started._connections.add(mock_conn)
+
+        start = time.monotonic()
+        server_not_started._drain_connections(timeout=0.05)
+        elapsed = time.monotonic() - start
+
+        assert elapsed < 1.0
+        assert server_not_started._enabled.get(999) is False
+
 
 # =============================================================================
 # Close tests
@@ -509,14 +590,17 @@ class TestControlServerReaderLoop:
 
 
 class TestControlServerClose:
+    def _make_server(self) -> ControlServer:
+        return ControlServer(MagicMock())
+
     def test_close_stops_accepting(self) -> None:
-        server = ControlServer()
+        server = self._make_server()
         server.start()
         server.close()
         assert not server.is_running()
 
     def test_close_clears_enabled(self) -> None:
-        server = ControlServer()
+        server = self._make_server()
         server.start()
         _send_msg(server, "stop", 42)
         _wait_msg(server, 42, False)
@@ -524,30 +608,30 @@ class TestControlServerClose:
         assert server.is_enabled(42) is True
 
     def test_close_is_idempotent(self) -> None:
-        server = ControlServer()
+        server = self._make_server()
         server.start()
         server.close()
         server.close()
 
     def test_close_not_started(self) -> None:
-        server = ControlServer()
+        server = self._make_server()
         server.close()
         assert not server.is_running()
 
     def test_close_closes_listener(self) -> None:
-        server = ControlServer()
+        server = self._make_server()
         server.start()
         server.close()
         assert server._listener is None
 
     def test_close_clears_connections(self) -> None:
-        server = ControlServer()
+        server = self._make_server()
         server.start()
         server.close()
         assert len(server._connections) == 0
 
     def test_close_twice_not_started(self) -> None:
-        server = ControlServer()
+        server = self._make_server()
         server.close()
         server.close()
 
@@ -623,29 +707,17 @@ class TestControlServerThreadSafety:
 
         assert len(errors) == 0
 
-    def test_concurrent_set_exporter_and_add_event(self, control_server) -> None:
-        from tests.helpers import MockExporter
-
-        barrier = threading.Barrier(2, timeout=5)
+    def test_concurrent_add_event(self, control_server) -> None:
         errors = []
-
-        def set_exporter_loop():
-            try:
-                barrier.wait()
-                for _ in range(20):
-                    control_server.set_exporter(MockExporter())
-            except Exception as e:
-                errors.append(e)
 
         def add_event_loop():
             try:
-                barrier.wait()
                 for _ in range(20):
                     control_server._add_event("test", 1)
             except Exception as e:
                 errors.append(e)
 
-        t1 = threading.Thread(target=set_exporter_loop, daemon=True)
+        t1 = threading.Thread(target=add_event_loop, daemon=True)
         t2 = threading.Thread(target=add_event_loop, daemon=True)
         t1.start()
         t2.start()
