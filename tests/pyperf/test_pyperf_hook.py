@@ -5,6 +5,7 @@
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
@@ -117,11 +118,15 @@ class TestGCMonitorHookEnter:
         mock_popen, _mock_process = mock_popen_process
         mock_popen.side_effect = FileNotFoundError("module not found")
 
-        with pytest.raises(RuntimeError) as exc_info:
-            gc_monitor_hook()
+        mock_temp_dir = Mock(spec=tempfile.TemporaryDirectory)
+        mock_temp_dir.name = tempfile.mkdtemp()
+        with patch("gc_monitor.pyperf.hook.tempfile.TemporaryDirectory", return_value=mock_temp_dir):
+            with pytest.raises(RuntimeError) as exc_info:
+                gc_monitor_hook()
 
         assert "Failed to run gc-monitor module" in str(exc_info.value)
         assert "Ensure gc-monitor is installed" in str(exc_info.value)
+        mock_temp_dir.cleanup.assert_called_once()
 
     def test_enter_creates_temp_file_path(
         self,
@@ -242,6 +247,24 @@ class TestGCMonitorHookTeardown:
 
         # Temp file should be removed
         assert not temp_file.exists()
+
+    def test_teardown_closes_control_client(
+        self,
+        mock_popen_process: tuple[Mock, Mock],
+        tmp_path: Path,
+    ) -> None:
+        """teardown closes the control plane connection."""
+        _mock_popen, _mock_process = mock_popen_process
+
+        hook = gc_monitor_hook()
+        with hook:
+            pass
+
+        with patch("gc_monitor.pyperf.hook._get_env_pyperf_hook_output", return_value=tmp_path / "out.jsonl"):
+            with patch.object(hook._control_client, "close") as mock_close:
+                hook.teardown({})
+
+        mock_close.assert_called_once()
 
     def test_teardown_combines_multiple_files(
         self,

@@ -83,7 +83,8 @@ class ControlServer:
         return self._full_address
 
     def start(self) -> None:
-        assert not self._running
+        if self._running:
+            raise RuntimeError("ControlServer is already running")
         self._stop_event.clear()
         self._accept_thread.start()
         self._reader_thread.start()
@@ -91,30 +92,35 @@ class ControlServer:
 
         logger.info("Running server on %s", self.address)
 
+    def _safe_accept(self, listener: Listener) -> TConnection | None:
+        try:
+            return _accept(listener)
+        except Exception as e:
+            logger.error("Error accepting connection on control server: %s", e)
+            return None
+
     def _accept_loop(self) -> None:
-        conn: TConnection | None = None
         while not self._stop_event.is_set():
-            try:
-                with self._lock:
-                    listener = self._listener
+            with self._lock:
+                listener = self._listener
 
-                if listener is None:
-                    break
-
-                conn = _accept(listener)
-                with self._lock:
-                    self._connections.add(conn)
-                    conn = None
-            except Exception as e:
-                logger.debug("Error while connecting child: %s", e)
+            if listener is None:
                 break
 
-        if conn is not None:
-            with contextlib.suppress(Exception):
-                conn.close()
-                conn = None
+            conn = self._safe_accept(listener)
+            if conn is None:
+                break
 
-        logger.debug("Stoped accept loop")
+            try:
+                with self._lock:
+                    self._connections.add(conn)
+            except Exception:
+                with contextlib.suppress(Exception):
+                    conn.close()
+                logger.debug("Failed to add connection, continuing")
+                continue
+
+        logger.debug("Stopped accept loop")
 
     def _reader_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -147,7 +153,7 @@ class ControlServer:
         except (EOFError, OSError, ConnectionError):
             to_remove.append(conn)
         except Exception as e:
-            logger.debug("Error while receving data from child: %s", e)
+            logger.debug("Error while receiving data from child: %s", e)
             to_remove.append(conn)
 
         return None
@@ -227,7 +233,7 @@ class ControlServer:
 
         self._close_connections(conns)
 
-    def _close_connections(self, conns:list[TConnection])->None:
+    def _close_connections(self, conns: list[TConnection]) -> None:
         for conn in conns:
             with contextlib.suppress(Exception):
                 conn.close()
