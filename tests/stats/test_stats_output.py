@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 import pytest
 
-from gc_monitor.data import GCStatsInfo, IncrementalGCStatsInfo
+from gc_monitor.data import GCStatsInfo
 from gc_monitor.stats import Stats, StreamingStats
 from gc_monitor.stats_output import TableFormat, _build_rows, _print_table, print_stats
 
@@ -223,7 +223,7 @@ class TestPrintStatsEdgeCases:
     def test_incremental_metrics_output(
         self,
         capsys: pytest.CaptureFixture[str],
-        incremental_gc_stats_item_factory: Callable[..., IncrementalGCStatsInfo],
+        incremental_gc_stats_item_factory: Callable[..., GCStatsInfo],
     ) -> None:
         stats = StreamingStats()
         item = incremental_gc_stats_item_factory(
@@ -239,6 +239,11 @@ class TestPrintStatsEdgeCases:
         assert "GC Mark Alive" in captured.out
         assert "GC Fill Increment" in captured.out
         assert "GC Deduce Unreachable" in captured.out
+        assert "GC Handle Weakrefs Callbacks" in captured.out
+        assert "GC Finalize Garbage" in captured.out
+        assert "GC Handle Resurrected" in captured.out
+        assert "GC Clear Weakrefs" in captured.out
+        assert "GC Delete Garbage" in captured.out
 
     def test_markdown_format(
         self,

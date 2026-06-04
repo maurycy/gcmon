@@ -5,17 +5,22 @@ from typing import Literal, NotRequired, TypedDict
 from ..data import dur_to_us, ts_to_us
 from ..protocol import (
     TGCStatsInfo,
-    TIncrementalGCStatsInfo,
     TInstantMsg,
+    has_clear_weakrefs,
+    has_deduce_unreachable,
+    has_delete_garbage,
+    has_finalize_garbage,
+    has_handle_resurrected,
+    has_handle_weakrefs,
+    has_incremental,
+    has_mark_alive,
     is_gc_stats,
-    is_incremental,
     is_instant,
 )
 
 __all__ = [
     "CounterData",
     "CounterEvent",
-    "IncData",
     "IncrementalEvent",
     "InstantEvent",
     "NameInfo",
@@ -45,13 +50,6 @@ class PauseData(TypedDict):
     candidates: int
     increment_size: NotRequired[int]
     alive_size: NotRequired[int]
-
-
-class IncData(TypedDict):
-    generation: int
-    iid: int
-    increment_size: int
-    alive_size: int
 
 
 class CounterData(TypedDict):
@@ -94,7 +92,7 @@ class IncrementalEvent(TypedDict):
     dur: float
     pid: int
     tid: int
-    args: IncData
+    args: dict[str, int]
 
 
 class CounterEvent(TypedDict):
@@ -159,7 +157,7 @@ def pause_event(
 
 
 def inc_event(
-    pid: int, tid: int, name: str, cat: str, ts_us: int, dur_us: float, args: IncData
+    pid: int, tid: int, name: str, cat: str, ts_us: int, dur_us: float, args: dict[str, int]
 ) -> IncrementalEvent:
     return {
         "name": name,
@@ -196,14 +194,16 @@ def counter_event(pid: int, tid: int, name: str, ts_us: int, args: CounterData) 
     }
 
 
-def convert_item_to_trace_format(pid: int, item: TGCStatsInfo | TIncrementalGCStatsInfo) -> list[TraceEvent]:
-    tid = item.iid
+def convert_item_to_trace_format(pid: int, item: TGCStatsInfo) -> list[TraceEvent]:
+    gen = item.gen
+    iid = item.iid
+    tid = iid
     ts_us = ts_to_us(item.ts_start)
     dur_us = dur_to_us(item.ts_start, item.ts_stop)
 
     pause_data: PauseData = {
-        "generation": item.gen,
-        "iid": item.iid,
+        "generation": gen,
+        "iid": iid,
         "collections": item.collections,
         "heap_size": item.heap_size,
         "collected": item.collected,
@@ -218,77 +218,142 @@ def convert_item_to_trace_format(pid: int, item: TGCStatsInfo | TIncrementalGCSt
         "heap_size": item.heap_size,
     }
 
-    if is_incremental(item):
-        if item.gen < 2:
-            pause_data["increment_size"] = item.increment_size
-            counter_data["increment_size"] = item.increment_size
+    if has_incremental(item) and gen < 2:
+        pause_data["increment_size"] = item.increment_size
+        counter_data["increment_size"] = item.increment_size
 
-        if item.gen > 0:
-            pause_data["alive_size"] = item.alive_size
-            counter_data["alive_size"] = item.alive_size
+    if has_mark_alive(item) and gen > 0:
+        pause_data["alive_size"] = item.alive_size
+        counter_data["alive_size"] = item.alive_size
 
     events: list[TraceEvent] = []
     events.append(
         pause_event(
             pid,
             tid,
-            f"GC Pause (gen={item.gen})",
-            f"gc.pause(gen={item.gen})",
+            f"GC Pause (gen={gen})",
+            f"gc.pause(gen={gen})",
             ts_us,
             dur_us,
             pause_data,
         )
     )
 
-    if is_incremental(item):
-        inc_data: IncData = {
-            "generation": item.gen,
-            "iid": item.iid,
-            "alive_size": item.alive_size,
-            "increment_size": item.increment_size,
-        }
-        if item.ts_mark_alive_stop - item.ts_mark_alive_start > 0:
-            events.append(
-                inc_event(
-                    pid,
-                    tid,
-                    f"Mark Alive (gen={item.gen})",
-                    f"gc.mark.alive(gen={item.gen})",
-                    ts_to_us(item.ts_mark_alive_start),
-                    dur_to_us(item.ts_mark_alive_start, item.ts_mark_alive_stop),
-                    inc_data,
-                )
+    if has_mark_alive(item) and item.ts_mark_alive_stop - item.ts_mark_alive_start > 0:
+        inc_data: dict[str, int] = {"generation": gen, "iid": iid, "alive_size": item.alive_size}
+        events.append(
+            inc_event(
+                pid,
+                tid,
+                f"Mark Alive (gen={gen})",
+                f"gc.mark.alive(gen={gen})",
+                ts_to_us(item.ts_mark_alive_start),
+                dur_to_us(item.ts_mark_alive_start, item.ts_mark_alive_stop),
+                inc_data,
             )
-        if item.ts_fill_increment_stop - item.ts_fill_increment_start > 0:
-            events.append(
-                inc_event(
-                    pid,
-                    tid,
-                    f"Fill increment (gen={item.gen})",
-                    f"gc.increment(gen={item.gen})",
-                    ts_to_us(item.ts_fill_increment_start),
-                    dur_to_us(item.ts_fill_increment_start, item.ts_fill_increment_stop),
-                    inc_data,
-                )
+        )
+
+    if has_incremental(item) and item.ts_fill_increment_stop - item.ts_fill_increment_start > 0:
+        inc_data = {"generation": gen, "iid": iid, "increment_size": item.increment_size}
+        events.append(
+            inc_event(
+                pid,
+                tid,
+                f"Fill increment (gen={gen})",
+                f"gc.increment(gen={gen})",
+                ts_to_us(item.ts_fill_increment_start),
+                dur_to_us(item.ts_fill_increment_start, item.ts_fill_increment_stop),
+                inc_data,
             )
-        if item.ts_deduce_unreachable_stop - item.ts_deduce_unreachable_start > 0:
-            events.append(
-                inc_event(
-                    pid,
-                    tid,
-                    f"Deduce Unreachable (gen={item.gen})",
-                    f"gc.deduce(gen={item.gen})",
-                    ts_to_us(item.ts_deduce_unreachable_start),
-                    dur_to_us(item.ts_deduce_unreachable_start, item.ts_deduce_unreachable_stop),
-                    inc_data,
-                )
+        )
+
+    if has_deduce_unreachable(item) and item.ts_deduce_unreachable_stop - item.ts_deduce_unreachable_start > 0:
+        inc_data = {"generation": gen, "iid": iid}
+        events.append(
+            inc_event(
+                pid,
+                tid,
+                f"Deduce Unreachable (gen={gen})",
+                f"gc.deduce(gen={gen})",
+                ts_to_us(item.ts_deduce_unreachable_start),
+                dur_to_us(item.ts_deduce_unreachable_start, item.ts_deduce_unreachable_stop),
+                inc_data,
             )
+        )
+
+    if has_handle_weakrefs(item) and item.ts_handle_weakref_callbacks_stop - item.ts_handle_weakref_callbacks_start > 0:
+        inc_data = {"generation": gen, "iid": iid}
+        events.append(
+            inc_event(
+                pid, tid,
+                f"Handle Weakrefs Callbacks (gen={gen})",
+                f"gc.weakrefs(gen={gen})",
+                ts_to_us(item.ts_handle_weakref_callbacks_start),
+                dur_to_us(item.ts_handle_weakref_callbacks_start, item.ts_handle_weakref_callbacks_stop),
+                inc_data,
+            )
+        )
+
+    if (has_finalize_garbage(item) and has_handle_weakrefs(item)
+            and item.ts_finalize_garbage_stop - item.ts_handle_weakref_callbacks_stop > 0):
+        inc_data = {"generation": gen, "iid": iid}
+        events.append(
+            inc_event(
+                pid, tid,
+                f"Finalize Garbage (gen={gen})",
+                f"gc.finalize(gen={gen})",
+                ts_to_us(item.ts_handle_weakref_callbacks_stop),
+                dur_to_us(item.ts_handle_weakref_callbacks_stop, item.ts_finalize_garbage_stop),
+                inc_data,
+            )
+        )
+
+    if (has_handle_resurrected(item) and has_finalize_garbage(item)
+            and item.ts_handle_resurected_stop - item.ts_finalize_garbage_stop > 0):
+        inc_data = {"generation": gen, "iid": iid}
+        events.append(
+            inc_event(
+                pid, tid,
+                f"Handle Resurrected (gen={gen})",
+                f"gc.resurrect(gen={gen})",
+                ts_to_us(item.ts_finalize_garbage_stop),
+                dur_to_us(item.ts_finalize_garbage_stop, item.ts_handle_resurected_stop),
+                inc_data,
+            )
+        )
+
+    if (has_clear_weakrefs(item) and has_handle_resurrected(item)
+            and item.ts_clear_weakrefs_stop - item.ts_handle_resurected_stop > 0):
+        inc_data = {"generation": gen, "iid": iid}
+        events.append(
+            inc_event(
+                pid, tid,
+                f"Clear Weakrefs (gen={gen})",
+                f"gc.clear_weakrefs(gen={gen})",
+                ts_to_us(item.ts_handle_resurected_stop),
+                dur_to_us(item.ts_handle_resurected_stop, item.ts_clear_weakrefs_stop),
+                inc_data,
+            )
+        )
+
+    if has_delete_garbage(item) and item.ts_delete_garbage_stop - item.ts_delete_garbage_start > 0:
+        inc_data = {"generation": gen, "iid": iid}
+        events.append(
+            inc_event(
+                pid, tid,
+                f"Delete Garbage (gen={gen})",
+                f"gc.delete(gen={gen})",
+                ts_to_us(item.ts_delete_garbage_start),
+                dur_to_us(item.ts_delete_garbage_start, item.ts_delete_garbage_stop),
+                inc_data,
+            )
+        )
 
     events.append(
         counter_event(
             pid,
             tid,
-            f"G{item.gen}",
+            f"G{gen}",
             ts_us,
             counter_data,
         )
@@ -298,7 +363,7 @@ def convert_item_to_trace_format(pid: int, item: TGCStatsInfo | TIncrementalGCSt
 
 
 def convert_to_trace_format(
-    items: dict[int, list[TGCStatsInfo | TIncrementalGCStatsInfo | TInstantMsg]]
+    items: dict[int, list[TGCStatsInfo | TInstantMsg]]
 ) -> list[TraceEvent]:
     events: list[TraceEvent] = []
     for pid, pid_items in items.items():

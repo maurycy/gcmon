@@ -1,6 +1,27 @@
 from collections.abc import Mapping
 from typing import Protocol, TypeGuard
 
+__all__ = [
+    "TExtraTimes",
+    "TGCStatsInfo",
+    "TIncrementalInfo",
+    "TInstantMsg",
+    "TMarkAliveInfo",
+    "has_clear_weakrefs",
+    "has_deduce_unreachable",
+    "has_delete_garbage",
+    "has_finalize_garbage",
+    "has_gen",
+    "has_handle_resurrected",
+    "has_handle_weakrefs",
+    "has_incremental",
+    "has_mark_alive",
+    "has_pause_ts",
+    "is_gc_stats",
+    "is_instant",
+    "to_mapping",
+]
+
 
 class TGCStatsInfo(Protocol):
     gen: int
@@ -15,15 +36,28 @@ class TGCStatsInfo(Protocol):
     duration: float
 
 
-class TIncrementalGCStatsInfo(TGCStatsInfo, Protocol):
+class TIncrementalInfo(Protocol):
     increment_size: int
+    ts_fill_increment_start: int
+    ts_fill_increment_stop: int
+
+
+class TMarkAliveInfo(Protocol):
     alive_size: int
     ts_mark_alive_start: int
     ts_mark_alive_stop: int
-    ts_fill_increment_start: int
-    ts_fill_increment_stop: int
+
+
+class TExtraTimes(Protocol):
     ts_deduce_unreachable_start: int
     ts_deduce_unreachable_stop: int
+    ts_handle_weakref_callbacks_start:int
+    ts_handle_weakref_callbacks_stop:int
+    ts_finalize_garbage_stop:int
+    ts_handle_resurected_stop:int
+    ts_clear_weakrefs_stop:int
+    ts_delete_garbage_start:int
+    ts_delete_garbage_stop:int
 
 
 class TInstantMsg(Protocol):
@@ -32,18 +66,44 @@ class TInstantMsg(Protocol):
     ts: int
 
 
-def is_gc_stats(item: TGCStatsInfo | TIncrementalGCStatsInfo | TInstantMsg) -> TypeGuard[TGCStatsInfo | TIncrementalGCStatsInfo]:
+def has_pause_ts(item: object) -> TypeGuard[TGCStatsInfo]:
+    return getattr(item, "ts_start", None) is not None
+
+def has_incremental(item: object) -> TypeGuard[TIncrementalInfo]:
+    return getattr(item, "increment_size", None) is not None
+
+def has_mark_alive(item: object) -> TypeGuard[TMarkAliveInfo]:
+    return getattr(item, "alive_size", None) is not None
+
+def has_deduce_unreachable(item: object) -> TypeGuard[TExtraTimes]:
+    return getattr(item, "ts_deduce_unreachable_start", None) is not None
+
+def has_handle_weakrefs(item: object) -> TypeGuard[TExtraTimes]:
+    return getattr(item, "ts_handle_weakref_callbacks_start", None) is not None
+
+def has_finalize_garbage(item: object) -> TypeGuard[TExtraTimes]:
+    return getattr(item, "ts_finalize_garbage_stop", None) is not None
+
+def has_handle_resurrected(item: object) -> TypeGuard[TExtraTimes]:
+    return getattr(item, "ts_handle_resurected_stop", None) is not None
+
+def has_clear_weakrefs(item: object) -> TypeGuard[TExtraTimes]:
+    return getattr(item, "ts_clear_weakrefs_stop", None) is not None
+
+def has_delete_garbage(item: object) -> TypeGuard[TExtraTimes]:
+    return getattr(item, "ts_delete_garbage_start", None) is not None
+
+def has_gen(item: object) -> TypeGuard[TGCStatsInfo]:
     return hasattr(item, "gen")
 
-def is_incremental(item: TGCStatsInfo | TIncrementalGCStatsInfo) -> TypeGuard[TIncrementalGCStatsInfo]:
-    return hasattr(item, "increment_size")
+def is_gc_stats(item: object) -> TypeGuard[TGCStatsInfo]:
+    return hasattr(item, "gen")
 
-
-def is_instant(item: TGCStatsInfo | TIncrementalGCStatsInfo | TInstantMsg) -> TypeGuard[TInstantMsg]:
+def is_instant(item: object) -> TypeGuard[TInstantMsg]:
     return hasattr(item, "type")
 
 
-def to_mapping(item: TGCStatsInfo | TIncrementalGCStatsInfo | TInstantMsg) -> Mapping[str, str | int | float]:
+def to_mapping(item: TGCStatsInfo | TInstantMsg) -> Mapping[str, str | int | float]:
     if is_instant(item):
         return {
             "type": item.type,
@@ -51,7 +111,7 @@ def to_mapping(item: TGCStatsInfo | TIncrementalGCStatsInfo | TInstantMsg) -> Ma
             "ts": item.ts,
         }
 
-    if is_gc_stats(item):
+    if has_gen(item):
         m: dict[str, str | int | float] = {
             "gen": item.gen,
             "iid": item.iid,
@@ -65,15 +125,36 @@ def to_mapping(item: TGCStatsInfo | TIncrementalGCStatsInfo | TInstantMsg) -> Ma
             "duration": item.duration,
         }
 
-        if is_incremental(item):
-            m["alive_size"] = item.alive_size
+        if has_incremental(item):
             m["increment_size"] = item.increment_size
-            m["ts_mark_alive_start"] = item.ts_mark_alive_start
-            m["ts_mark_alive_stop"] = item.ts_mark_alive_stop
             m["ts_fill_increment_start"] = item.ts_fill_increment_start
             m["ts_fill_increment_stop"] = item.ts_fill_increment_stop
+
+        if has_mark_alive(item):
+            m["alive_size"] = item.alive_size
+            m["ts_mark_alive_start"] = item.ts_mark_alive_start
+            m["ts_mark_alive_stop"] = item.ts_mark_alive_stop
+
+        if has_deduce_unreachable(item):
             m["ts_deduce_unreachable_start"] = item.ts_deduce_unreachable_start
             m["ts_deduce_unreachable_stop"] = item.ts_deduce_unreachable_stop
+
+        if has_handle_weakrefs(item):
+            m["ts_handle_weakref_callbacks_start"] = item.ts_handle_weakref_callbacks_start
+            m["ts_handle_weakref_callbacks_stop"] = item.ts_handle_weakref_callbacks_stop
+
+        if has_finalize_garbage(item):
+            m["ts_finalize_garbage_stop"] = item.ts_finalize_garbage_stop
+
+        if has_handle_resurrected(item):
+            m["ts_handle_resurected_stop"] = item.ts_handle_resurected_stop
+
+        if has_clear_weakrefs(item):
+            m["ts_clear_weakrefs_stop"] = item.ts_clear_weakrefs_stop
+
+        if has_delete_garbage(item):
+            m["ts_delete_garbage_start"] = item.ts_delete_garbage_start
+            m["ts_delete_garbage_stop"] = item.ts_delete_garbage_stop
 
         return m
 

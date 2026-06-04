@@ -25,8 +25,9 @@ from gc_monitor.exporters.chrome_trace_format import (
     process_meta,
     thread_meta,
 )
-from gc_monitor.protocol import is_incremental
+from gc_monitor.protocol import has_incremental
 
+from tests.data_helpers import create_instant_msg
 from tests.helpers import create_mock_stats_item, create_jsonl_record
 
 
@@ -45,6 +46,13 @@ def _make_inc_item(
         ts_fill_increment_stop=ts_start + 200,
         ts_deduce_unreachable_start=ts_start + 200,
         ts_deduce_unreachable_stop=ts_start + 300,
+        ts_handle_weakref_callbacks_start=ts_start + 300,
+        ts_handle_weakref_callbacks_stop=ts_start + 400,
+        ts_finalize_garbage_stop=ts_start + 500,
+        ts_handle_resurected_stop=ts_start + 600,
+        ts_clear_weakrefs_stop=ts_start + 700,
+        ts_delete_garbage_start=ts_start + 800,
+        ts_delete_garbage_stop=ts_start + 900,
     )
 
 
@@ -62,6 +70,13 @@ def _make_inc_jsonl_record(
         "ts_fill_increment_stop": ts_start + 200,
         "ts_deduce_unreachable_start": ts_start + 200,
         "ts_deduce_unreachable_stop": ts_start + 300,
+        "ts_handle_weakref_callbacks_start": ts_start + 300,
+        "ts_handle_weakref_callbacks_stop": ts_start + 400,
+        "ts_finalize_garbage_stop": ts_start + 500,
+        "ts_handle_resurected_stop": ts_start + 600,
+        "ts_clear_weakrefs_stop": ts_start + 700,
+        "ts_delete_garbage_start": ts_start + 800,
+        "ts_delete_garbage_stop": ts_start + 900,
     })
     return record
 
@@ -82,7 +97,7 @@ class TestJsonToItem:
         data = _make_inc_jsonl_record(pid=456, gen=1, increment_size=500)
         pid, item = json_to_item(data)
         assert pid == 456
-        assert is_incremental(item)
+        assert has_incremental(item)
         assert item.increment_size == 500
 
     def test_pid_as_string(self) -> None:
@@ -140,7 +155,7 @@ class TestReadJsonl:
         record = _make_inc_jsonl_record(pid=1)
         path.write_text(msgspec.json.encode(record).decode() + "\n", encoding="utf-8")
         result = read_jsonl(path)
-        assert is_incremental(result[1][0])
+        assert has_incremental(result[1][0])
 
     def test_raises_on_malformed_json(self, tmp_path: Path) -> None:
         path = tmp_path / "bad.jsonl"
@@ -242,6 +257,16 @@ class TestWriteJsonl:
         assert len(lines) == 2
         assert all(json.loads(l)["pid"] == 1 for l in lines)
 
+    def test_writes_instant_msg(self, tmp_path: Path) -> None:
+        path = tmp_path / "out.jsonl"
+        item = create_instant_msg(name="event", ts=1_000)
+        write_jsonl(path, {1: [item]})
+        lines = path.read_text(encoding="utf-8").strip().split("\n")
+        assert len(lines) == 1
+        record = json.loads(lines[0])
+        assert record["type"] == "i"
+        assert "tid" not in record
+
 
 # =============================================================================
 # _parse_events tests
@@ -318,6 +343,16 @@ class TestParseEvents:
         ])
         result = _parse_events(raw)
         assert len(result) == 0
+
+    def test_parses_instant_event(self) -> None:
+        raw = json.dumps([
+            {"ph": "I", "name": "marker", "ts": 5000, "pid": 1, "s": "p"},
+        ])
+        result = _parse_events(raw)
+        assert len(result) == 1
+        assert result[0]["ph"] == "I"
+        assert result[0]["name"] == "marker"
+        assert result[0]["ts"] == 5000
 
     def test_raises_on_non_dict_args(self) -> None:
         raw = json.dumps([
@@ -415,6 +450,12 @@ class TestNormalizeJsonlTimestamps:
         assert inc.ts_mark_alive_start == 2000
         assert inc.ts_mark_alive_stop == 2100
 
+    def test_instant_only_normalize(self) -> None:
+        item = create_instant_msg(name="event", ts=5_000)
+        items = {1: [item]}
+        _normalize_jsonl_timestamps(items)
+        assert item.ts == 0
+
     def test_multiple_pids(self) -> None:
         item1 = _make_inc_item(ts_start=10000, ts_stop=11000)
         item2 = _make_inc_item(ts_start=5000, ts_stop=6000)
@@ -456,6 +497,11 @@ class TestConvertJsonlToTraceFormat:
         assert any("Mark Alive" in e["name"] for e in pause_events)
         assert any("Fill increment" in e["name"] for e in pause_events)
         assert any("Deduce Unreachable" in e["name"] for e in pause_events)
+        assert any("Handle Weakrefs" in e["name"] for e in pause_events)
+        assert any("Finalize Garbage" in e["name"] for e in pause_events)
+        assert any("Handle Resurrected" in e["name"] for e in pause_events)
+        assert any("Clear Weakrefs" in e["name"] for e in pause_events)
+        assert any("Delete Garbage" in e["name"] for e in pause_events)
 
     def test_multiple_pids_generates_metadata(self, tmp_path: Path) -> None:
         path = tmp_path / "multi.jsonl"
@@ -571,6 +617,23 @@ class TestCombineFiles:
         records = [json.loads(l) for l in out.read_text(encoding="utf-8").strip().split("\n") if l]
         assert len(records) == 2
         assert {r["pid"] for r in records} == {1, 2}
+
+    def test_jsonl_to_jsonl_append_same_pid(self, tmp_path: Path) -> None:
+        f1 = tmp_path / "a.jsonl"
+        f2 = tmp_path / "b.jsonl"
+        out = tmp_path / "out.jsonl"
+        r1 = create_jsonl_record(pid=1, ts_start=1000, ts_stop=2000)
+        r2 = create_jsonl_record(pid=1, ts_start=3000, ts_stop=4000)
+        for f, lines in [(f1, [r1]), (f2, [r2])]:
+            f.write_text(
+                "\n".join(msgspec.json.encode(r).decode() for r in lines) + "\n",
+                encoding="utf-8",
+            )
+        combine_files([f1, f2], out, input_format="jsonl", output_format="jsonl")
+        records = [json.loads(l) for l in out.read_text(encoding="utf-8").strip().split("\n") if l]
+        assert len(records) == 2
+        assert records[0]["ts_start"] == 1000
+        assert records[1]["ts_start"] == 3000
 
     def test_jsonl_to_chrome_multiple_files(self, tmp_path: Path) -> None:
         f1 = tmp_path / "a.jsonl"
