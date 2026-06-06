@@ -172,7 +172,7 @@ class HandleResurrectedMetric:
 
     def get_values(self, item: object) -> tuple[int, int]:
         if has_handle_resurrected(item):
-            return item.ts_finalize_garbage_stop, item.ts_handle_resurected_stop
+            return item.ts_finalize_garbage_stop, item.ts_handle_resurrected_stop
         return 0, 0
 
 class ClearWeakrefsMetric:
@@ -181,7 +181,7 @@ class ClearWeakrefsMetric:
 
     def get_values(self, item: object) -> tuple[int, int]:
         if has_clear_weakrefs(item):
-            return item.ts_handle_resurected_stop, item.ts_clear_weakrefs_stop
+            return item.ts_handle_resurrected_stop, item.ts_clear_weakrefs_stop
         return 0, 0
 
 class DeleteGarbageMetric:

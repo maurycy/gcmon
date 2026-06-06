@@ -213,7 +213,7 @@ class TestHandleResurrectedMetric:
         metric = HandleResurrectedMetric()
         item = incremental_gc_stats_item_factory(
             ts_finalize_garbage_stop=8000,
-            ts_handle_resurected_stop=9000,
+            ts_handle_resurrected_stop=9000,
         )
         ts_start, ts_stop = metric.get_values(item)
         assert ts_start == 8000
@@ -243,7 +243,7 @@ class TestClearWeakrefsMetric:
     ) -> None:
         metric = ClearWeakrefsMetric()
         item = incremental_gc_stats_item_factory(
-            ts_handle_resurected_stop=8000,
+            ts_handle_resurrected_stop=8000,
             ts_clear_weakrefs_stop=9000,
         )
         ts_start, ts_stop = metric.get_values(item)

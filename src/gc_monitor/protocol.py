@@ -77,13 +77,13 @@ class THandleWeakrefsInfo(Protocol):
 
 class TClearWeakrefsInfo(Protocol):
     clear_weakrefs_count: int
-    ts_handle_resurected_stop:int
+    ts_handle_resurrected_stop:int
     ts_clear_weakrefs_stop:int
 
 
 class THandleResurrectedInfo(Protocol):
     ts_finalize_garbage_stop:int
-    ts_handle_resurected_stop:int
+    ts_handle_resurrected_stop:int
 
 
 class TInstantMsg(Protocol):
@@ -111,7 +111,7 @@ def has_finalize_garbage(item: object) -> TypeGuard[TFinalizeGarbageInfo]:
     return getattr(item, "ts_finalize_garbage_stop", None) is not None
 
 def has_handle_resurrected(item: object) -> TypeGuard[THandleResurrectedInfo]:
-    return getattr(item, "ts_handle_resurected_stop", None) is not None
+    return getattr(item, "ts_handle_resurrected_stop", None) is not None
 
 def has_clear_weakrefs(item: object) -> TypeGuard[TClearWeakrefsInfo]:
     return getattr(item, "ts_clear_weakrefs_stop", None) is not None
@@ -174,7 +174,7 @@ def to_mapping(item: TGCStatsInfo | TInstantMsg) -> Mapping[str, str | int | flo
             m["finalized_garbage_count"] = item.finalized_garbage_count
 
         if has_handle_resurrected(item):
-            m["ts_handle_resurected_stop"] = item.ts_handle_resurected_stop
+            m["ts_handle_resurrected_stop"] = item.ts_handle_resurrected_stop
 
         if has_clear_weakrefs(item):
             m["ts_clear_weakrefs_stop"] = item.ts_clear_weakrefs_stop

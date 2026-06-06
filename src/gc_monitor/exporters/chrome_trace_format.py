@@ -326,7 +326,7 @@ def convert_item_to_trace_format(pid: int, item: TGCStatsInfo) -> list[TraceEven
         )
 
     if (has_handle_resurrected(item)
-            and item.ts_handle_resurected_stop - item.ts_finalize_garbage_stop > 0):
+            and item.ts_handle_resurrected_stop - item.ts_finalize_garbage_stop > 0):
         inc_data = {"generation": gen, "iid": iid}
         events.append(
             inc_event(
@@ -334,21 +334,21 @@ def convert_item_to_trace_format(pid: int, item: TGCStatsInfo) -> list[TraceEven
                 f"Handle Resurrected (gen={gen})",
                 f"gc.resurrect(gen={gen})",
                 ts_to_us(item.ts_finalize_garbage_stop),
-                dur_to_us(item.ts_finalize_garbage_stop, item.ts_handle_resurected_stop),
+                dur_to_us(item.ts_finalize_garbage_stop, item.ts_handle_resurrected_stop),
                 inc_data,
             )
         )
 
     if (has_clear_weakrefs(item)
-            and item.ts_clear_weakrefs_stop - item.ts_handle_resurected_stop > 0):
+            and item.ts_clear_weakrefs_stop - item.ts_handle_resurrected_stop > 0):
         inc_data = {"generation": gen, "iid": iid}
         events.append(
             inc_event(
                 pid, tid,
                 f"Clear Weakrefs (gen={gen})",
                 f"gc.clear_weakrefs(gen={gen})",
-                ts_to_us(item.ts_handle_resurected_stop),
-                dur_to_us(item.ts_handle_resurected_stop, item.ts_clear_weakrefs_stop),
+                ts_to_us(item.ts_handle_resurrected_stop),
+                dur_to_us(item.ts_handle_resurrected_stop, item.ts_clear_weakrefs_stop),
                 inc_data,
             )
         )

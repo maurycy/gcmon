@@ -179,7 +179,7 @@ def _normalize_jsonl_timestamps(items: dict[int, list[TGCStatsInfo | TInstantMsg
                 if has_finalize_garbage(item):
                     item.ts_finalize_garbage_stop -= min_ts
                 if has_handle_resurrected(item):
-                    item.ts_handle_resurected_stop -= min_ts
+                    item.ts_handle_resurrected_stop -= min_ts
                 if has_clear_weakrefs(item):
                     item.ts_clear_weakrefs_stop -= min_ts
                 if has_delete_garbage(item):

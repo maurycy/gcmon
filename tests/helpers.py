@@ -129,7 +129,7 @@ def create_mock_incremental_item(**kwargs: object) -> GCStatsInfo:
         ts_handle_weakref_callbacks_stop=1_504_000_000,
         ts_finalize_garbage_stop=1_505_000_000,
         finalized_garbage_count=42,
-        ts_handle_resurected_stop=1_506_000_000,
+        ts_handle_resurrected_stop=1_506_000_000,
         ts_clear_weakrefs_stop=1_507_000_000,
         clear_weakrefs_count=7,
         ts_delete_garbage_start=1_508_000_000,
