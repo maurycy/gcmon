@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from gc_monitor.exporters import JsonlExporter, TraceExporter
+from gc_monitor.exporters import JsonlExporter, PerfettoExporter, TraceExporter
 
 
 @pytest.fixture
@@ -41,9 +41,23 @@ def trace_exporter(tmp_path: Path) -> Callable[..., tuple[TraceExporter, Path]]:
 
 
 @pytest.fixture
+def perfetto_exporter(tmp_path: Path) -> Callable[..., tuple[PerfettoExporter, Path]]:
+    """Factory fixture for PerfettoExporter instances.
+
+    Usage:
+        exporter, path = perfetto_exporter(threshold=50)
+    """
+    def _make(threshold: int = 100) -> tuple[PerfettoExporter, Path]:
+        path = tmp_path / "trace.pb"
+        exporter = PerfettoExporter(output_path=path, flush_threshold=threshold)
+        return exporter, path
+    return _make
+
+
+@pytest.fixture
 def read_jsonl() -> Callable[..., list[dict[str, Any]]]:
     """Read a JSONL file and return list of parsed events."""
     def _read(path: Path) -> list[dict[str, Any]]:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             return [json.loads(line) for line in f if line.strip()]
     return _read
