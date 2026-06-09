@@ -1,8 +1,11 @@
 """Integration tests for the run command."""
 
-import json
+import os
 import subprocess
 import sys
+import tempfile
+import threading
+import time
 from argparse import Namespace
 from pathlib import Path
 from typing import Any
@@ -12,7 +15,6 @@ import pytest
 
 from gc_monitor.exporters.chrome_trace_io import read_jsonl
 
-from tests.monitoring.conftest import MonitorArgsFactory
 from tests.helpers import assert_valid_chrome_trace_format
 
 
@@ -60,53 +62,152 @@ sys.stdout.flush()
 """
     return script + "\n".join([str(s) for s in args]) + "\nsys.stdout.flush()\nsys.exit(0)"
 
-def run_script(script_file: Path, *script_args: str, gc_args: list[str] | None = None) -> subprocess.CompletedProcess[str]:
-    gc_opts = gc_args or []
+
+def _print_output(tool: str, pid: int, result: subprocess.CompletedProcess[str] | subprocess.TimeoutExpired) -> None:
+    print(f"--- {tool} PID {pid} ---")
+    out = getattr(result, "stdout", None) or getattr(result, "output", "")
+    err = getattr(result, "stderr", None) or ""
+    if out:
+        print("STDOUT")
+        print(out)
+    if err:
+        print("STDERR")
+        print(err)
+    print(f"--- end {tool} ---")
+
+
+def _check_process_alive(pid: int) -> bool:
     try:
-        proc = subprocess.run(
-            [
-                sys.executable,
-                "-u",
-                "-m",
-                "gc_monitor",
-                "run",
-                *gc_opts,
-                "-s",
-                str(script_file.as_posix()),
-            ] + list(script_args),
+        result = subprocess.run(
+            ["kill", "-0", str(pid)],
+            capture_output=True,
+            timeout=3,
+        )
+        if result.returncode != 0:
+            print(f"PID {pid}: process not found (exit code {result.returncode})")
+            return False
+    except subprocess.TimeoutExpired as exc:
+        _print_output("kill", pid, exc)
+    except Exception as e:
+        print(f"PID {pid}: kill -0 failed ({e}), assuming alive")
+
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "state="],
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=3,
         )
-        return proc
+        state = result.stdout.strip()
+        if state == "Z":
+            print(f"PID {pid}: zombie state, skipping diagnostic tools")
+            return False
+        print(f"PID {pid}: state={state}")
     except subprocess.TimeoutExpired as exc:
-        print(exc.stdout)
-        print(exc.stderr)
+        _print_output("ps", pid, exc)
+    except Exception as e:
+        print(f"PID {pid}: ps failed ({e})")
+
+    return True
+
+
+
+def _sample_process(pid: int) -> None:
+    if sys.platform != "darwin":
+        return
+
+    if not _check_process_alive(pid):
+        return
+
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            spindump_path = os.path.join(tmpdir, "spindump.txt")
+            subprocess.run(
+                ["sudo", "spindump", str(pid), "1", "-file", spindump_path],
+                timeout=15,
+            )
+            if os.path.exists(spindump_path):
+                with open(spindump_path) as f:
+                    print(f"--- spindump PID {pid} ---")
+                    print(f.read())
+                    print("--- end spindump ---")
+    except subprocess.TimeoutExpired as exc:
+        _print_output("spindump", pid, exc)
+    except Exception as e:
+        print(f"spindump PID {pid} failed: {e}")
+
+
+def _popen_with_timeout(cmd: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+    buf: list[str] = []
+
+    def reader() -> None:
+        for line in iter(proc.stdout.readline, ""):
+            buf.append(line)
+
+    reader_thread = threading.Thread(target=reader, daemon=True)
+    reader_thread.start()
+
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _sample_process(proc.pid)
+            proc.kill()
+            proc.wait()
+            reader_thread.join(timeout=5)
+            raise subprocess.TimeoutExpired(cmd, timeout, output="".join(buf))
+        try:
+            ret = proc.wait(timeout=min(0.1, remaining))
+        except subprocess.TimeoutExpired:
+            continue
+        reader_thread.join(timeout=5)
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=ret, stdout="".join(buf), stderr=""
+        )
+
+
+def run_script(script_file: Path, *script_args: str, gc_args: list[str] | None = None) -> subprocess.CompletedProcess[str]:
+    gc_opts = gc_args or []
+    cmd = [
+        sys.executable,
+        "-u",
+        "-m",
+        "gc_monitor",
+        "run",
+        *gc_opts,
+        "-s",
+        str(script_file.as_posix()),
+    ] + list(script_args)
+    try:
+        return _popen_with_timeout(cmd, timeout=5)
+    except subprocess.TimeoutExpired as exc:
+        _print_output("run_script", -1, exc)
         raise
 
 
 def run_module(module_name: str, *script_args: str, gc_args: list[str] | None = None) -> subprocess.CompletedProcess[str]:
     gc_opts = gc_args or []
+    cmd = [
+        sys.executable,
+        "-u",
+        "-m",
+        "gc_monitor",
+        "run",
+        *gc_opts,
+        "-m",
+        str(module_name),
+    ] + list(script_args)
     try:
-        proc = subprocess.run(
-            [
-                sys.executable,
-                "-u",
-                "-m",
-                "gc_monitor",
-                "run",
-                *gc_opts,
-                "-m",
-                str(module_name),
-            ] + list(script_args),
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        return proc
+        return _popen_with_timeout(cmd, timeout=5)
     except subprocess.TimeoutExpired as exc:
-        print(exc.stdout)
-        print(exc.stderr)
+        _print_output("run_module", -1, exc)
         raise
 
 
