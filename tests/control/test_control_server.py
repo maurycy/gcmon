@@ -1,8 +1,8 @@
 """Tests for the control plane (ControlServer)."""
 
 import sys
-import time
 import threading
+import time
 from multiprocessing.connection import Client
 from unittest.mock import MagicMock, patch
 
@@ -10,7 +10,6 @@ import pytest
 
 from gcmon.control.control_server import (
     CONTROL_ADDRESS_ENV,
-    ControlMsg,
     ControlServer,
     set_control_env,
 )
@@ -107,6 +106,76 @@ class TestControlServerInit:
 # =============================================================================
 # Start tests
 # =============================================================================
+
+
+class TestControlServerStartFailure:
+    """Regression tests for BUG-30: start() must not leak state on failure."""
+
+    def _stub_threads(self, server: ControlServer, fail_on: int) -> None:
+        calls = {"n": 0}
+        accept = MagicMock(name="accept_thread")
+        reader = MagicMock(name="reader_thread")
+
+        def start_side_effect() -> None:
+            calls["n"] += 1
+            if calls["n"] == fail_on:
+                raise RuntimeError(f"simulated start failure on call {fail_on}")
+
+        accept.start.side_effect = start_side_effect
+        reader.start.side_effect = start_side_effect
+        server._accept_thread = accept
+        server._reader_thread = reader
+
+    def test_start_when_accept_thread_fails_does_not_mark_running(
+        self,
+        server_not_started: ControlServer,
+    ) -> None:
+        self._stub_threads(server_not_started, fail_on=1)
+
+        with pytest.raises(RuntimeError, match="simulated start failure on call 1"):
+            server_not_started.start()
+
+        assert server_not_started.is_running() is False
+        server_not_started._reader_thread.start.assert_not_called()
+        assert server_not_started._listener is not None
+        assert server_not_started.address
+        server_not_started.close()
+
+    def test_start_when_reader_thread_fails_joins_accept_thread(
+        self,
+        server_not_started: ControlServer,
+    ) -> None:
+        self._stub_threads(server_not_started, fail_on=2)
+
+        with pytest.raises(RuntimeError, match="simulated start failure on call 2"):
+            server_not_started.start()
+
+        assert server_not_started.is_running() is False
+        server_not_started._accept_thread.start.assert_called_once()
+        server_not_started._reader_thread.start.assert_called_once()
+        server_not_started._accept_thread.join.assert_called()
+        server_not_started._reader_thread.join.assert_called()
+        assert server_not_started._listener is not None
+        assert server_not_started.address
+        server_not_started.close()
+
+    def test_double_start_raises_and_leaves_state_intact(
+        self,
+        server_not_started: ControlServer,
+    ) -> None:
+        self._stub_threads(server_not_started, fail_on=0)
+        try:
+            server_not_started.start()
+            assert server_not_started.is_running() is True
+            first_addr = server_not_started.address
+
+            with pytest.raises(RuntimeError, match="already running"):
+                server_not_started.start()
+
+            assert server_not_started.is_running() is True
+            assert server_not_started.address == first_addr
+        finally:
+            server_not_started.close()
 
 
 class TestControlServerStart:
@@ -638,6 +707,15 @@ class TestControlServerClose:
         server = self._make_server()
         server.close()
         server.close()
+
+    def test_address_raises_after_listener_cleared(
+        self,
+        server_not_started: ControlServer,
+    ) -> None:
+        assert server_not_started._listener is not None
+        server_not_started._listener = None
+        with pytest.raises(RuntimeError, match="closed or not initialized"):
+            _ = server_not_started.address
 
 
 # =============================================================================

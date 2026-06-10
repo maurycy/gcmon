@@ -31,10 +31,10 @@ if sys.platform == "win32":
         return rf"\\.\pipe\{_PREFIX}{name}"
 
     def _accept(listener: Listener) -> PipeConnection:
-        return listener.accept() # type: ignore
+        return listener.accept()  # type: ignore
 
     def _wait(conns: list[PipeConnection]) -> list[PipeConnection]:
-        return wait(conns, timeout=READER_POLL_INTERVAL) # type: ignore
+        return wait(conns, timeout=READER_POLL_INTERVAL)  # type: ignore
 else:
     TConnection = Connection
 
@@ -45,7 +45,7 @@ else:
         return listener.accept()
 
     def _wait(conns: list[Connection]) -> list[Connection]:
-        return wait(conns, timeout=READER_POLL_INTERVAL) # type: ignore
+        return wait(conns, timeout=READER_POLL_INTERVAL)  # type: ignore
 
 
 class ControlMsg(msgspec.Struct):
@@ -62,33 +62,39 @@ class ControlServer:
     """
 
     def __init__(self, exporter: EventsExporter, address: str | None = None) -> None:
-        full_address = _make_address(address) if address is not None else None
-        self._listener: Listener|None = Listener(full_address)
-        assert isinstance(self._listener.address, str)
-        self._full_address = self._listener.address
         self._connections: set[TConnection] = set()
         self._enabled: dict[int, bool] = {}
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._running = False
         self._exporter: EventsExporter = exporter
-        self._accept_thread: threading.Thread = threading.Thread(
-            target=self._accept_loop, daemon=True
-        )
-        self._reader_thread: threading.Thread = threading.Thread(
-            target=self._reader_loop, daemon=True
-        )
+        self._accept_thread = threading.Thread(target=self._accept_loop, daemon=True)
+        self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
+
+        full_address = _make_address(address) if address is not None else None
+        self._listener: Listener | None = Listener(full_address)
 
     @property
     def address(self) -> str:
-        return self._full_address
+        if self._listener is None:
+            raise RuntimeError("ControlServer is closed or not initialized")
+        addr = self._listener.address
+        assert isinstance(addr, str)
+        return addr
 
     def start(self) -> None:
         if self._running:
             raise RuntimeError("ControlServer is already running")
         self._stop_event.clear()
-        self._accept_thread.start()
-        self._reader_thread.start()
+        try:
+            self._accept_thread.start()
+            self._reader_thread.start()
+        except BaseException:
+            with contextlib.suppress(Exception):
+                self._accept_thread.join(0.1)
+            with contextlib.suppress(Exception):
+                self._reader_thread.join(0.1)
+            raise
         self._running = True
 
         logger.info("Running server on %s", self.address)
@@ -151,7 +157,7 @@ class ControlServer:
         try:
             msg = conn.recv()
             return msgspec.convert(msg, ControlMsg)
-        except (EOFError, OSError, ConnectionError):
+        except EOFError, OSError, ConnectionError:
             to_remove.append(conn)
         except Exception as e:
             logger.debug("Error while receiving data from child: %s", e)
