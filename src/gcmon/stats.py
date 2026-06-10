@@ -80,6 +80,8 @@ class Stats:
         return self._sum / self._count
 
     def percentile(self, p: int) -> float:
+        if not 0 <= p <= 100:
+            raise ValueError(f"percentile must be in [0, 100], got {p}")
         if self._percentiles is not None:
             return self._percentiles.get(p, 0.0)
         if self._sketch is not None and self._count >= self.MAX_BUFFER_LEN:

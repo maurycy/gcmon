@@ -196,3 +196,41 @@ class TestStatsNonNumbers:
         assert stats_without_ddsketch.count() == 1
         assert stats_without_ddsketch.sum() == float("inf")
         assert stats_without_ddsketch.average() == float("inf")
+
+
+class TestStatsPercentileValidation:
+    """Tests for Stats.percentile input validation (BUG-32)."""
+
+    def test_negative_raises_value_error(self, stats_with_data: Stats) -> None:
+        with pytest.raises(ValueError, match=r"percentile must be in \[0, 100\]"):
+            stats_with_data.percentile(-1)
+
+    def test_zero_is_valid(self, stats_with_data: Stats) -> None:
+        result = stats_with_data.percentile(0)
+        assert result == 100.0
+
+    def test_hundred_is_valid(self, stats_with_data: Stats) -> None:
+        result = stats_with_data.percentile(100)
+        assert result == 500.0
+
+    def test_above_hundred_raises_value_error(self, stats_with_data: Stats) -> None:
+        with pytest.raises(ValueError, match=r"percentile must be in \[0, 100\]"):
+            stats_with_data.percentile(101)
+
+    def test_far_above_hundred_raises_value_error(self, stats_with_data: Stats) -> None:
+        with pytest.raises(ValueError, match=r"percentile must be in \[0, 100\]"):
+            stats_with_data.percentile(9999)
+
+    def test_negative_raises_on_materialized_stats(self, stats_with_data: Stats) -> None:
+        stats_with_data.materialize()
+        with pytest.raises(ValueError, match=r"percentile must be in \[0, 100\]"):
+            stats_with_data.percentile(-50)
+
+    def test_above_hundred_raises_on_materialized_stats(self, stats_with_data: Stats) -> None:
+        stats_with_data.materialize()
+        with pytest.raises(ValueError, match=r"percentile must be in \[0, 100\]"):
+            stats_with_data.percentile(150)
+
+    def test_negative_raises_on_empty_stats(self, stats: Stats) -> None:
+        with pytest.raises(ValueError, match=r"percentile must be in \[0, 100\]"):
+            stats.percentile(-1)
