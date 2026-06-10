@@ -46,7 +46,6 @@ class PerfettoExporter(EventsExporter):
         self._flush_threshold = flush_threshold
         self._output_path = output_path
         self._closed = False
-        self._event_count = 0
         self._track_state = PerfettoTrackState()
         self._sequence_id: int = id(self) & 0x7FFFFFFF
         self._has_written = False
@@ -72,7 +71,6 @@ class PerfettoExporter(EventsExporter):
         )
         to_flush: list[bytes] = []
         with self._lock:
-            self._event_count += 1
             self._descriptors.extend(descriptors)
             self._packets.extend(packets)
             if len(self._packets) >= self._flush_threshold:
@@ -131,6 +129,4 @@ class PerfettoExporter(EventsExporter):
             with self._io_lock:
                 self._flush(entries)
 
-    @override
-    def get_event_count(self) -> int:
-        return self._event_count
+

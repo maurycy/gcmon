@@ -25,11 +25,9 @@ from tests.helpers import (
 class TestTraceExporter:
     def test_init(self, trace_exporter) -> None:
         exporter, path = trace_exporter()
-        assert exporter.get_event_count() == 0
 
     def test_init_with_flush_threshold(self, trace_exporter) -> None:
         exporter, path = trace_exporter(threshold=500)
-        assert exporter.get_event_count() == 0
 
     def _verify_events(self, data: list[dict], num_items: int) -> None:
         completes = [e for e in data if e["ph"] == "X"]
@@ -83,11 +81,6 @@ class TestTraceExporter:
         exporter.close()
         data = assert_valid_chrome_trace_format(path)
         self._verify_events(data, 15)
-
-    def test_add_event_count(self, mock_stats_item, trace_exporter) -> None:
-        exporter, path = trace_exporter()
-        exporter.add_event(DEFAULT_PID, mock_stats_item)
-        assert exporter.get_event_count() == 1
 
     def test_timestamp_conversion(self, mock_stats_item, trace_exporter) -> None:
         exporter, path = trace_exporter()
@@ -187,12 +180,6 @@ class TestTraceExporter:
             ts=ts_to_us(instant.ts),
         )
 
-    def test_add_instant_event_not_counted_in_get_event_count(self, trace_exporter) -> None:
-        exporter, path = trace_exporter()
-        instant = create_instant_msg(name="event", ts=1_000_000_000)
-        exporter.add_instant_event(DEFAULT_PID, instant)
-        assert exporter.get_event_count() == 0  # instant events not counted
-
     def test_multiple_add_instant_event(self, trace_exporter) -> None:
         exporter, path = trace_exporter()
         for name in ("start GC monitor", "stop GC monitor"):
@@ -258,7 +245,8 @@ class TestGCMonitorStreaming:
             for _ in range(3):
                 monitor.poll(12345)
         monitor.stop()
-        assert exporter.get_event_count() >= 4
+        data = assert_valid_chrome_trace_format(path)
+        assert len([e for e in data if e["ph"] == "X"]) >= 4
 
     def test_stop_closes_exporter(self, mock_read_events, monitor_with_exporter) -> None:
         monitor, exporter, path = monitor_with_exporter

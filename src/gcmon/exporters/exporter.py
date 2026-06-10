@@ -23,10 +23,4 @@ class EventsExporter:
         """Close the exporter and write all events to file."""
         raise NotImplementedError
 
-    def get_event_count(self) -> int:
-        """
-        Return the number of events collected.
 
-        Can be used with closed exporter.
-        """
-        return 0

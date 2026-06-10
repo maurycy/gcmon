@@ -33,7 +33,6 @@ class JsonlExporter(EventsExporter):
         self._lock = threading.Lock()
         self._io_lock = threading.Lock()
         self._flush_threshold = flush_threshold
-        self._event_count = 0
         self._events: list[dict[str, str | int | float]] = []
         self._output_path = output_path
 
@@ -48,7 +47,7 @@ class JsonlExporter(EventsExporter):
         events: list[dict[str, str | int | float]] = []
         with self._lock:
             self._events.append(event)
-            self._event_count += 1
+
             if len(self._events) >= self._flush_threshold:
                 events = self._events[:]
                 self._events.clear()
@@ -67,7 +66,7 @@ class JsonlExporter(EventsExporter):
         events: list[dict[str, str | int | float]] = []
         with self._lock:
             self._events.append(event)
-            self._event_count += 1
+
             if len(self._events) >= self._flush_threshold:
                 events = self._events[:]
                 self._events.clear()
@@ -98,6 +97,4 @@ class JsonlExporter(EventsExporter):
             with self._io_lock:
                 self._flush(events)
 
-    @override
-    def get_event_count(self) -> int:
-        return self._event_count
+

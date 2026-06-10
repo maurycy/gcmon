@@ -19,15 +19,9 @@ class TestStdoutExporter:
         """Test StdoutExporter initialization with default parameters."""
         exporter = StdoutExporter()
 
-        # Test observable behavior instead of protected attributes
-        assert exporter.get_event_count() == 0
-
     def test_init_custom_parameters(self) -> None:
         """Test StdoutExporter initialization with custom parameters."""
         exporter = StdoutExporter(flush_threshold=50)
-
-        # Test observable behavior instead of protected attributes
-        assert exporter.get_event_count() == 0
 
     def test_add_event_json_output_format(self, mock_stats_item: TGCStatsInfo, capsys: pytest.CaptureFixture[str]) -> None:
         """Test that add_event outputs correct JSON format to stdout."""
@@ -52,18 +46,6 @@ class TestStdoutExporter:
         assert data["candidates"] == 40
         assert data["heap_size"] == 52428800
         assert data["duration"] == 0.005
-
-    def test_add_event_increments_event_count(self, mock_stats_item: TGCStatsInfo, capsys: pytest.CaptureFixture[str]) -> None:
-        """Test that add_event increments the event count."""
-        exporter = StdoutExporter()
-
-        assert exporter.get_event_count() == 0
-
-        exporter.add_event(DEFAULT_PID, mock_stats_item)
-        assert exporter.get_event_count() == 1
-
-        exporter.add_event(DEFAULT_PID, mock_stats_item)
-        assert exporter.get_event_count() == 2
 
     def test_add_event_multiple_events(self, mock_stats_item_batch: list[TGCStatsInfo], capsys: pytest.CaptureFixture[str]) -> None:
         """Test output with multiple events."""
@@ -91,21 +73,6 @@ class TestStdoutExporter:
 
         # Close should flush stdout
         exporter.close()
-
-        # Event count should remain the same
-        assert exporter.get_event_count() == 1
-
-    def test_get_event_count_accuracy(self, mock_stats_item: TGCStatsInfo, capsys: pytest.CaptureFixture[str]) -> None:
-        """Test get_event_count returns accurate count."""
-        exporter = StdoutExporter()
-
-        # Initial count should be 0
-        assert exporter.get_event_count() == 0
-
-        # Add events and verify count
-        for i in range(10):
-            exporter.add_event(DEFAULT_PID, mock_stats_item)
-            assert exporter.get_event_count() == i + 1
 
     def test_add_event_output_to_stdout(self, mock_stats_item: TGCStatsInfo, capsys: pytest.CaptureFixture[str]) -> None:
         """Test that add_event writes to stdout (not stderr)."""

@@ -57,10 +57,8 @@ def mock_monitor() -> MagicMock:
 
 @pytest.fixture
 def mock_exporter() -> MagicMock:
-    """Pre-configured MagicMock for exporter with get_event_count."""
-    exporter = MagicMock()
-    exporter.get_event_count.return_value = 5
-    return exporter
+    """Pre-configured MagicMock for exporter."""
+    return MagicMock()
 
 
 @pytest.fixture

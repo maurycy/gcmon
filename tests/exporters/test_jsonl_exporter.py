@@ -9,13 +9,11 @@ class TestJsonlExporter:
     def test_init_default_parameters(self, jsonl_exporter) -> None:
         exporter, path = jsonl_exporter()
         assert exporter._flush_threshold == 100
-        assert exporter._event_count == 0
         assert exporter._events == []
 
     def test_init_custom_parameters(self, jsonl_exporter) -> None:
         exporter, path = jsonl_exporter(threshold=50)
         assert exporter._flush_threshold == 50
-        assert exporter._event_count == 0
 
     def test_add_event_json_output_format(self, jsonl_exporter, read_jsonl) -> None:
         exporter, path = jsonl_exporter(threshold=1)
@@ -40,15 +38,6 @@ class TestJsonlExporter:
         assert event["candidates"] == 15
         assert event["heap_size"] == 1024
         assert event["duration"] == 0.001
-
-    def test_add_event_increments_event_count(self, mock_stats_item, jsonl_exporter) -> None:
-        exporter, path = jsonl_exporter(threshold=1000)
-        assert exporter.get_event_count() == 0
-        exporter.add_event(DEFAULT_PID, mock_stats_item)
-        assert exporter.get_event_count() == 1
-        exporter.add_event(DEFAULT_PID, mock_stats_item)
-        assert exporter.get_event_count() == 2
-        exporter.close()
 
     def test_add_event_multiple_events(self, mock_stats_item, jsonl_exporter, read_jsonl) -> None:
         exporter, path = jsonl_exporter(threshold=1000)
@@ -76,13 +65,6 @@ class TestJsonlExporter:
         assert len(exporter._events) == 2
         exporter.close()
         assert len(read_jsonl(path)) == 2
-
-    def test_get_event_count_accuracy(self, mock_stats_item, jsonl_exporter) -> None:
-        exporter, path = jsonl_exporter(threshold=1000)
-        for _ in range(5):
-            exporter.add_event(DEFAULT_PID, mock_stats_item)
-        assert exporter.get_event_count() == 5
-        exporter.close()
 
     def test_add_event_output_to_file(self, mock_stats_item, jsonl_exporter) -> None:
         exporter, path = jsonl_exporter(threshold=1)
@@ -128,7 +110,6 @@ class TestJsonlExporter:
         exporter.add_event(DEFAULT_PID, mock_stats_item)
         exporter.close()
         exporter.add_event(DEFAULT_PID, mock_stats_item)
-        assert exporter.get_event_count() == 2
         exporter.close()
         assert len(read_jsonl(path)) == 2
 
@@ -178,15 +159,6 @@ class TestJsonlExporterFlushThreshold:
         exporter.close()
         assert len(read_jsonl(path)) == 10
 
-    def test_get_event_count_includes_buffered_and_flushed(self, mock_stats_item, jsonl_exporter, read_jsonl) -> None:
-        exporter, path = jsonl_exporter(threshold=5)
-        for _ in range(12):
-            exporter.add_event(DEFAULT_PID, mock_stats_item)
-        assert exporter.get_event_count() == 12
-        exporter.close()
-        assert exporter.get_event_count() == 12
-        assert len(read_jsonl(path)) == 12
-
     def test_threshold_one(self, mock_stats_item, jsonl_exporter, read_jsonl) -> None:
         exporter, path = jsonl_exporter(threshold=1)
         exporter.add_event(DEFAULT_PID, mock_stats_item)
@@ -211,13 +183,6 @@ class TestJsonlExporterInstantEvents:
             name=instant.name,
             ts=instant.ts,
         )
-
-    def test_add_instant_event_increments_event_count(self, jsonl_exporter, read_jsonl) -> None:
-        exporter, path = jsonl_exporter(threshold=1000)
-        assert exporter.get_event_count() == 0
-        exporter.add_instant_event(DEFAULT_PID, create_instant_msg(name="event", ts=1000))
-        assert exporter.get_event_count() == 1
-        exporter.close()
 
     def test_add_instant_event_multiple(self, jsonl_exporter, read_jsonl) -> None:
         exporter, path = jsonl_exporter(threshold=1000)

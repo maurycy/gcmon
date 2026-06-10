@@ -86,11 +86,9 @@ def _count_descriptors(packet_fields: list[list[ProtoField]]) -> int:
 class TestPerfettoExporter:
     def test_init(self, perfetto_exporter) -> None:
         exporter, _ = perfetto_exporter()
-        assert exporter.get_event_count() == 0
 
     def test_init_with_flush_threshold(self, perfetto_exporter) -> None:
         exporter, _ = perfetto_exporter(threshold=500)
-        assert exporter.get_event_count() == 0
 
     def _verify_event_structure(self, path, num_items: int) -> None:
         packets = _read_trace_packets(path)
@@ -151,11 +149,6 @@ class TestPerfettoExporter:
         exporter.close()
         self._verify_event_structure(path, 15)
 
-    def test_add_event_count(self, mock_stats_item, perfetto_exporter) -> None:
-        exporter, _ = perfetto_exporter()
-        exporter.add_event(DEFAULT_PID, mock_stats_item)
-        assert exporter.get_event_count() == 1
-
     def test_timestamp_conversion(self, mock_stats_item, perfetto_exporter) -> None:
         exporter, path = perfetto_exporter()
         exporter.add_event(DEFAULT_PID, mock_stats_item)
@@ -211,12 +204,6 @@ class TestPerfettoExporter:
                 if name:
                     names.append(name)
         assert names == ["start GC monitor"]
-
-    def test_add_instant_event_not_counted_in_get_event_count(self, perfetto_exporter) -> None:
-        exporter, _ = perfetto_exporter()
-        instant = create_instant_msg(name="event", ts=1_000_000_000)
-        exporter.add_instant_event(DEFAULT_PID, instant)
-        assert exporter.get_event_count() == 0
 
     def test_multiple_add_instant_event(self, perfetto_exporter) -> None:
         exporter, path = perfetto_exporter()

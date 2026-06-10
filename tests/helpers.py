@@ -66,14 +66,6 @@ class MockExporter(EventsExporter):
         """Close the exporter."""
         self._close_called = True
 
-    def get_event_count(self) -> int:
-        """Get the number of events added.
-
-        Returns:
-            Number of events added to the exporter.
-        """
-        return len(self.events)
-
     def wait_for_event(self, timeout: float = 1.0) -> bool:
         """Wait for an event to be added.
 
