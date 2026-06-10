@@ -98,13 +98,15 @@ jobs:
         run: |
           poetry build
 
-      - name: Create reports directory
-        run: mkdir -p reports
+      - name: Create directories
+        run: |
+          mkdir -p reports
+          mkdir -p .temp
         shell: bash
 
       - name: Run tests
         run: |
-          poetry run pytest -q --cov=src/gcmon --cov-report=xml --cov-report=term-missing --cov-branch --cov-reset --junitxml=reports/tests.xml
+          poetry run pytest -q --basetemp=.temp --cov=src/gcmon --cov-report=xml --cov-report=term-missing --cov-branch --cov-reset --junitxml=reports/tests.xml
 
       - name: Upload test results
         if: always()
