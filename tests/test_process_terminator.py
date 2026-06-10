@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from gcmon.utils.process_terminator import terminate_process
+from gcmon.utils.process_terminator import _is_signal_exit_code, terminate_process
 
 
 @pytest.fixture
@@ -246,3 +246,34 @@ class TestCrossPlatform:
 
     def test_os_name_detection(self) -> None:
         assert os.name in ("nt", "posix")
+
+
+class TestIsSignalExitCode:
+    """Direct tests for _is_signal_exit_code()."""
+
+    def test_windows_status_control_c_exit(self) -> None:
+        assert _is_signal_exit_code(0xC000013A) is True
+
+    def test_unix_negative_sigint(self) -> None:
+        assert _is_signal_exit_code(-signal.SIGINT) is True
+
+    def test_unix_negative_sigterm(self) -> None:
+        assert _is_signal_exit_code(-signal.SIGTERM) is True
+
+    def test_normal_zero_exit(self) -> None:
+        assert _is_signal_exit_code(0) is False
+
+    def test_normal_positive_exit(self) -> None:
+        assert _is_signal_exit_code(1) is False
+
+    def test_arbitrary_nonzero(self) -> None:
+        assert _is_signal_exit_code(42) is False
+        assert _is_signal_exit_code(255) is False
+
+    def test_unix_positive_signal_number_not_a_signal_exit(self) -> None:
+        assert _is_signal_exit_code(signal.SIGINT) is False
+        assert _is_signal_exit_code(signal.SIGTERM) is False
+
+    def test_windows_status_value_with_different_bits(self) -> None:
+        assert _is_signal_exit_code(0xC000013B) is False
+        assert _is_signal_exit_code(0xC0000000) is False
