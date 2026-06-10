@@ -120,7 +120,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
 
   stress-test:
-    if: github.ref_name != 'main'
+    if: github.ref_name != 'main' && !startsWith(github.ref_name, 'release/')
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
