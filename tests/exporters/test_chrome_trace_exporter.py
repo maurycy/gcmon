@@ -191,6 +191,12 @@ class TestTraceExporter:
         assert len(instants) == 2
         assert [e["name"] for e in instants] == ["start GC monitor", "stop GC monitor"]
 
+    def test_close_with_no_events_writes_empty_trace(self, trace_exporter) -> None:
+        exporter, path = trace_exporter()
+        exporter.close()
+        assert path.exists()
+        assert path.read_text() == "[]\n"
+
 
 @pytest.fixture
 def mock_read_events():

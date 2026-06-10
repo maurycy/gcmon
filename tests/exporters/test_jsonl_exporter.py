@@ -113,6 +113,11 @@ class TestJsonlExporter:
         exporter.close()
         assert len(read_jsonl(path)) == 2
 
+    def test_close_with_no_events_does_not_create_file(self, jsonl_exporter) -> None:
+        exporter, path = jsonl_exporter()
+        exporter.close()
+        assert not path.exists()
+
 
 class TestJsonlExporterFlushThreshold:
     def test_flush_threshold_default_value(self, jsonl_exporter) -> None:
