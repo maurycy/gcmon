@@ -141,6 +141,18 @@ class TestStatsPercentile:
     def test_percentile_empty_returns_zero(self, stats: Stats) -> None:
         assert stats.percentile(50) == 0.0
 
+    def test_percentile_single_value_buffer(self, stats: Stats) -> None:
+        stats.update(42.0)
+        assert stats.percentile(50) == 42.0
+        assert stats.percentile(0) == 42.0
+        assert stats.percentile(100) == 42.0
+
+    def test_percentile_unknown_returns_zero_for_arbitrary_value(
+        self, stats_with_data: Stats
+    ) -> None:
+        stats_with_data.materialize()
+        assert stats_with_data.percentile(33) == 0.0
+
 
 class TestStatsCountAndSum:
     """Tests for Stats.count and Stats.sum methods."""
