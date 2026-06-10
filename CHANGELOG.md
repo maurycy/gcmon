@@ -2,7 +2,7 @@
 
 ## WIP
 
-## Version 0.2.0 (2026-05-22)
+## Version 0.2.0 (2026-06-10)
 
 - Perfetto binary protobuf export (#25)
 - Control plane IPC for start/stop from child process (#14, #16, #21)
