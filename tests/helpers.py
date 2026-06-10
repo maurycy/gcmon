@@ -9,8 +9,6 @@ from gcmon.data import GCStatsInfo
 from gcmon.exporters.exporter import EventsExporter
 from gcmon.protocol import TGCStatsInfo, TInstantMsg
 
-# pyright: reportImplicitOverride=none
-
 
 __all__ = [
     "MockExporter",

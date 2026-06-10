@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from gcmon.exporters.chrome_trace_format import pause_event, process_meta, thread_meta
-
 from tests.helpers import (
     assert_is_complete,
     assert_is_counter,
@@ -16,7 +15,6 @@ from tests.helpers import (
     assert_valid_chrome_trace_format,
     create_jsonl_record,
 )
-
 
 # =============================================================================
 # Factory function for well-formed Chrome trace events
@@ -46,6 +44,16 @@ def make_trace_file(tmp_path: Path) -> Path:
     def _make(name: str, events: list[dict]) -> Path:
         path = tmp_path / name
         path.write_text(json.dumps(events), encoding="utf-8")
+        return path
+    return _make
+
+
+@pytest.fixture
+def make_raw_file(tmp_path: Path) -> Path:
+    """Create a file with raw (non-JSON) text content for invalid-JSON tests."""
+    def _make(name: str, content: str) -> Path:
+        path = tmp_path / name
+        path.write_text(content, encoding="utf-8")
         return path
     return _make
 
@@ -137,11 +145,12 @@ class TestCliCombine:
         assert result.returncode != 0
         assert "Error combining files" in result.stderr
 
-    def test_invalid_json(self, make_trace_file, run_combine, combine_output) -> None:
-        f = make_trace_file("invalid.json", "not valid json")  # type: ignore[arg-type]
+    def test_invalid_json(self, make_raw_file, run_combine, combine_output) -> None:
+        f = make_raw_file("invalid.json", "not valid json{{{")
         result = run_combine([f], output=combine_output)
         assert result.returncode != 0, result.stderr
         assert "Error combining files" in result.stderr
+        assert "json" in result.stderr.lower()
 
     def test_multiple_files(self, make_trace_file, run_combine, combine_output) -> None:
         files = [
