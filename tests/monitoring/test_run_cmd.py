@@ -9,6 +9,7 @@ import time
 from argparse import Namespace
 from pathlib import Path
 from typing import Any
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -74,6 +75,15 @@ def _print_output(tool: str, pid: int, result: subprocess.CompletedProcess[str] 
         print("STDERR")
         print(err)
     print(f"--- end {tool} ---")
+
+
+@contextmanager
+def print_on_failure(result: subprocess.CompletedProcess[str]) -> None:
+    try:
+        yield
+    except AssertionError:
+        _print_output("test", -1, result)
+        raise
 
 
 def _check_process_alive(pid: int) -> bool:
@@ -348,10 +358,11 @@ class TestRunCommandScriptMode:
 
         result = run_script(script_file, gc_args=["-vvv", "-o", str(output_file)])
 
-        assert result.returncode == 42
-        assert "Hello" in result.stdout
+        with print_on_failure(result):
+            assert result.returncode == 42
+            assert "Hello" in result.stdout
 
-        assert_valid_chrome_trace_format(output_file)
+            assert_valid_chrome_trace_format(output_file)
 
     def test_run_script_with_args_chrome_trace_format(self, tmp_path: Path) -> None:
         """Test running a script with arguments."""
@@ -362,10 +373,11 @@ class TestRunCommandScriptMode:
         gc_args = ["-vvv", "--format", "chrome", "-o", str(output_file)]
         result = run_script(script_file, "arg1", "arg2", "--flag", gc_args=gc_args)
 
-        assert result.returncode == 0
-        assert "Args:  ['arg1', 'arg2', '--flag']" in result.stdout
+        with print_on_failure(result):
+            assert result.returncode == 0
+            assert "Args:  ['arg1', 'arg2', '--flag']" in result.stdout
 
-        assert_valid_chrome_trace_format(output_file)
+            assert_valid_chrome_trace_format(output_file)
 
     def test_run_script_with_args_jsonl_format(self, tmp_path: Path) -> None:
         """Test running a script with JSONL format."""
@@ -376,10 +388,11 @@ class TestRunCommandScriptMode:
         gc_args = ["-vvv", "--format", "jsonl", "-o", str(output_file)]
         result = run_script(script_file, "arg1", "arg2", "--flag", gc_args=gc_args)
 
-        assert result.returncode == 0
-        assert "Args:  ['arg1', 'arg2', '--flag']" in result.stdout
+        with print_on_failure(result):
+            assert result.returncode == 0
+            assert "Args:  ['arg1', 'arg2', '--flag']" in result.stdout
 
-        assert_jsonl_format(output_file)
+            assert_jsonl_format(output_file)
 
     def test_run_script_with_args_stdout_format(self, tmp_path: Path) -> None:
         """Test running a script with stdout format."""
@@ -389,12 +402,13 @@ class TestRunCommandScriptMode:
         gc_args = ["-vvv", "--format", "stdout"]
         result = run_script(script_file, "arg1", "arg2", "--flag", gc_args=gc_args)
 
-        output = (result.stdout + result.stderr).lower()
+        with print_on_failure(result):
+            output = (result.stdout + result.stderr).lower()
 
-        assert result.returncode == 0
-        assert "Args:  ['arg1', 'arg2', '--flag']" in result.stdout
+            assert result.returncode == 0
+            assert "Args:  ['arg1', 'arg2', '--flag']" in result.stdout
 
-        assert_stdout_format(output)
+            assert_stdout_format(output)
 
     def test_run_script_with_overlapping_args(self, tmp_path: Path) -> None:
         """Script args after -s are passed verbatim, even if they overlap with gcmon options."""
@@ -406,10 +420,11 @@ class TestRunCommandScriptMode:
         gc_args = ["-vvv", "--format", "chrome", "-o", str(output_file)]
         result = run_script(script_file, "--format", "json", "-v", "--format", "csv", gc_args=gc_args)
 
-        assert result.returncode == 0
-        assert "Args:  ['--format', 'json', '-v', '--format', 'csv']" in result.stdout
+        with print_on_failure(result):
+            assert result.returncode == 0
+            assert "Args:  ['--format', 'json', '-v', '--format', 'csv']" in result.stdout
 
-        assert_valid_chrome_trace_format(output_file)
+            assert_valid_chrome_trace_format(output_file)
 
 
 class TestRunCommandModuleMode:
@@ -420,8 +435,9 @@ class TestRunCommandModuleMode:
 
         result = run_module("timeit", "-n", "1", "pass", gc_args=["-vvv", "-o", str(output_file)])
 
-        assert result.returncode == 0
-        assert_valid_chrome_trace_format(output_file)
+        with print_on_failure(result):
+            assert result.returncode == 0
+            assert_valid_chrome_trace_format(output_file)
 
     def test_run_module_long_running_chrome_trace_format(self, tmp_path: Path) -> None:
         output_file = tmp_path / "trace.json"
@@ -429,8 +445,9 @@ class TestRunCommandModuleMode:
         gc_args = ["-vvv", "--format", "chrome", "-o", str(output_file)]
         result = run_module("test", "test_gc", "-v", gc_args=gc_args)
 
-        assert result.returncode == 0
-        assert_valid_chrome_trace_format(output_file)
+        with print_on_failure(result):
+            assert result.returncode == 0
+            assert_valid_chrome_trace_format(output_file)
 
     def test_run_module_long_running_jsonl_format(self, tmp_path: Path) -> None:
         output_file = tmp_path / "trace.jsonl"
@@ -438,17 +455,19 @@ class TestRunCommandModuleMode:
         gc_args = ["-vvv", "--format", "jsonl", "-o", str(output_file)]
         result = run_module("test", "test_gc", "-v", gc_args=gc_args)
 
-        assert result.returncode == 0
-        assert_jsonl_format(output_file)
+        with print_on_failure(result):
+            assert result.returncode == 0
+            assert_jsonl_format(output_file)
 
     def test_run_module_long_running_stdout_format(self) -> None:
         gc_args = ["-vvv", "--format", "stdout"]
         result = run_module("test", "test_gc", "-v", gc_args=gc_args)
 
-        output = (result.stdout + result.stderr).lower()
+        with print_on_failure(result):
+            output = (result.stdout + result.stderr).lower()
 
-        assert result.returncode == 0
-        assert_stdout_format(output)
+            assert result.returncode == 0
+            assert_stdout_format(output)
 
     def test_run_module_with_overlapping_args(self, tmp_path: Path) -> None:
         """Script args after -m are passed verbatim, even if they overlap with gcmon options."""
@@ -456,10 +475,11 @@ class TestRunCommandModuleMode:
 
         # gcmon options BEFORE -m, script args AFTER (including overlapping --format, -v)
         gc_args = ["-v", "--format", "chrome", "-o", str(output_file)]
-        run_module("test", "test_gc", "-v", gc_args=gc_args)
+        result = run_module("test", "test_gc", "-v", gc_args=gc_args)
 
-        assert output_file.exists()
-        assert_valid_chrome_trace_format(output_file)
+        with print_on_failure(result):
+            assert output_file.exists()
+            assert_valid_chrome_trace_format(output_file)
 
 
 class TestRunCommandErrors:
@@ -471,10 +491,11 @@ class TestRunCommandErrors:
 
         result = run_script(Path("/nonexistent/script.py"), gc_args=["-vvv", "-o", str(output_file)])
 
-        output = (result.stdout + result.stderr).lower()
+        with print_on_failure(result):
+            output = (result.stdout + result.stderr).lower()
 
-        assert result.returncode != 0
-        assert "script not found" in output
+            assert result.returncode != 0
+            assert "script not found" in output
 
     def test_run_module_not_found(self, tmp_path: Path) -> None:
         """Test running non-existent module."""
@@ -482,10 +503,11 @@ class TestRunCommandErrors:
 
         result = run_module("nonexistent_module_xyz", gc_args=["-vvv", "-o", str(output_file)])
 
-        output = (result.stdout + result.stderr).lower()
+        with print_on_failure(result):
+            output = (result.stdout + result.stderr).lower()
 
-        assert result.returncode != 0
-        assert "no module named nonexistent_module_xyz" in output
+            assert result.returncode != 0
+            assert "no module named nonexistent_module_xyz" in output
 
     def test_run_script_syntax_error(self, tmp_path: Path) -> None:
         """Test running script with syntax error."""
@@ -495,10 +517,11 @@ class TestRunCommandErrors:
 
         result = run_script(script_file, gc_args=["-vvv", "-o", str(output_file)])
 
-        output = (result.stdout + result.stderr).lower()
+        with print_on_failure(result):
+            output = (result.stdout + result.stderr).lower()
 
-        assert result.returncode != 0
-        assert "syntax" in output or "error" in output
+            assert result.returncode != 0
+            assert "syntax" in output or "error" in output
 
 
 class TestRunCommandHelp:
