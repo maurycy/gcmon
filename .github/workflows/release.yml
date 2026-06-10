@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+    paths: [pyproject.toml, .github/workflows/release.yml, CHANGELOG.md]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run build + validation only; skip publish and GitHub Release"
+        type: boolean
+        default: false
+      ref:
+        description: "Branch or tag to checkout (used for dry runs)"
+        type: string
+        default: "main"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+
+      - uses: ./.github/actions/setup
+        with:
+          python-version: "3.15"
+          cache-prefix: release
+
+      - name: Build distribution
+        run: poetry build
+
+      - name: Validate built distributions
+        run: poetry run twine check dist/*
+
+      - name: Publish to PyPI
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && (github.event.inputs.dry_run != 'true')
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+        with:
+          verify-metadata: true
+
+      - name: Extract changelog
+        id: changelog
+        env:
+          TAG: ${{ github.ref_name }}
+        run: python .github/scripts/extract_changelog.py "$TAG"
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && (github.event.inputs.dry_run != 'true')
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        with:
+          body: ${{ steps.changelog.outputs.body }}
+          generate_release_notes: true
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
