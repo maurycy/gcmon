@@ -6,9 +6,8 @@ import logging
 from argparse import Namespace
 from pathlib import Path
 
+from gcmon.commands.parser_factory import ParserFactory
 from gcmon.exporters.chrome_trace_io import combine_files
-
-from .parser_factory import ParserFactory
 
 logger = logging.getLogger("gcmon")
 
@@ -86,8 +85,7 @@ def cmd_combine(args: Namespace) -> int:
 
     if input_format == "chrome" and output_format == "jsonl":
         logger.error(
-            "Input format 'chrome' with output format 'jsonl' is not supported. "
-            "Use --output-format chrome instead."
+            "Input format 'chrome' with output format 'jsonl' is not supported. Use --output-format chrome instead."
         )
         return 1
 
@@ -101,7 +99,9 @@ def cmd_combine(args: Namespace) -> int:
         logger.info("  Normalizing timestamps: yes")
 
     try:
-        combine_files(input_paths, output_path, normalize=normalize, input_format=input_format, output_format=output_format)
+        combine_files(
+            input_paths, output_path, normalize=normalize, input_format=input_format, output_format=output_format
+        )
     except (FileNotFoundError, ValueError, json.JSONDecodeError) as e:
         logger.error("Error combining files: %s", e)
         return 1
