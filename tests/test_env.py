@@ -152,3 +152,36 @@ class TestEnvTableFormat:
     def test_invalid_value_returns_default(self, monkeypatch: pytest.MonkeyPatch, env_module) -> None:
         monkeypatch.setenv(env_module.ENV_TABLE_FORMAT, "html")
         assert env_module.get_env_table_format() == env_module.TableFormat.PLAIN
+
+
+class TestEnvVarEmpty:
+    """Tests for env vars set to empty string (different from unset)."""
+
+    @pytest.mark.parametrize(
+        "env_var, getter_suffix, default",
+        [
+            ("ENV_OUTPUT", "output", Path("gcmon.json")),
+            ("ENV_RATE", "rate", 0.1),
+            ("ENV_DURATION", "duration", None),
+            ("ENV_THREAD_ID", "thread_id", 0),
+            ("ENV_FLUSH_THRESHOLD", "flush_threshold", 100),
+            ("ENV_SERVER_HOST", "server_host", "localhost"),
+            ("ENV_SERVER_PORT", "server_port", 9999),
+            ("ENV_VERBOSE", "verbose", 0),
+            ("ENV_FORMAT", "format", "chrome"),
+            ("ENV_STATS", "stats", False),
+            ("ENV_TABLE_FORMAT", "table_format", None),
+            ("ENV_CONTROL_NAME", "control_name", None),
+        ],
+    )
+    def test_empty_string_returns_default(
+        self, monkeypatch: pytest.MonkeyPatch, env_module, env_var: str, getter_suffix: str, default
+    ) -> None:
+        getter = getattr(env_module, f"get_env_{getter_suffix}")
+        actual_env_name = getattr(env_module, env_var)
+        monkeypatch.setenv(actual_env_name, "")
+        result = getter()
+        if getter_suffix == "table_format":
+            assert result == env_module.TableFormat.PLAIN
+        else:
+            assert result == default
