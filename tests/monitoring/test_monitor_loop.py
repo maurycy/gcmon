@@ -36,8 +36,13 @@ def mock_wait_policy():
 
 
 @pytest.fixture
-def loop(mock_monitor, mock_runner, mock_wait_policy):
-    return MonitorLoop(mock_monitor, mock_runner, mock_wait_policy, rate=0.01)
+def wait_policy_factory(mock_wait_policy):
+    return lambda: mock_wait_policy
+
+
+@pytest.fixture
+def loop(mock_monitor, mock_runner, wait_policy_factory):
+    return MonitorLoop(mock_monitor, mock_runner, wait_policy_factory, rate=0.01)
 
 
 class TestMonitorLoopInit:
@@ -74,7 +79,7 @@ class TestMonitorLoopRun:
     def test_stop_before_run_skips_loop(self, mock_monitor):
         runner = Mock(spec=Runner)
         runner.run.return_value = iter([])
-        loop = MonitorLoop(mock_monitor, runner, Mock(spec=WaitPolicy), rate=0.01)
+        loop = MonitorLoop(mock_monitor, runner, lambda: Mock(spec=WaitPolicy), rate=0.01)
         loop._stop_event.set()
 
         loop.run()
@@ -95,8 +100,8 @@ class TestMonitorLoopRun:
 
         assert mock_wait_policy.wait.call_count == 3
 
-    def test_close_during_run(self, mock_monitor, mock_wait_policy):
-        loop = MonitorLoop(mock_monitor, InfinityRunner(), mock_wait_policy, rate=0.01)
+    def test_close_during_run(self, mock_monitor, wait_policy_factory):
+        loop = MonitorLoop(mock_monitor, InfinityRunner(), wait_policy_factory, rate=0.01)
 
         t = threading.Thread(target=loop.run, daemon=True)
         t.start()
@@ -115,12 +120,12 @@ class TestMonitorLoopRun:
 
 class TestMonitorLoopContextManager:
     def test_enter_returns_self(self, mock_monitor):
-        loop = MonitorLoop(mock_monitor, Mock(spec=Runner), Mock(spec=WaitPolicy))
+        loop = MonitorLoop(mock_monitor, Mock(spec=Runner), lambda: Mock(spec=WaitPolicy))
         with loop as l:
             assert l is loop
 
     def test_exit_calls_close(self, mock_monitor):
-        loop = MonitorLoop(mock_monitor, Mock(spec=Runner), Mock(spec=WaitPolicy))
+        loop = MonitorLoop(mock_monitor, Mock(spec=Runner), lambda: Mock(spec=WaitPolicy))
         assert not loop._stop_event.is_set()
         with loop:
             pass

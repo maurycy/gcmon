@@ -86,7 +86,7 @@ def cmd_run(args: Namespace) -> int:
 
     return run_monitoring_loop(
         factory=factory,
-        wait_policy=StartupTimeoutPolicy(2),
+        wait_policy_factory=lambda: StartupTimeoutPolicy(2),
         options=options,
         address=args.control_name,
     )

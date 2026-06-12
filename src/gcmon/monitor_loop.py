@@ -6,7 +6,7 @@ from typing import Self
 from .monitor import EventsMonitor
 from .run_policy import Runner
 from .utils import set_on_exit
-from .wait_policy import WaitPolicy
+from .wait_policy import WaitPolicy, WaitPolicyFactory
 
 logger = logging.getLogger("gcmon")
 
@@ -18,13 +18,13 @@ class MonitorLoop:
         self,
         monitor: EventsMonitor,
         runner: Runner,
-        wait_policy: WaitPolicy,
+        wait_policy_factory: WaitPolicyFactory,
         rate: float = 0.1,
         enabled: Callable[[int], bool] | None = None,
     ) -> None:
         self._monitor = monitor
         self._runner = runner
-        self._wait_policy = wait_policy
+        self._wait_policy_factory = wait_policy_factory
         self._rate = rate
         self._stop_event = threading.Event()
         self._enabled = enabled
@@ -33,6 +33,7 @@ class MonitorLoop:
         self._stop_event.set()
 
     def run(self) -> None:
+        pid_policies: dict[int, WaitPolicy] = {}
         with set_on_exit(self._stop_event):
             for _ in self._runner.run(self._stop_event.is_set):
                 wait: list[bool] = []
@@ -44,8 +45,11 @@ class MonitorLoop:
                     if self._enabled is not None and not self._enabled(pid):
                         continue
 
+                    if pid not in pid_policies:
+                        pid_policies[pid] = self._wait_policy_factory()
+
                     rc = self._monitor.poll(pid)
-                    wait.append(self._wait_policy.wait(rc))
+                    wait.append(pid_policies[pid].wait(rc))
 
                 if not any(wait):
                     break

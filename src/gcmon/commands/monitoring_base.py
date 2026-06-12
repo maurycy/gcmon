@@ -14,14 +14,14 @@ from gcmon.stats import StreamingStats
 from gcmon.stats_output import print_stats
 from gcmon.target_process import ProcessRunnerFactory
 from gcmon.utils import replace_signals
-from gcmon.wait_policy import WaitPolicy
+from gcmon.wait_policy import WaitPolicyFactory
 
 logger = logging.getLogger("gcmon")
 
 
 def run_monitoring_loop(
     factory: ProcessRunnerFactory,
-    wait_policy: WaitPolicy,
+    wait_policy_factory: WaitPolicyFactory,
     options: MonitoringOptions,
     address: str | None = None,
 ) -> int:
@@ -51,7 +51,7 @@ def run_monitoring_loop(
             stack.enter_context(monitor)
 
             run_policy = RunnerFactory(options.duration)
-            loop = MonitorLoop(monitor, run_policy, wait_policy, rate=options.rate, enabled=control_server.is_enabled)
+            loop = MonitorLoop(monitor, run_policy, wait_policy_factory, rate=options.rate, enabled=control_server.is_enabled)
 
             def _signal_handler(signum: int, frame: object) -> None:
                 loop.close()
