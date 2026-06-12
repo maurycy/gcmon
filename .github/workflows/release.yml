@@ -4,7 +4,7 @@ on:
   push:
     tags: ["v*"]
   pull_request:
-    branches: [main]
+    branches: [release/*]
     paths: [pyproject.toml, .github/workflows/release.yml, CHANGELOG.md]
   workflow_dispatch:
     inputs:
