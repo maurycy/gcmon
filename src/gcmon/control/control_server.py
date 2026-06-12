@@ -23,6 +23,7 @@ CONTROL_ADDRESS_ENV = "GCMON_CONTROL_ADDRESS"
 _PREFIX = "gcmon-"
 
 READER_POLL_INTERVAL = 0.1
+LISTENER_BACKLOG = 128
 
 if sys.platform == "win32":
     TConnection = PipeConnection
@@ -72,7 +73,7 @@ class ControlServer:
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
 
         full_address = _make_address(address) if address is not None else None
-        self._listener: Listener | None = Listener(full_address)
+        self._listener: Listener | None = Listener(full_address, backlog=LISTENER_BACKLOG)
 
     @property
     def address(self) -> str:
@@ -103,7 +104,11 @@ class ControlServer:
         try:
             return _accept(listener)
         except Exception as e:
-            logger.error("Error accepting connection on control server: %s", e)
+            logger.error(
+                "Error accepting connection on control server: address=%r, error=%s",
+                listener.address,
+                e,
+            )
             return None
 
     def _accept_loop(self) -> None:
@@ -272,11 +277,10 @@ class ControlServer:
         with self._lock:
             self._enabled.clear()
 
-        if self._running:
-            with self._lock:
-                if self._listener is not None:
-                    self._listener.close()
-                    self._listener = None
+        with self._lock:
+            if self._listener is not None:
+                self._listener.close()
+                self._listener = None
 
         self._running = False
 

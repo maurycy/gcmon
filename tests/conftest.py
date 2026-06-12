@@ -16,23 +16,28 @@ from tests.helpers import MockExporter, create_mock_stats_item
 DEFAULT_PID: int = 12345
 
 
-def pytest_addoption(parser):
-    parser.addoption('--count', default=1, type=int, metavar='count', help='Run each test the specified number of times')
-
-def pytest_collection_modifyitems(session, config, items):
-    count = config.option.count
-    items[:] = items * count  # add each test multiple times
-
-
 @pytest.fixture(autouse=True)
 def _caplog_gcmon(caplog: pytest.LogCaptureFixture) -> pytest.LogCaptureFixture:
-    """Auto-configure gcmon logger to INFO level for caplog."""
+    """Auto-configure gcmon logger to INFO level for caplog.
+
+    Also snapshots and restores ``logging.getLogger("gcmon")``'s handlers and
+    level so production code that attaches handlers to the shared "gcmon"
+    logger (e.g. the pyperf hook entry point) does not leak across tests and
+    duplicate log records to stderr in subsequent tests.
+    """
     logger = logging.getLogger("gcmon")
     original_level = logger.level
+    original_handlers = list(logger.handlers)
     try:
         logger.setLevel(logging.INFO)
         yield caplog
     finally:
+        for handler in list(logger.handlers):
+            if handler not in original_handlers:
+                logger.removeHandler(handler)
+        for handler in original_handlers:
+            if handler not in logger.handlers:
+                logger.addHandler(handler)
         logger.setLevel(original_level)
 
 
