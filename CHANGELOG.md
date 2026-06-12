@@ -2,6 +2,13 @@
 
 ## WIP
 
+- Simplify error handling from `_remote_debugging` (#32)
+- Remove `PollStatus.INVALID_PYTHON` (merged into `INVALID_PROCESS`) (#32)
+- Add input validation for `Stats.percentile()` (must be in [0, 100])
+- Fix `ControlServer` closing if not started, don't leak `Listener` on failure
+- Increase `ControlServer` listener backlog to 128
+- Move pyperf hook logging setup to entry point factory
+
 ## Version 0.2.0 (2026-06-10)
 
 - Perfetto binary protobuf export (#25)
