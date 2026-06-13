@@ -8,6 +8,7 @@
 - Fix `ControlServer` closing if not started, don't leak `Listener` on failure
 - Increase `ControlServer` listener backlog to 128
 - Move pyperf hook logging setup to entry point factory
+- Add per PID wait policy
 
 ## Version 0.2.0 (2026-06-10)
 
