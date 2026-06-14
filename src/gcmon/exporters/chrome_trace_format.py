@@ -1,6 +1,6 @@
 """Chrome Trace Event format types and conversion utilities."""
 
-from typing import Literal, NotRequired, TypedDict
+from typing import Literal, TypedDict
 
 from ..data import ts_to_us
 from ..protocol import (
@@ -20,7 +20,6 @@ from ..protocol import (
 
 __all__ = [
     "BeginEvent",
-    "CounterData",
     "CounterEvent",
     "EndEvent",
     "InstantEvent",
@@ -37,18 +36,6 @@ __all__ = [
     "process_meta",
     "thread_meta",
 ]
-
-
-class CounterData(TypedDict):
-    collected: int
-    uncollectable: int
-    candidates: int
-    increment_size: NotRequired[int]
-    alive_size: NotRequired[int]
-    heap_size: int
-    finalized_garbage_count: NotRequired[int]
-    deleted_garbage_count: NotRequired[int]
-    clear_weakrefs_count: NotRequired[int]
 
 
 class NameInfo(TypedDict):
@@ -88,7 +75,7 @@ class CounterEvent(TypedDict):
     ts: int
     pid: int
     tid: int
-    args: CounterData
+    args: dict[str, int]
 
 
 class ProcessMeta(TypedDict):
@@ -167,7 +154,7 @@ def instant_event(
     }
 
 
-def counter_event(pid: int, tid: int, name: str, ts_us: int, args: CounterData) -> CounterEvent:
+def counter_event(pid: int, tid: int, name: str, ts_us: int, args: dict[str, int]) -> CounterEvent:
     return {
         "name": name,
         "ph": "C",
@@ -195,7 +182,7 @@ def convert_item_to_trace_format(pid: int, item: TGCStatsInfo) -> list[TraceEven
         "candidates": item.candidates,
     }
 
-    counter_data: CounterData = {
+    counter_data = {
         "collected": item.collected,
         "uncollectable": item.uncollectable,
         "candidates": item.candidates,
