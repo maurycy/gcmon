@@ -50,7 +50,7 @@ class TestSetupLogging:
 
 def test_main_combine_command(tmp_path: Path) -> None:
     from gcmon import cli
-    from gcmon.exporters.chrome_trace_format import process_meta
+    from gcmon.trace_event import process_meta
 
     input_file = tmp_path / "input.json"
     input_file.write_bytes(msgspec.json.encode([process_meta(pid=1, name="test")]))

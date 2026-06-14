@@ -6,9 +6,11 @@ import msgspec
 from msgspec import structs
 
 from gcmon.exporters.chrome_trace_format import (
-    begin_event,
     convert_item_to_trace_format,
     convert_to_trace_format,
+)
+from gcmon.trace_event import (
+    begin_event,
     counter_event,
     end_event,
     instant_event,

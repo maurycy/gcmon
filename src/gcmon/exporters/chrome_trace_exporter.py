@@ -9,13 +9,8 @@ import msgspec
 
 from ..data import ts_to_us
 from ..protocol import TGCStatsInfo, TInstantMsg
-from .chrome_trace_format import (
-    TraceEvent,
-    convert_item_to_trace_format,
-    instant_event,
-    process_meta,
-    thread_meta,
-)
+from ..trace_event import TraceEvent, instant_event, process_meta, thread_meta
+from .chrome_trace_format import convert_item_to_trace_format
 from .exporter import EventsExporter
 
 __all__ = [

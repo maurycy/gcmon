@@ -21,7 +21,7 @@ from ..protocol import (
     is_instant,
     to_mapping,
 )
-from .chrome_trace_format import (
+from ..trace_event import (
     BeginEvent,
     CounterEvent,
     EndEvent,
@@ -29,8 +29,8 @@ from .chrome_trace_format import (
     ProcessMeta,
     ThreadMeta,
     TraceEvent,
-    convert_to_trace_format,
 )
+from .chrome_trace_format import convert_to_trace_format
 
 __all__ = [
     "combine_files",

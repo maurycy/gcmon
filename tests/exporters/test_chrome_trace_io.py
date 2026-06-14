@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import msgspec
 import pytest
 
-from gcmon.exporters.chrome_trace_format import (
+from gcmon.trace_event import (
     begin_event,
     counter_event,
     end_event,

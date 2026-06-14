@@ -7,7 +7,7 @@ from pathlib import Path
 import msgspec
 import pytest
 
-from gcmon.exporters.chrome_trace_format import begin_event, end_event, process_meta, thread_meta
+from gcmon.trace_event import begin_event, end_event, process_meta, thread_meta
 from tests.helpers import (
     assert_is_begin,
     assert_is_counter,
