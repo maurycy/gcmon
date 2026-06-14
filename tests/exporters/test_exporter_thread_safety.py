@@ -49,7 +49,7 @@ class OutputCapture(Protocol):
     exporter-specific because the formats differ:
 
     * JSONL/Stdout  -- one record per line
-    * Chrome trace  -- "ph": "X" / "ph": "I" markers; we count by raw
+    * Chrome trace  -- "ph": "B" / "ph": "I" markers; we count by raw
                        text scan to stay correct when the writer
                        appends after ``close()`` (which leaves data
                        outside the JSON array)
@@ -155,7 +155,7 @@ class ChromeTraceFileCapture(OutputCapture):
         return self._path.read_text(encoding="utf-8")
 
     def count_completes(self) -> int:
-        return self._text().count('"ph": "X"')
+        return self._text().count('"ph": "B"')
 
     def count_instants(self) -> int:
         return self._text().count('"ph": "I"')
