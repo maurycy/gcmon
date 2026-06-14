@@ -1,19 +1,23 @@
-"""Perfetto protobuf message builders and GC-to-Perfetto conversion."""
+"""Perfetto protobuf message builders and GC-to-Perfetto conversion.
+
+The protobuf building primitives (build_track_descriptor, build_trace_packet,
+build_track_event, etc.) remain here along with PerfettoTrackState.
+
+The function ``convert_trace_events_to_perfetto`` accepts a list of ``TraceEvent``
+objects (produced by the shared ``trace_converter``) and maps each to
+the corresponding Perfetto protobuf representation.
+"""
 
 from enum import IntEnum
 
-from ..data import ts_to_us
-from ..protocol import (
-    TGCStatsInfo,
-    TInstantMsg,
-    has_clear_weakrefs,
-    has_deduce_unreachable,
-    has_delete_garbage,
-    has_finalize_garbage,
-    has_handle_resurrected,
-    has_handle_weakrefs,
-    has_incremental,
-    has_mark_alive,
+from ..trace_event import (
+    BeginEvent,
+    CounterEvent,
+    EndEvent,
+    InstantEvent,
+    ProcessMeta,
+    ThreadMeta,
+    TraceEvent,
 )
 from .protobuf_encoder import (
     encode_bytes_field,
@@ -76,7 +80,13 @@ class TrackEventField(IntEnum):
 
 
 class DebugAnnotationField(IntEnum):
-    NAME = 1
+    # NAME lives at field 10, not field 1. The proto defines
+    # `oneof name_field { uint64 name_iid = 1; string name = 10; }`;
+    # only one variant of a oneof may be set, so we must use the current
+    # `name` slot. Field 1 is now an interned IID (uint64); writing a
+    # string there would be misinterpreted as a garbage IID. Do not
+    # "fix" this back to 1.
+    NAME = 10
     BOOL_VALUE = 2
     INT_VALUE = 4
     STRING_VALUE = 6
@@ -100,7 +110,7 @@ __all__ = [
     "build_trace_packet",
     "build_track_descriptor",
     "build_track_event",
-    "convert_item_to_perfetto_packets",
+    "convert_trace_events_to_perfetto",
 ]
 
 TYPE_SLICE_BEGIN = 1
@@ -132,7 +142,7 @@ class PerfettoTrackState:
         self._pids: set[int] = set()
         self._tids: set[tuple[int, int]] = set()
         self._cmdlines: dict[int, list[str]] = {}
-        self._counter_tracks: dict[tuple[int, int, int, str], int] = {}
+        self._counter_tracks: dict[tuple[int, int, str, str], int] = {}
         self._counter_counter = 0
 
     def has_pid(self, pid: int) -> bool:
@@ -159,11 +169,11 @@ class PerfettoTrackState:
     def get_thread_track_uuid(self, pid: int, iid: int) -> int:
         return (pid << 20) | iid | _THREAD_BASE
 
-    def has_counter_track(self, pid: int, iid: int, gen: int, metric: str) -> bool:
-        return (pid, iid, gen, metric) in self._counter_tracks
+    def has_counter_track(self, pid: int, iid: int, name: str, metric: str) -> bool:
+        return (pid, iid, name, metric) in self._counter_tracks
 
-    def get_or_create_counter_track_uuid(self, pid: int, iid: int, gen: int, metric: str) -> int:
-        key = (pid, iid, gen, metric)
+    def get_or_create_counter_track_uuid(self, pid: int, iid: int, name: str, metric: str) -> int:
+        key = (pid, iid, name, metric)
         if key not in self._counter_tracks:
             self._counter_tracks[key] = _COUNTER_BASE + self._counter_counter
             self._counter_counter += 1
@@ -293,290 +303,145 @@ def _make_counter_event(track_uuid: int, value: int) -> bytes:
     )
 
 
-def _base_annotations(gen: int, iid: int) -> list[bytes]:
-    return [
-        _build_debug_annotation_int("generation", gen),
-        _build_debug_annotation_int("iid", iid),
-    ]
+def _args_to_debug_annotations(args: dict[str, int]) -> list[bytes]:
+    return [_build_debug_annotation_int(k, v) for k, v in args.items()]
 
 
-def convert_item_to_perfetto_packets(
+def _emit_process_descriptor(
     pid: int,
-    item: TGCStatsInfo,
+    state: PerfettoTrackState,
+    sequence_id: int,
+) -> list[bytes]:
+    """Build a process track descriptor if not already emitted for *pid*."""
+    if state.has_pid(pid):
+        return []
+    state.mark_pid(pid)
+    proc_uuid = state.get_process_track_uuid(pid)
+    cmdline = state.get_cmdline(pid)
+    desc = build_track_descriptor(
+        proc_uuid,
+        f"Process {pid}",
+        pid=pid,
+        child_ordering=ChildTracksOrdering.EXPLICIT,
+        cmdline=cmdline,
+        description=" ".join(cmdline) if cmdline else None,
+    )
+    return [build_trace_packet(sequence_id, track_descriptor=desc)]
+
+
+def _emit_thread_descriptor(
+    pid: int,
+    iid: int,
+    state: PerfettoTrackState,
+    sequence_id: int,
+) -> list[bytes]:
+    """Build a thread track descriptor if not already emitted for *(pid, iid)*."""
+    if state.has_tid(pid, iid):
+        return []
+    state.mark_tid(pid, iid)
+    thread_uuid = state.get_thread_track_uuid(pid, iid)
+    desc = build_track_descriptor(
+        thread_uuid,
+        f"Thread {iid}",
+        pid=pid,
+        tid=pid if iid == 0 else iid,
+        parent_uuid=state.get_process_track_uuid(pid),
+        sibling_order_rank=0,
+        thread_name=f"Thread {iid}",
+    )
+    return [build_trace_packet(sequence_id, track_descriptor=desc)]
+
+
+def _emit_counter_track_descriptor(
+    pid: int,
+    iid: int,
+    name: str,
+    metric: str,
+    state: PerfettoTrackState,
+    sequence_id: int,
+) -> tuple[int, list[bytes]]:
+    """Build a counter track descriptor if not already emitted."""
+    if state.has_counter_track(pid, iid, name, metric):
+        ctr_uuid = state.get_or_create_counter_track_uuid(pid, iid, name, metric)
+        return ctr_uuid, []
+    ctr_uuid = state.get_or_create_counter_track_uuid(pid, iid, name, metric)
+    desc = build_track_descriptor(
+        ctr_uuid,
+        f"{name} {metric}",
+        parent_uuid=state.get_process_track_uuid(pid),
+        is_counter=True,
+        sibling_order_rank=_COUNTER_RANKS.get(metric, 0),
+    )
+    return ctr_uuid, [build_trace_packet(sequence_id, track_descriptor=desc)]
+
+
+def convert_trace_events_to_perfetto(
+    events: list[TraceEvent],
     state: PerfettoTrackState,
     sequence_id: int,
 ) -> tuple[list[bytes], list[bytes]]:
+    """Convert a list of ``TraceEvent`` objects to Perfetto protobuf packets.
+
+    The caller MUST include ``ProcessMeta`` / ``ThreadMeta`` events in the
+    list (at least once per pid / tid) for track descriptors to be emitted.
+    The ``PerfettoExporter`` does this automatically.
+
+    Returns ``(descriptors, packets)``, each element being a list of encoded
+    ``TracePacket`` bytes ready to be wrapped by ``build_trace``.
+    """
     descriptors: list[bytes] = []
     packets: list[bytes] = []
 
-    ts_start_ns = item.ts_start
-    ts_stop_ns = item.ts_stop
+    for event in events:
+        pid = event.pid
 
-    ts_start_us = ts_to_us(ts_start_ns)
+        if isinstance(event, ProcessMeta):
+            descriptors.extend(_emit_process_descriptor(pid, state, sequence_id))
 
-    proc_uuid = state.get_process_track_uuid(pid)
+        # The exporter is expected to emit ProcessMeta before any
+        # ThreadMeta for a given pid.
+        elif isinstance(event, ThreadMeta):
+            descriptors.extend(_emit_process_descriptor(pid, state, sequence_id))
+            descriptors.extend(_emit_thread_descriptor(pid, event.tid, state, sequence_id))
 
-    if not state.has_pid(pid):
-        state.mark_pid(pid)
-        cmdline = state.get_cmdline(pid)
-        desc = build_track_descriptor(
-            proc_uuid,
-            f"Process {pid}",
-            pid=pid,
-            child_ordering=ChildTracksOrdering.EXPLICIT,
-            cmdline=cmdline,
-            description=" ".join(cmdline) if cmdline else None,
-        )
-        if ts_start_ns < ts_stop_ns:
-            descriptors.append(build_trace_packet(sequence_id, timestamp=ts_start_us, track_descriptor=desc))
-        else:
-            descriptors.append(build_trace_packet(sequence_id, track_descriptor=desc))
+        elif isinstance(event, BeginEvent):
+            thread_uuid = state.get_thread_track_uuid(pid, event.tid)
+            annotations = _args_to_debug_annotations(event.args)
+            packets.append(build_trace_packet(
+                sequence_id, timestamp=event.ts,
+                track_event=_make_slice_begin(
+                    thread_uuid, event.name, [event.cat],
+                    annotations,
+                ),
+            ))
 
-    thread_uuid = state.get_thread_track_uuid(pid, item.iid)
-    if not state.has_tid(pid, item.iid):
-        state.mark_tid(pid, item.iid)
-        desc = build_track_descriptor(
-            thread_uuid,
-            f"Thread {item.iid}",
-            pid=pid,
-            tid=pid if item.iid == 0 else item.iid,
-            parent_uuid=proc_uuid,
-            sibling_order_rank=0,
-            thread_name=f"Thread {item.iid}",
-        )
-        if ts_start_ns < ts_stop_ns:
-            descriptors.append(build_trace_packet(sequence_id, timestamp=ts_start_us, track_descriptor=desc))
-        else:
-            descriptors.append(build_trace_packet(sequence_id, track_descriptor=desc))
+        elif isinstance(event, EndEvent):
+            thread_uuid = state.get_thread_track_uuid(pid, event.tid)
+            packets.append(build_trace_packet(
+                sequence_id, timestamp=event.ts,
+                track_event=_make_slice_end(thread_uuid),
+            ))
 
-    if ts_start_ns >= ts_stop_ns:
-        return descriptors, packets
+        elif isinstance(event, InstantEvent):
+            proc_uuid = state.get_process_track_uuid(pid)
+            packets.append(build_trace_packet(
+                sequence_id, timestamp=event.ts,
+                track_event=build_track_event(
+                    type=TYPE_INSTANT,
+                    track_uuid=proc_uuid,
+                    name=event.name,
+                ),
+            ))
 
-    ts_stop_us = ts_to_us(ts_stop_ns)
-
-    gen = item.gen
-    iid = item.iid
-    base_ann = _base_annotations(gen, iid)
-
-    pause_ann = list(base_ann)
-    pause_ann.append(_build_debug_annotation_int("collections", item.collections))
-    pause_ann.append(_build_debug_annotation_int("heap_size", item.heap_size))
-    pause_ann.append(_build_debug_annotation_int("collected", item.collected))
-    pause_ann.append(_build_debug_annotation_int("uncollectable", item.uncollectable))
-    pause_ann.append(_build_debug_annotation_int("candidates", item.candidates))
-
-    packets.append(build_trace_packet(
-        sequence_id, timestamp=ts_start_us,
-        track_event=_make_slice_begin(
-            thread_uuid, f"GC Pause (gen={gen})", [f"gc.pause(gen={gen})"],
-            pause_ann,
-        ),
-    ))
-
-    if has_mark_alive(item) and item.ts_mark_alive_stop - item.ts_mark_alive_start > 0:
-        ann = list(base_ann)
-        ann.append(_build_debug_annotation_int("alive_size", item.alive_size))
-        mark_alive_start_us = ts_to_us(item.ts_mark_alive_start)
-        mark_alive_stop_us = ts_to_us(item.ts_mark_alive_stop)
-        packets.append(build_trace_packet(
-            sequence_id, timestamp=mark_alive_start_us,
-            track_event=_make_slice_begin(
-                thread_uuid, f"Mark Alive (gen={gen})", [f"gc.mark.alive(gen={gen})"],
-                ann,
-            ),
-        ))
-        packets.append(build_trace_packet(
-            sequence_id, timestamp=mark_alive_stop_us,
-            track_event=_make_slice_end(thread_uuid),
-        ))
-
-    if has_incremental(item) and item.ts_fill_increment_stop - item.ts_fill_increment_start > 0:
-        ann = list(base_ann)
-        ann.append(_build_debug_annotation_int("increment_size", item.increment_size))
-        fill_inc_start_us = ts_to_us(item.ts_fill_increment_start)
-        fill_inc_stop_us = ts_to_us(item.ts_fill_increment_stop)
-        packets.append(build_trace_packet(
-            sequence_id, timestamp=fill_inc_start_us,
-            track_event=_make_slice_begin(
-                thread_uuid, f"Fill increment (gen={gen})", [f"gc.increment(gen={gen})"],
-                ann,
-            ),
-        ))
-        packets.append(build_trace_packet(
-            sequence_id, timestamp=fill_inc_stop_us,
-            track_event=_make_slice_end(thread_uuid),
-        ))
-
-    if has_deduce_unreachable(item) and item.ts_deduce_unreachable_stop - item.ts_deduce_unreachable_start > 0:
-        deduce_start_us = ts_to_us(item.ts_deduce_unreachable_start)
-        deduce_stop_us = ts_to_us(item.ts_deduce_unreachable_stop)
-        packets.append(build_trace_packet(
-            sequence_id, timestamp=deduce_start_us,
-            track_event=_make_slice_begin(
-                thread_uuid, f"Deduce Unreachable (gen={gen})", [f"gc.deduce(gen={gen})"],
-                list(base_ann),
-            ),
-        ))
-        packets.append(build_trace_packet(
-            sequence_id, timestamp=deduce_stop_us,
-            track_event=_make_slice_end(thread_uuid),
-        ))
-
-    if has_handle_weakrefs(item) and item.ts_handle_weakref_callbacks_stop - item.ts_handle_weakref_callbacks_start > 0:
-        wr_start_us = ts_to_us(item.ts_handle_weakref_callbacks_start)
-        wr_stop_us = ts_to_us(item.ts_handle_weakref_callbacks_stop)
-        packets.append(build_trace_packet(
-            sequence_id, timestamp=wr_start_us,
-            track_event=_make_slice_begin(
-                thread_uuid, f"Handle Weakrefs Callbacks (gen={gen})",
-                [f"gc.weakrefs(gen={gen})"],
-                list(base_ann),
-            ),
-        ))
-        packets.append(build_trace_packet(
-            sequence_id, timestamp=wr_stop_us,
-            track_event=_make_slice_end(thread_uuid),
-        ))
-
-    if has_finalize_garbage(item) and item.ts_finalize_garbage_stop - item.ts_handle_weakref_callbacks_stop > 0:
-        ann = list(base_ann)
-        ann.append(_build_debug_annotation_int("finalized_garbage_count", item.finalized_garbage_count))
-        fin_start_us = ts_to_us(item.ts_handle_weakref_callbacks_stop)
-        fin_stop_us = ts_to_us(item.ts_finalize_garbage_stop)
-        packets.append(build_trace_packet(
-            sequence_id, timestamp=fin_start_us,
-            track_event=_make_slice_begin(
-                thread_uuid, f"Finalize Garbage (gen={gen})", [f"gc.finalize(gen={gen})"],
-                ann,
-            ),
-        ))
-        packets.append(build_trace_packet(
-            sequence_id, timestamp=fin_stop_us,
-            track_event=_make_slice_end(thread_uuid),
-        ))
-
-    if has_handle_resurrected(item) and item.ts_handle_resurrected_stop - item.ts_finalize_garbage_stop > 0:
-        res_start_us = ts_to_us(item.ts_finalize_garbage_stop)
-        res_stop_us = ts_to_us(item.ts_handle_resurrected_stop)
-        packets.append(build_trace_packet(
-            sequence_id, timestamp=res_start_us,
-            track_event=_make_slice_begin(
-                thread_uuid, f"Handle Resurrected (gen={gen})", [f"gc.resurrect(gen={gen})"],
-                list(base_ann),
-            ),
-        ))
-        packets.append(build_trace_packet(
-            sequence_id, timestamp=res_stop_us,
-            track_event=_make_slice_end(thread_uuid),
-        ))
-
-    if has_clear_weakrefs(item) and item.ts_clear_weakrefs_stop - item.ts_handle_resurrected_stop > 0:
-        ann = list(base_ann)
-        ann.append(_build_debug_annotation_int("clear_weakrefs_count", item.clear_weakrefs_count))
-        cw_start_us = ts_to_us(item.ts_handle_resurrected_stop)
-        cw_stop_us = ts_to_us(item.ts_clear_weakrefs_stop)
-        packets.append(build_trace_packet(
-            sequence_id, timestamp=cw_start_us,
-            track_event=_make_slice_begin(
-                thread_uuid, f"Clear Weakrefs (gen={gen})", [f"gc.clear_weakrefs(gen={gen})"],
-                ann,
-            ),
-        ))
-        packets.append(build_trace_packet(
-            sequence_id, timestamp=cw_stop_us,
-            track_event=_make_slice_end(thread_uuid),
-        ))
-
-    if has_delete_garbage(item) and item.ts_delete_garbage_stop - item.ts_delete_garbage_start > 0:
-        ann = list(base_ann)
-        ann.append(_build_debug_annotation_int("deleted_garbage_count", item.deleted_garbage_count))
-        del_start_us = ts_to_us(item.ts_delete_garbage_start)
-        del_stop_us = ts_to_us(item.ts_delete_garbage_stop)
-        packets.append(build_trace_packet(
-            sequence_id, timestamp=del_start_us,
-            track_event=_make_slice_begin(
-                thread_uuid, f"Delete Garbage (gen={gen})", [f"gc.delete(gen={gen})"],
-                ann,
-            ),
-        ))
-        packets.append(build_trace_packet(
-            sequence_id, timestamp=del_stop_us,
-            track_event=_make_slice_end(thread_uuid),
-        ))
-
-    packets.append(build_trace_packet(
-        sequence_id, timestamp=ts_stop_us,
-        track_event=_make_slice_end(thread_uuid),
-    ))
-
-    counter_values: list[tuple[str, int]] = [
-        ("collected", item.collected),
-        ("uncollectable", item.uncollectable),
-        ("candidates", item.candidates),
-        ("heap_size", item.heap_size),
-    ]
-    if has_incremental(item) and gen < 2:
-        counter_values.append(("increment_size", item.increment_size))
-    if has_mark_alive(item) and gen > 0:
-        counter_values.append(("alive_size", item.alive_size))
-    if has_finalize_garbage(item):
-        counter_values.append(("finalized_garbage_count", item.finalized_garbage_count))
-    if has_delete_garbage(item):
-        counter_values.append(("deleted_garbage_count", item.deleted_garbage_count))
-    if has_clear_weakrefs(item):
-        counter_values.append(("clear_weakrefs_count", item.clear_weakrefs_count))
-
-    for metric, value in counter_values:
-        is_new = not state.has_counter_track(pid, iid, gen, metric)
-        ctr_uuid = state.get_or_create_counter_track_uuid(pid, iid, gen, metric)
-        if is_new:
-            desc = build_track_descriptor(
-                ctr_uuid,
-                f"{metric} (gen={gen})",
-                parent_uuid=proc_uuid,
-                is_counter=True,
-                sibling_order_rank=_COUNTER_RANKS.get(metric, 0),
-            )
-            descriptors.append(build_trace_packet(sequence_id, track_descriptor=desc))
-        packets.append(build_trace_packet(
-            sequence_id, timestamp=ts_start_us,
-            track_event=_make_counter_event(ctr_uuid, value),
-        ))
-
-    return descriptors, packets
-
-
-def convert_instant_to_perfetto_packet(
-    pid: int,
-    item: TInstantMsg,
-    state: PerfettoTrackState,
-    sequence_id: int,
-) -> tuple[list[bytes], list[bytes]]:
-    descriptors: list[bytes] = []
-    packets: list[bytes] = []
-
-    ts_us = ts_to_us(item.ts)
-
-    proc_uuid = state.get_process_track_uuid(pid)
-    if not state.has_pid(pid):
-        state.mark_pid(pid)
-        cmdline = state.get_cmdline(pid)
-        desc = build_track_descriptor(
-            proc_uuid,
-            f"Process {pid}",
-            pid=pid,
-            child_ordering=ChildTracksOrdering.EXPLICIT,
-            cmdline=cmdline,
-            description=" ".join(cmdline) if cmdline else None,
-        )
-        descriptors.append(build_trace_packet(sequence_id, timestamp=ts_us, track_descriptor=desc))
-    packets.append(build_trace_packet(
-        sequence_id, timestamp=ts_us,
-        track_event=build_track_event(
-            type=TYPE_INSTANT,
-            track_uuid=proc_uuid,
-            name=item.name,
-        ),
-    ))
+        elif isinstance(event, CounterEvent):
+            for metric, value in event.args.items():
+                ctr_uuid, desc_bytes = _emit_counter_track_descriptor(
+                    pid, event.tid, event.name, metric, state, sequence_id,
+                )
+                descriptors.extend(desc_bytes)
+                packets.append(build_trace_packet(
+                    sequence_id, timestamp=event.ts,
+                    track_event=_make_counter_event(ctr_uuid, value),
+                ))
 
     return descriptors, packets
