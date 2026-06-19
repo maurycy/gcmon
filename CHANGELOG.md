@@ -12,6 +12,7 @@
 - Chrome trace exporter now emits duration events ("B"/"E") instead of complete events ("X")
 - Drop PauseData and CounterData
 - Replace TypedDict with msgspec.Struct for TraceEvents
+- Unify Chrome trace and Perfetto exporters (#38)
 
 ## Version 0.2.0 (2026-06-10)
 
