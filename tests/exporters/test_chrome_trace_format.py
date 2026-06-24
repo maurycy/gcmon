@@ -297,16 +297,17 @@ class TestConvertItemToTraceFormat:
         assert pause.args["deleted_garbage_count"] == 13
         assert pause.args["clear_weakrefs_count"] == 7
 
-    def test_counter_data_has_count_fields(self) -> None:
+    def test_incremental_counter_excludes_size_and_count_fields(self) -> None:
         item = _make_incremental_item(
             gen=0, finalized_garbage_count=42,
             deleted_garbage_count=13, clear_weakrefs_count=7,
         )
         events = convert_item_to_trace_format(pid=12345, item=item)
         counter = next(e for e in events if e.ph == "C")
-        assert counter.args["finalized_garbage_count"] == 42
-        assert counter.args["deleted_garbage_count"] == 13
-        assert counter.args["clear_weakrefs_count"] == 7
+        assert "alive_size" not in counter.args
+        assert "finalized_garbage_count" not in counter.args
+        assert "deleted_garbage_count" not in counter.args
+        assert "clear_weakrefs_count" not in counter.args
 
     def test_regular_item_has_no_count_fields_in_pause(self) -> None:
         item = create_mock_stats_item()
@@ -323,6 +324,48 @@ class TestConvertItemToTraceFormat:
         assert "finalized_garbage_count" not in counter.args
         assert "deleted_garbage_count" not in counter.args
         assert "clear_weakrefs_count" not in counter.args
+
+    def test_finalize_garbage_substep_has_count(self) -> None:
+        item = _make_incremental_item(
+            gen=0, finalized_garbage_count=42,
+            deleted_garbage_count=13, clear_weakrefs_count=7,
+        )
+        events = convert_item_to_trace_format(pid=12345, item=item)
+        begin = next(
+            e for e in events
+            if e.ph == "B" and e.name == "Finalize Garbage (gen=0)"
+        )
+        assert begin.args["finalized_garbage_count"] == 42
+        assert "deleted_garbage_count" not in begin.args
+        assert "clear_weakrefs_count" not in begin.args
+
+    def test_clear_weakrefs_substep_has_count(self) -> None:
+        item = _make_incremental_item(
+            gen=0, finalized_garbage_count=42,
+            deleted_garbage_count=13, clear_weakrefs_count=7,
+        )
+        events = convert_item_to_trace_format(pid=12345, item=item)
+        begin = next(
+            e for e in events
+            if e.ph == "B" and e.name == "Clear Weakrefs (gen=0)"
+        )
+        assert begin.args["clear_weakrefs_count"] == 7
+        assert "finalized_garbage_count" not in begin.args
+        assert "deleted_garbage_count" not in begin.args
+
+    def test_delete_garbage_substep_has_count(self) -> None:
+        item = _make_incremental_item(
+            gen=0, finalized_garbage_count=42,
+            deleted_garbage_count=13, clear_weakrefs_count=7,
+        )
+        events = convert_item_to_trace_format(pid=12345, item=item)
+        begin = next(
+            e for e in events
+            if e.ph == "B" and e.name == "Delete Garbage (gen=0)"
+        )
+        assert begin.args["deleted_garbage_count"] == 13
+        assert "finalized_garbage_count" not in begin.args
+        assert "clear_weakrefs_count" not in begin.args
 
 
 class TestConvertToTraceFormat:
