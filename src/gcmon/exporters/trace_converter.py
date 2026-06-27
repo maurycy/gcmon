@@ -47,16 +47,16 @@ def convert_item_to_trace_format(pid: int, item: TGCStatsInfo) -> list[TraceEven
         "candidates": item.candidates,
     }
 
-    counter_data = {
+    counter_data: dict[str, int | float] = {
         "collected": item.collected,
-        "uncollectable": item.uncollectable,
         "candidates": item.candidates,
-        "heap_size": item.heap_size,
+        "duration": item.duration,
     }
+    if item.uncollectable:
+        counter_data["uncollectable"] = item.uncollectable
 
     if has_incremental(item) and gen < 2:
         pause_data["increment_size"] = item.increment_size
-        counter_data["increment_size"] = item.increment_size
 
     if has_mark_alive(item) and gen > 0:
         pause_data["alive_size"] = item.alive_size
@@ -127,7 +127,7 @@ def convert_item_to_trace_format(pid: int, item: TGCStatsInfo) -> list[TraceEven
         )
 
     if has_deduce_unreachable(item) and item.ts_deduce_unreachable_stop - item.ts_deduce_unreachable_start > 0:
-        inc_data = {"generation": gen, "iid": iid}
+        inc_data = {"generation": gen, "iid": iid, "candidates": item.candidates}
         events.append(
             begin_event(
                 pid,
@@ -267,6 +267,16 @@ def convert_item_to_trace_format(pid: int, item: TGCStatsInfo) -> list[TraceEven
             f"G{gen}",
             ts_start_ns,
             counter_data,
+        )
+    )
+
+    events.append(
+        counter_event(
+            pid,
+            tid,
+            "heap_size",
+            ts_start_ns,
+            {"heap_size": item.heap_size},
         )
     )
 

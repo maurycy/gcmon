@@ -49,12 +49,12 @@ _EXPECTED_COUNTER_NAMES: frozenset[str] = frozenset({
     "G0 collected",
     "G0 uncollectable",
     "G0 candidates",
-    "G0 heap_size",
+    "G0 duration",
     "G1 collected",
     "G1 uncollectable",
     "G1 candidates",
-    "G1 heap_size",
-    "G1 increment_size",
+    "G1 duration",
+    "heap_size",
 })
 
 _ARG_PREFIX: dict[str, str] = {
@@ -243,6 +243,28 @@ class TestSliceArgs:
         missing = set(expected_sub_slices) - slice_names
         assert not missing, f"missing sub-slices: {missing}"
 
+    @pytest.mark.parametrize("fmt", ["chrome", "perfetto"])
+    def test_deduce_unreachable_slice_args_has_candidates(
+        self, fmt: str, trace_processor: TraceProcessor,
+    ) -> None:
+        prefix = _ARG_PREFIX[fmt]
+        rows = {
+            r.flat_key: r.int_value
+            for r in trace_processor.query(
+                "SELECT flat_key, int_value FROM args "
+                "WHERE arg_set_id IN ("
+                f"  SELECT s.arg_set_id FROM slice s "
+                f"  {_process_filter(DEFAULT_PID)} "
+                "  AND s.name = 'Deduce Unreachable (gen=1)' AND s.dur > 0 "
+                f"  AND th.name = 'Thread 1'"
+                ")"
+            )
+        }
+        assert f"{prefix}.candidates" in rows, (
+            f"missing {prefix}.candidates on Deduce Unreachable (gen=1); "
+            f"got {sorted(rows)}"
+        )
+
         prefix = _ARG_PREFIX[fmt]
         pause_args = {
             r.flat_key: r.int_value
@@ -265,23 +287,116 @@ class TestSliceArgs:
 
 
 class TestCounterTracks:
-    """The four counter metrics (collected/uncollectable/candidates/heap_size)
-    each have a counter track with the expected name, and no extra counter
-    tracks are emitted. The set comparison is robust to multiple processes
-    emitting the same counter-track names."""
+    """The per-gen counter metrics (collected/uncollectable/candidates/
+    duration) each have a counter track with the expected name, plus a
+    shared `heap_size` track per (pid, tid). No extra counter tracks are
+    emitted — in particular `increment_size` is not a counter track (it
+    lives on the pause slice's args). The set comparison is robust to
+    multiple processes emitting the same counter-track names."""
 
     @pytest.mark.parametrize("fmt", ["chrome", "perfetto"])
     def test_counter_track_names_match_expected(
         self, fmt: str, trace_processor: TraceProcessor,
     ) -> None:
         rows = {r.name for r in trace_processor.query("SELECT name FROM counter_track")}
-        missing = _EXPECTED_COUNTER_NAMES - rows
-        unexpected = rows - _EXPECTED_COUNTER_NAMES
+        # Chrome JSON's trace processor prepends a space when the counter
+        # event name is empty (the consolidated `heap_size` event has no
+        # event-level name to avoid the `heap_size heap_size` duplication).
+        # Strip the leading space so the set comparison is format-agnostic.
+        normalized = {r.strip() for r in rows}
+        missing = _EXPECTED_COUNTER_NAMES - normalized
+        unexpected = normalized - _EXPECTED_COUNTER_NAMES
         assert not missing and not unexpected, (
             f"counter track names mismatch; "
             f"missing: {missing or 'none'}; "
             f"unexpected: {unexpected or 'none'}"
         )
+
+    @pytest.mark.parametrize("fmt", ["chrome", "perfetto"])
+    def test_uncollectable_counter_omitted_when_zero(
+        self, fmt: str, tmp_path: Path,
+    ) -> None:
+        path = tmp_path / ("trace.json" if fmt == "chrome" else "trace.pb")
+        exporter: TraceExporter | PerfettoExporter
+        if fmt == "chrome":
+            exporter = TraceExporter(
+                output_path=path, flush_threshold=1000,
+            )
+        else:
+            exporter = PerfettoExporter(
+                output_path=path, flush_threshold=1000,
+            )
+        exporter.add_event(DEFAULT_PID, create_mock_stats_item(
+            gen=0, iid=0, uncollectable=0, heap_size=_HEAP_SIZE,
+        ))
+        exporter.close()
+        tp = TraceProcessor(
+            trace=str(path), config=TraceProcessorConfig(load_timeout=300),
+        )
+        try:
+            names = {r.name for r in tp.query("SELECT name FROM counter_track")}
+            assert "G0 uncollectable" not in {n.strip() for n in names}, (
+                f"uncollectable counter should be omitted when 0; got {names}"
+            )
+            assert "G0 collected" in {n.strip() for n in names}
+            assert "G0 candidates" in {n.strip() for n in names}
+        finally:
+            tp.close()
+
+    @pytest.mark.parametrize("fmt", ["chrome", "perfetto"])
+    def test_duration_counter_track_present(
+        self, fmt: str, trace_processor: TraceProcessor,
+    ) -> None:
+        names = {r.name.strip() for r in trace_processor.query(
+            "SELECT name FROM counter_track",
+        )}
+        for gen in (0, 1):
+            assert f"G{gen} duration" in names, (
+                f"G{gen} duration counter should be present; got {names}"
+            )
+        assert "duration" not in names, (
+            f"shared 'duration' counter should NOT be present; got {names}"
+        )
+
+    @pytest.mark.parametrize("fmt", ["perfetto"])
+    def test_duration_counter_value_is_double(
+        self, fmt: str, trace_processor: TraceProcessor,
+    ) -> None:
+        # The `counter` table stores both int and double values in a single
+        # `value` column (DOUBLE). For the per-gen `G0 duration` track, that
+        # value should equal the per-pause duration (0.005 for the default
+        # fixture).
+        rows = list(trace_processor.query(
+            "SELECT id, name FROM counter_track WHERE name = 'G0 duration'",
+        ))
+        assert rows, "no G0 duration counter track found"
+        for r in rows:
+            values = list(trace_processor.query(
+                f"SELECT value FROM counter WHERE track_id = {r.id}",
+            ))
+            assert values, f"no counter values for G0 duration track {r.id}"
+            assert any(abs(v.value - 0.005) < 1e-9 for v in values)
+
+    @pytest.mark.parametrize("fmt", ["perfetto"])
+    def test_duration_counter_parented_to_gc_metrics_group(
+        self, fmt: str, trace_processor: TraceProcessor,
+    ) -> None:
+        # Every per-gen `G{gen} duration` track should be parented to a
+        # `GC Metrics` group (one per pid/iid combination).
+        rows = list(trace_processor.query(
+            "SELECT id, parent_id, name FROM track "
+            "WHERE name LIKE 'G_ duration'",
+        ))
+        assert rows, "no G{gen} duration tracks found"
+        for r in rows:
+            assert r.parent_id is not None, (
+                f"{r.name} track has no parent"
+            )
+            parents = list(trace_processor.query(
+                f"SELECT name FROM track WHERE id = {r.parent_id}",
+            ))
+            assert len(parents) == 1
+            assert parents[0].name == "GC Metrics"
 
 
 class TestTrackDescriptors:

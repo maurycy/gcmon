@@ -160,9 +160,9 @@ class TestConvertItemToTraceFormat:
         begins = [e for e in events if e.ph == "B"]
         counters = [e for e in events if e.ph == "C"]
         assert len(begins) == 1
-        assert len(counters) == 1
+        assert len(counters) == 2
         assert begins[0].name == "GC Pause (gen=0)"
-        assert counters[0].name == "G0"
+        assert {c.name for c in counters} == {"G0", "heap_size"}
 
     def test_preserves_timestamps_in_nanoseconds(self) -> None:
         item = create_mock_stats_item(ts_start=1_500_000_000, ts_stop=1_505_000_000)
@@ -192,6 +192,16 @@ class TestConvertItemToTraceFormat:
         pause = next(e for e in events if e.ph == "B" and "GC Pause" in e.name)
         assert pause.args["increment_size"] == 1000
 
+    def test_deduce_unreachable_slice_args_has_candidates(self) -> None:
+        item = _make_incremental_item(gen=0)
+        events = convert_item_to_trace_format(pid=12345, item=item)
+        deduce = next(
+            e for e in events
+            if e.ph == "B" and e.name == "Deduce Unreachable (gen=0)"
+        )
+        assert deduce.args["candidates"] == item.candidates
+        assert deduce.args["generation"] == 0
+
     def test_incremental_gen0_pause_data_no_alive_size(self) -> None:
         item = _make_incremental_item(gen=0)
         events = convert_item_to_trace_format(pid=12345, item=item)
@@ -212,12 +222,21 @@ class TestConvertItemToTraceFormat:
         assert "increment_size" not in pause.args
         assert pause.args["alive_size"] == 800
 
-    def test_counter_data_includes_inc_fields_for_gen0(self) -> None:
+    def test_counter_data_excludes_increment_size(self) -> None:
         item = _make_incremental_item(gen=0, increment_size=1000)
         events = convert_item_to_trace_format(pid=12345, item=item)
-        counter = next(e for e in events if e.ph == "C")
-        assert counter.args["increment_size"] == 1000
-        assert "alive_size" not in counter.args
+        # The per-gen `G{gen}` counter no longer carries `increment_size`;
+        # it is exposed on the GC Pause slice's args instead. The
+        # consolidated `heap_size` event is also a `C` event — pick the
+        # per-gen one by its name prefix.
+        counter = next(
+            e for e in events
+            if e.ph == "C" and e.name.startswith("G")
+        )
+        assert "increment_size" not in counter.args
+        assert "collected" in counter.args
+        pause = next(e for e in events if e.ph == "B" and "GC Pause" in e.name)
+        assert pause.args["increment_size"] == 1000
 
     def test_zero_duration_sub_steps_are_skipped(self) -> None:
         base = _make_incremental_item(gen=0)
@@ -268,10 +287,71 @@ class TestConvertItemToTraceFormat:
     def test_counter_data_has_all_required_fields(self) -> None:
         item = create_mock_stats_item()
         events = convert_item_to_trace_format(pid=12345, item=item)
-        counter = next(e for e in events if e.ph == "C")
+        counter = next(e for e in events if e.ph == "C" and e.name.startswith("G"))
         assert set(counter.args.keys()) == {
-            "collected", "uncollectable", "candidates", "heap_size",
+            "collected", "uncollectable", "candidates", "duration",
         }
+
+    def test_counter_data_omits_uncollectable_when_zero(self) -> None:
+        item = create_mock_stats_item(uncollectable=0)
+        events = convert_item_to_trace_format(pid=12345, item=item)
+        counter = next(e for e in events if e.ph == "C" and e.name.startswith("G"))
+        assert "uncollectable" not in counter.args
+        assert "collected" in counter.args
+        assert "candidates" in counter.args
+        assert "duration" in counter.args
+
+    def test_duration_counter_event_emitted(self) -> None:
+        item = create_mock_stats_item(duration=0.123)
+        events = convert_item_to_trace_format(pid=12345, item=item)
+        counter = next(
+            e for e in events
+            if e.ph == "C" and e.name == "G0"
+        )
+        assert counter.args["duration"] == 0.123
+
+    def test_duration_counter_split_by_generation(self) -> None:
+        events_g0 = convert_item_to_trace_format(
+            pid=12345, item=create_mock_stats_item(gen=0, iid=7, duration=0.01),
+        )
+        events_g1 = convert_item_to_trace_format(
+            pid=12345, item=create_mock_stats_item(gen=1, iid=7, duration=0.02),
+        )
+        events_g2 = convert_item_to_trace_format(
+            pid=12345, item=create_mock_stats_item(gen=2, iid=7, duration=0.03),
+        )
+        # Each generation produces a per-gen counter event ("G{gen}") with
+        # `duration` as one of its args. The three generations' duration
+        # values are NOT collapsed onto a single shared track; they live on
+        # three separate per-gen tracks.
+        for gen, events, expected in (
+            (0, events_g0, 0.01),
+            (1, events_g1, 0.02),
+            (2, events_g2, 0.03),
+        ):
+            counter = next(e for e in events if e.ph == "C" and e.name == f"G{gen}")
+            assert counter.args["duration"] == expected
+
+    def test_heap_size_counter_event_is_shared_across_generations(self) -> None:
+        events_g0 = convert_item_to_trace_format(
+            pid=12345, item=create_mock_stats_item(gen=0, iid=7, heap_size=1000),
+        )
+        events_g1 = convert_item_to_trace_format(
+            pid=12345, item=create_mock_stats_item(gen=1, iid=7, heap_size=2000),
+        )
+        events_g2 = convert_item_to_trace_format(
+            pid=12345, item=create_mock_stats_item(gen=2, iid=7, heap_size=3000),
+        )
+        for events in (events_g0, events_g1, events_g2):
+            per_gen = [e for e in events if e.ph == "C" and e.name.startswith("G")]
+            heap = [e for e in events if e.ph == "C" and e.name == "heap_size"]
+            assert len(per_gen) == 1
+            assert "heap_size" not in per_gen[0].args
+            assert len(heap) == 1
+            assert set(heap[0].args.keys()) == {"heap_size"}
+        assert events_g0[next(i for i, e in enumerate(events_g0) if e.ph == "C" and e.name == "heap_size")].args["heap_size"] == 1000
+        assert events_g1[next(i for i, e in enumerate(events_g1) if e.ph == "C" and e.name == "heap_size")].args["heap_size"] == 2000
+        assert events_g2[next(i for i, e in enumerate(events_g2) if e.ph == "C" and e.name == "heap_size")].args["heap_size"] == 3000
 
     def test_pid_is_passed_through(self) -> None:
         item = create_mock_stats_item()

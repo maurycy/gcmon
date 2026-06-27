@@ -477,9 +477,10 @@ class TestCliCombineJsonlToChrome:
 
         assert result.returncode == 0
         data = assert_valid_chrome_trace_format(combine_output)
-        # 2 files → 2 process_meta + 2 thread_meta + 2 B + 2 C
+        # 2 files → 2 process_meta + 2 thread_meta + 2 B + 4 C
+        # (per-gen counter with duration folded in + shared heap_size for each)
         assert len([e for e in data if e["ph"] == "B"]) == 2
-        assert len([e for e in data if e["ph"] == "C"]) == 2
+        assert len([e for e in data if e["ph"] == "C"]) == 4
         assert len([e for e in data if e["name"] == "process_name"]) == 2
         assert len([e for e in data if e["name"] == "thread_name"]) == 2
 

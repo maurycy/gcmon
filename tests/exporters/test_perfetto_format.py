@@ -22,10 +22,11 @@ from gcmon.exporters.perfetto_format import (
     convert_trace_events_to_perfetto,
 )
 from gcmon.exporters.trace_converter import convert_item_to_trace_format
-from gcmon.trace_event import instant_event, process_meta, thread_meta
+from gcmon.trace_event import counter_event, instant_event, process_meta, thread_meta
 from tests.proto_decoder import (
     decode_message,
     get_bytes,
+    get_double,
     get_field,
     get_fields,
     get_string,
@@ -392,7 +393,7 @@ class TestConvertItemToPerfettoPackets:
                     thread_found = True
         assert thread_found
 
-    def test_counter_tracks_parented_to_process(self) -> None:
+    def test_counter_tracks_parented_to_counter_group(self) -> None:
         state = PerfettoTrackState()
         item = GCStatsInfo(
             gen=0, iid=0, ts_start=1_000, ts_stop=2_000,
@@ -401,19 +402,32 @@ class TestConvertItemToPerfettoPackets:
         )
         descriptors, _ = _convert_item(100, item, state, sequence_id=1)
         proc_uuid = state.get_process_track_uuid(100)
-        counter_parent_uuids: list[int] = []
+        group_uuid = state.get_or_create_counter_group_track_uuid(100, 0)
+        assert group_uuid != proc_uuid
+        group_seen = False
+        per_metric_parent: dict[str, int] = {}
         for desc_bytes in descriptors:
             fields = decode_message(desc_bytes)
             td_bytes = get_bytes(fields, TracePacketField.TRACK_DESCRIPTOR)
             if td_bytes:
                 td_fields = decode_message(td_bytes)
                 counter_bytes = get_bytes(td_fields, TrackDescriptorField.COUNTER)
+                uuid = get_varint(td_fields, TrackDescriptorField.UUID)
                 if counter_bytes is not None:
                     parent_uuid = get_varint(td_fields, TrackDescriptorField.PARENT_UUID)
-                    counter_parent_uuids.append(parent_uuid)
-        assert len(counter_parent_uuids) > 0
-        for parent_uuid in counter_parent_uuids:
-            assert parent_uuid == proc_uuid
+                    track_name = get_string(td_fields, TrackDescriptorField.NAME)
+                    per_metric_parent[track_name] = parent_uuid
+                elif uuid == group_uuid:
+                    group_seen = True
+                    assert get_varint(td_fields, TrackDescriptorField.PARENT_UUID) == proc_uuid
+                    assert get_varint(td_fields, TrackDescriptorField.CHILD_ORDERING) == 3
+        assert group_seen, "GC Counters group track descriptor was not emitted"
+        # heap_size is a top-level counter: parented directly to the process.
+        assert per_metric_parent["heap_size"] == proc_uuid
+        # Per-gen counters are parented to the GC Counters group.
+        for name, parent_uuid in per_metric_parent.items():
+            if name != "heap_size":
+                assert parent_uuid == group_uuid, f"{name!r} should parent to group"
 
     def test_basic_item_emits_pause_slice(self) -> None:
         state = PerfettoTrackState()
@@ -448,12 +462,19 @@ class TestConvertItemToPerfettoPackets:
                 te_fields = decode_message(te_bytes)
                 if get_varint(te_fields, TrackEventField.TYPE) == TYPE_COUNTER:
                     counter_packets.append((fields, te_fields))
-        assert len(counter_packets) == 4
+        assert len(counter_packets) == 5
         values = [get_varint(te, TrackEventField.COUNTER_VALUE) for _, te in counter_packets]
         assert 10 in values
         assert 2 in values
         assert 5 in values
         assert 1000 in values
+        # The `duration` value is encoded as a double (DOUBLE_COUNTER_VALUE,
+        # field 44), not as a varint counter_value. Verify it is present.
+        double_values = [
+            get_double(te, TrackEventField.DOUBLE_COUNTER_VALUE)
+            for _, te in counter_packets
+        ]
+        assert 0.001 in double_values
 
     def test_counter_descriptor_emitted_once(self) -> None:
         state = PerfettoTrackState()
@@ -529,6 +550,104 @@ class TestConvertItemToPerfettoPackets:
         assert "Clear Weakrefs (gen=1)" in slice_begins
         assert "Delete Garbage (gen=1)" in slice_begins
 
+    def test_uncollectable_counter_omitted_when_zero(self) -> None:
+        state = PerfettoTrackState()
+        item = GCStatsInfo(
+            gen=0, iid=0, ts_start=1_000, ts_stop=2_000,
+            heap_size=1000, collections=5, collected=10,
+            uncollectable=0, candidates=3, duration=0.001,
+        )
+        _, packets = _convert_item(100, item, state, sequence_id=1)
+        counter_uuids: set[int] = set()
+        for p in packets:
+            fields = decode_message(p)
+            te_bytes = get_bytes(fields, TracePacketField.TRACK_EVENT)
+            if te_bytes is None:
+                continue
+            te_fields = decode_message(te_bytes)
+            if get_varint(te_fields, TrackEventField.TYPE) != TYPE_COUNTER:
+                continue
+            uuid = get_varint(te_fields, TrackEventField.TRACK_UUID)
+            if uuid is not None:
+                counter_uuids.add(uuid)
+        # collected, candidates, heap_size, duration — no uncollectable counter.
+        assert len(counter_uuids) == 4
+
+    def test_uncollectable_counter_emitted_when_nonzero(self) -> None:
+        state = PerfettoTrackState()
+        item = GCStatsInfo(
+            gen=0, iid=0, ts_start=1_000, ts_stop=2_000,
+            heap_size=1000, collections=5, collected=10,
+            uncollectable=2, candidates=3, duration=0.001,
+        )
+        _, packets = _convert_item(100, item, state, sequence_id=1)
+        counter_uuids: set[int] = set()
+        for p in packets:
+            fields = decode_message(p)
+            te_bytes = get_bytes(fields, TracePacketField.TRACK_EVENT)
+            if te_bytes is None:
+                continue
+            te_fields = decode_message(te_bytes)
+            if get_varint(te_fields, TrackEventField.TYPE) != TYPE_COUNTER:
+                continue
+            uuid = get_varint(te_fields, TrackEventField.TRACK_UUID)
+            if uuid is not None:
+                counter_uuids.add(uuid)
+        # collected, uncollectable, candidates, heap_size, duration.
+        assert len(counter_uuids) == 5
+
+    def test_duration_counter_in_gc_metrics_group(self) -> None:
+        state = PerfettoTrackState()
+        item = GCStatsInfo(
+            gen=0, iid=0, ts_start=1_000, ts_stop=2_000,
+            heap_size=1000, collections=5, collected=10,
+            uncollectable=2, candidates=3, duration=0.42,
+        )
+        descriptors_packets, packets = _convert_item(100, item, state, sequence_id=1)
+        # Find the per-gen `G0 duration` counter track UUID. The duration is
+        # now split by generation (one `G{gen} duration` track per (pid, iid))
+        # so a shared `duration` track is no longer emitted.
+        duration_track_uuid: int | None = None
+        for p in packets:
+            fields = decode_message(p)
+            te_bytes = get_bytes(fields, TracePacketField.TRACK_EVENT)
+            if te_bytes is None:
+                continue
+            te_fields = decode_message(te_bytes)
+            if (
+                get_varint(te_fields, TrackEventField.TYPE) == TYPE_COUNTER
+                and get_double(te_fields, TrackEventField.DOUBLE_COUNTER_VALUE) == 0.42
+            ):
+                duration_track_uuid = get_varint(
+                    te_fields, TrackEventField.TRACK_UUID,
+                )
+                break
+        assert duration_track_uuid is not None
+
+        # Find the matching TrackDescriptor and assert rank=4 (per-gen rank
+        # for `duration` in the new layout) plus parent resolves to a track
+        # named "GC Metrics".
+        descriptors: dict[int, tuple[int | None, int | None, str | None]] = {}
+        for p in descriptors_packets:
+            fields = decode_message(p)
+            td_bytes = get_bytes(fields, TracePacketField.TRACK_DESCRIPTOR)
+            if td_bytes is None:
+                continue
+            td_fields = decode_message(td_bytes)
+            uuid = get_varint(td_fields, TrackDescriptorField.UUID)
+            if uuid is None:
+                continue
+            descriptors[uuid] = (
+                get_varint(td_fields, TrackDescriptorField.PARENT_UUID),
+                get_varint(td_fields, TrackDescriptorField.SIBLING_ORDER_RANK),
+                get_string(td_fields, TrackDescriptorField.NAME),
+            )
+        assert duration_track_uuid in descriptors
+        parent, rank, _ = descriptors[duration_track_uuid]
+        assert rank == 4
+        assert parent is not None
+        assert descriptors[parent][2] == "GC Metrics"
+
     def _make_full_incremental_item(self) -> GCStatsInfo:
         return GCStatsInfo(
             gen=1, iid=0, ts_start=3_000, ts_stop=4_000,
@@ -597,6 +716,14 @@ class TestConvertItemToPerfettoPackets:
         assert ("deleted_garbage_count", 13) in anns
         assert all(name not in ("finalized_garbage_count", "clear_weakrefs_count")
                    for name, _ in anns)
+
+    def test_deduce_unreachable_substep_has_candidates_annotation(self) -> None:
+        state = PerfettoTrackState()
+        item = self._make_full_incremental_item()
+        _, packets = _convert_item(100, item, state, sequence_id=1)
+        anns = self._annotations_for_slice(packets, "Deduce Unreachable (gen=1)")
+        assert ("candidates", item.candidates) in anns
+        assert ("generation", 1) in anns
 
     def test_zero_duration_subphase_skipped(self) -> None:
         state = PerfettoTrackState()
@@ -746,3 +873,48 @@ class TestConvertInstantToPerfettoPacket:
         )
         assert len(gc_desc) >= 2
         assert len(inst_desc) == 0
+
+    def test_single_arg_counter_uses_metric_name_as_track_name(self) -> None:
+        state = PerfettoTrackState()
+        descriptors, packets = convert_trace_events_to_perfetto(
+            [
+                process_meta(100, "Process 100"),
+                thread_meta(100, 0, "Thread 0"),
+                counter_event(pid=100, tid=0, name="heap_size", ts_ns=1_000,
+                              args={"heap_size": 1234}),
+            ],
+            state, sequence_id=1,
+        )
+        track_names: list[str] = []
+        for d in descriptors:
+            fields = decode_message(d)
+            td_bytes = get_bytes(fields, TracePacketField.TRACK_DESCRIPTOR)
+            if not td_bytes:
+                continue
+            td_fields = decode_message(td_bytes)
+            counter_bytes = get_bytes(td_fields, TrackDescriptorField.COUNTER)
+            if counter_bytes is None:
+                continue
+            name = get_string(td_fields, TrackDescriptorField.NAME)
+            if name is not None:
+                track_names.append(name)
+        assert "heap_size" in track_names
+        assert "heap_size heap_size" not in track_names
+
+    def test_shared_heap_size_track_reused_across_generations(self) -> None:
+        state = PerfettoTrackState()
+        item_g0 = GCStatsInfo(
+            gen=0, iid=0, ts_start=1_000, ts_stop=2_000,
+            heap_size=1000, collections=1, collected=10,
+            uncollectable=0, candidates=5, duration=0.001,
+        )
+        item_g1 = GCStatsInfo(
+            gen=1, iid=0, ts_start=3_000, ts_stop=4_000,
+            heap_size=2000, collections=1, collected=10,
+            uncollectable=0, candidates=5, duration=0.001,
+        )
+        _convert_item(100, item_g0, state, sequence_id=1)
+        uuid_after_g0 = state.get_or_create_counter_track_uuid(100, 0, "heap_size", "heap_size")
+        _convert_item(100, item_g1, state, sequence_id=1)
+        uuid_after_g1 = state.get_or_create_counter_track_uuid(100, 0, "heap_size", "heap_size")
+        assert uuid_after_g0 == uuid_after_g1
