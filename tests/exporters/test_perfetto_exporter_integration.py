@@ -760,3 +760,31 @@ class TestProcessesTrack:
                 f"slice begin ts mismatch for pid {pid}: "
                 f"got {slice_rows[0].ts}, expected {expected_first}"
             )
+
+    @pytest.mark.parametrize("fmt", ["perfetto"])
+    def test_cmdline_arg_present(
+        self, fmt: str, trace_processor_with_cmdline: TraceProcessor,
+    ) -> None:
+        """Each ``Process <pid>`` slice on the ``Processes`` track
+        carries a ``cmdline`` debug annotation whose value is the
+        argv joined with single spaces."""
+        for pid in (DEFAULT_PID, _SECOND_PID):
+            rows = list(trace_processor_with_cmdline.query(
+                f"SELECT a.string_value AS string_value "
+                f"FROM args a "
+                f"WHERE a.flat_key = 'debug.cmdline' "
+                f"AND a.arg_set_id IN ("
+                f"  SELECT s.arg_set_id FROM slice s "
+                f"  JOIN track t ON s.track_id = t.id "
+                f"  WHERE t.name = '{_PROCESS_LIFETIME_TRACK_NAME}' "
+                f"  AND s.name = 'Process {pid}'"
+                f")"
+            ))
+            assert len(rows) == 1, (
+                f"expected exactly one debug.cmdline arg for pid {pid}, "
+                f"got {rows}"
+            )
+            assert rows[0].string_value == _FAKE_CMDLINE_JOINED, (
+                f"debug.cmdline for pid {pid}: expected "
+                f"{_FAKE_CMDLINE_JOINED!r}, got {rows[0].string_value!r}"
+            )

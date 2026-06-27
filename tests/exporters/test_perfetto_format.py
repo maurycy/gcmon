@@ -972,8 +972,10 @@ class TestConvertItemToPerfettoPackets:
     def test_process_lifetime_slice_begin_at_first_event_ts(self) -> None:
         """The ``Process <pid>`` slice BEGIN is emitted at the ts of the
         first non-meta event for the pid, on the shared ``Processes``
-        track."""
+        track, and carries a ``cmdline`` debug annotation joined with
+        single spaces when ``state`` has a cmdline recorded for the pid."""
         state = PerfettoTrackState()
+        state.set_cmdline(100, ["python3", "-m", "fake_target"])
         item = GCStatsInfo(
             gen=0, iid=0, ts_start=1_000, ts_stop=2_000,
             heap_size=1000, collections=1, collected=10,
@@ -993,6 +995,34 @@ class TestConvertItemToPerfettoPackets:
         assert get_varint(packet_fields, TracePacketField.TIMESTAMP) == 1_000
         te_fields = decode_message(get_bytes(packet_fields, TracePacketField.TRACK_EVENT) or b"")
         assert get_string(te_fields, TrackEventField.NAME) == "Process 100"
+        annotations = get_fields(te_fields, TrackEventField.DEBUG_ANNOTATIONS)
+        assert len(annotations) == 1
+        ann_fields = decode_message(annotations[0].value)  # type: ignore[arg-type]
+        assert get_string(ann_fields, DebugAnnotationField.NAME) == "cmdline"
+        assert get_string(ann_fields, DebugAnnotationField.STRING_VALUE) == "python3 -m fake_target"
+
+    def test_process_lifetime_slice_begin_no_cmdline_omits_arg(self) -> None:
+        """When ``state`` has no cmdline for the pid, the slice BEGIN on
+        the ``Processes`` track carries no debug annotations."""
+        state = PerfettoTrackState()
+        item = GCStatsInfo(
+            gen=0, iid=0, ts_start=1_000, ts_stop=2_000,
+            heap_size=1000, collections=1, collected=10,
+            uncollectable=0, candidates=5, duration=0.001,
+        )
+        _, packets = _convert_item(100, item, state, sequence_id=1)
+        lifetime_uuid = state.get_or_create_process_lifetime_track_uuid()
+        begin_packets = [
+            p for p in packets
+            if (lambda f: get_varint(f, TrackEventField.TYPE) == TYPE_SLICE_BEGIN and
+                get_varint(f, TrackEventField.TRACK_UUID) == lifetime_uuid)(
+                decode_message(get_bytes(decode_message(p), TracePacketField.TRACK_EVENT) or b"")
+            )
+        ]
+        assert len(begin_packets) == 1
+        packet_fields = decode_message(begin_packets[0])
+        te_fields = decode_message(get_bytes(packet_fields, TracePacketField.TRACK_EVENT) or b"")
+        assert get_field(te_fields, TrackEventField.DEBUG_ANNOTATIONS) is None
 
     def test_process_lifetime_slice_end_at_last_event_ts(self) -> None:
         """The ``Process <pid>`` slice END is emitted at the ts of the
@@ -1022,8 +1052,12 @@ class TestConvertItemToPerfettoPackets:
 
     def test_process_lifetime_two_pids_one_shared_track(self) -> None:
         """Two distinct pids share the same ``Processes`` track UUID and
-        each get their own slice pair, ordered by end-ts at closeout."""
+        each get their own slice pair, ordered by end-ts at closeout.
+        Each BEGIN carries a ``cmdline`` annotation reflecting that
+        pid's recorded cmdline."""
         state = PerfettoTrackState()
+        state.set_cmdline(100, ["python3", "-m", "early_target"])
+        state.set_cmdline(200, ["python3", "-m", "late_target"])
         item_late_pid = GCStatsInfo(
             gen=0, iid=0, ts_start=1_000, ts_stop=5_000,
             heap_size=1000, collections=1, collected=10,
@@ -1038,10 +1072,12 @@ class TestConvertItemToPerfettoPackets:
         _, packets_early = _convert_item(100, item_early_pid, state, sequence_id=1)
         lifetime_uuid = state.get_or_create_process_lifetime_track_uuid()
 
-        def _slice_pairs(packets: list[bytes]) -> list[tuple[int, int, str]]:
-            """Return ``[(ts, type, name), ...]`` for slice events on the
-            ``Processes`` track."""
-            out: list[tuple[int, int, str]] = []
+        def _slice_pairs(packets: list[bytes]) -> list[tuple[int, int, str, str | None]]:
+            """Return ``[(ts, type, name, cmdline_arg), ...]`` for slice
+            events on the ``Processes`` track. ``cmdline_arg`` is the
+            value of the ``cmdline`` debug annotation, or ``None`` if
+            the BEGIN has no such annotation."""
+            out: list[tuple[int, int, str, str | None]] = []
             for p in packets:
                 pf = decode_message(p)
                 te_bytes = get_bytes(pf, TracePacketField.TRACK_EVENT)
@@ -1050,12 +1086,21 @@ class TestConvertItemToPerfettoPackets:
                 tef = decode_message(te_bytes)
                 if get_varint(tef, TrackEventField.TRACK_UUID) != lifetime_uuid:
                     continue
-                if get_varint(tef, TrackEventField.TYPE) not in (TYPE_SLICE_BEGIN, TYPE_SLICE_END):
+                event_type = get_varint(tef, TrackEventField.TYPE) or 0
+                if event_type not in (TYPE_SLICE_BEGIN, TYPE_SLICE_END):
                     continue
+                cmdline_arg: str | None = None
+                if event_type == TYPE_SLICE_BEGIN:
+                    anns = get_fields(tef, TrackEventField.DEBUG_ANNOTATIONS)
+                    if anns:
+                        ann_fields = decode_message(anns[0].value)  # type: ignore[arg-type]
+                        if get_string(ann_fields, DebugAnnotationField.NAME) == "cmdline":
+                            cmdline_arg = get_string(ann_fields, DebugAnnotationField.STRING_VALUE)
                 out.append((
                     get_varint(pf, TracePacketField.TIMESTAMP) or 0,
-                    get_varint(tef, TrackEventField.TYPE) or 0,
+                    event_type,
                     get_string(tef, TrackEventField.NAME) or "",
+                    cmdline_arg,
                 ))
             return out
 
@@ -1068,18 +1113,21 @@ class TestConvertItemToPerfettoPackets:
         begins = [p for p in all_pairs if p[1] == TYPE_SLICE_BEGIN]
         ends = [p for p in all_pairs if p[1] == TYPE_SLICE_END]
         assert begins == [
-            (1_000, TYPE_SLICE_BEGIN, "Process 200"),
-            (500, TYPE_SLICE_BEGIN, "Process 100"),
+            (1_000, TYPE_SLICE_BEGIN, "Process 200", "python3 -m late_target"),
+            (500, TYPE_SLICE_BEGIN, "Process 100", "python3 -m early_target"),
         ]
+        # END packets carry no annotations.
         assert ends == [
-            (5_000, TYPE_SLICE_END, "Process 200"),
-            (1_500, TYPE_SLICE_END, "Process 100"),
+            (5_000, TYPE_SLICE_END, "Process 200", None),
+            (1_500, TYPE_SLICE_END, "Process 100", None),
         ]
 
     def test_process_lifetime_idempotent_across_converts(self) -> None:
         """Two convert passes for the same pid emit only one slice BEGIN
-        (the second pass updates the end-ts only)."""
+        (the second pass updates the end-ts only). The single BEGIN
+        carries the pid's recorded cmdline annotation."""
         state = PerfettoTrackState()
+        state.set_cmdline(100, ["python3", "-m", "fake_target"])
         item1 = GCStatsInfo(
             gen=0, iid=0, ts_start=1_000, ts_stop=2_000,
             heap_size=1000, collections=1, collected=10,
@@ -1122,6 +1170,22 @@ class TestConvertItemToPerfettoPackets:
             )
         )
         assert get_varint(decode_message(end_packet), TracePacketField.TIMESTAMP) == 4_000
+        # The single BEGIN (from packets1) carries the cmdline annotation.
+        begin_packet = next(
+            p for p in packets1
+            if (lambda f: get_varint(f, TrackEventField.TYPE) == TYPE_SLICE_BEGIN and
+                get_varint(f, TrackEventField.TRACK_UUID) == lifetime_uuid)(
+                decode_message(get_bytes(decode_message(p), TracePacketField.TRACK_EVENT) or b"")
+            )
+        )
+        te_fields = decode_message(
+            get_bytes(decode_message(begin_packet), TracePacketField.TRACK_EVENT) or b"",
+        )
+        annotations = get_fields(te_fields, TrackEventField.DEBUG_ANNOTATIONS)
+        assert len(annotations) == 1
+        ann_fields = decode_message(annotations[0].value)  # type: ignore[arg-type]
+        assert get_string(ann_fields, DebugAnnotationField.NAME) == "cmdline"
+        assert get_string(ann_fields, DebugAnnotationField.STRING_VALUE) == "python3 -m fake_target"
 
 
 class TestConvertInstantToPerfettoPacket:

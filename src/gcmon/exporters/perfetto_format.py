@@ -325,6 +325,12 @@ def _build_debug_annotation_int(name: str, value: int) -> bytes:
     return result
 
 
+def _build_debug_annotation_string(name: str, value: str) -> bytes:
+    result = encode_string_field(DebugAnnotationField.NAME, name)
+    result += encode_string_field(DebugAnnotationField.STRING_VALUE, value)
+    return result
+
+
 def build_track_event(
     type: int,
     track_uuid: int,
@@ -469,13 +475,23 @@ def _emit_process_lifetime_slice_begin(
     sequence_id: int,
 ) -> list[bytes]:
     """Emit a single ``TYPE_SLICE_BEGIN`` on the shared ``Processes``
-    track for *pid*, using *ts_ns* as the packet timestamp."""
+    track for *pid*, using *ts_ns* as the packet timestamp. The slice
+    carries a ``cmdline`` debug annotation (argv joined with a single
+    space) when *state* has a recorded cmdline for *pid*; otherwise no
+    debug annotations are emitted."""
     track_uuid = state.get_or_create_process_lifetime_track_uuid()
+    debug_annotations: list[bytes] = []
+    cmdline = state.get_cmdline(pid)
+    if cmdline:
+        debug_annotations.append(
+            _build_debug_annotation_string("cmdline", " ".join(cmdline)),
+        )
     return [build_trace_packet(
         sequence_id, timestamp=ts_ns, track_event=build_track_event(
             type=TYPE_SLICE_BEGIN,
             track_uuid=track_uuid,
             name=f"Process {pid}",
+            debug_annotations=debug_annotations or None,
         ),
     )]
 
