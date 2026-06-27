@@ -447,6 +447,11 @@ class TestCombineChromePerfettoEquivalenceIntegration:
             # nanosecond durations, so the values are directly comparable.
             # Thread names are excluded: chrome uses "<pid>:<tid>" while
             # perfetto uses "Thread <tid>".
+            #
+            # The perfetto side also emits one synthetic "Start Process"
+            # dur=0 marker per pid (on the process track itself) to
+            # guarantee the cmdline description is visible in the UI;
+            # Chrome has no equivalent, so we filter it out here.
             chrome_durs = sorted(
                 (r.name, r.dur)
                 for r in tp_chrome.query("SELECT s.name, s.dur FROM slice s")
@@ -454,6 +459,7 @@ class TestCombineChromePerfettoEquivalenceIntegration:
             perfetto_durs = sorted(
                 (r.name, r.dur)
                 for r in tp_perfetto.query("SELECT s.name, s.dur FROM slice s")
+                if r.name != "Start Process"
             )
             assert [name for name, _ in chrome_durs] == [name for name, _ in perfetto_durs], (
                 f"slice name sets differ: {[n for n, _ in chrome_durs]} vs {[n for n, _ in perfetto_durs]}"

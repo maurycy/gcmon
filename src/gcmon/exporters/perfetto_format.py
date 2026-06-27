@@ -148,6 +148,15 @@ _TOPLEVEL_COUNTER_METRICS: frozenset[str] = frozenset({"heap_size"})
 # child tracks.
 _COUNTER_GROUP_NAME: str = "GC Metrics"
 
+# Name of the synthetic dur=0 instant event emitted on the process track
+# itself, once per pid, on the first non-meta event for that pid. The
+# Perfetto UI hides a track that has zero events, which would hide the
+# process track's `description` (the joined cmdline). Dropping this
+# marker guarantees the process track has at least one event so the
+# description is always visible — regardless of whether the caller
+# emitted any `InstantEvent` for the pid.
+_START_PROCESS_INSTANT_NAME: str = "Start Process"
+
 
 class PerfettoTrackState:
     def __init__(self) -> None:
@@ -158,6 +167,7 @@ class PerfettoTrackState:
         self._counter_group_uuids: dict[tuple[int, int], int] = {}
         self._pid_uuids: dict[int, int] = {}
         self._tid_uuids: dict[tuple[int, int], int] = {}
+        self._start_process_marker_emitted: set[int] = set()
         self._next_uuid: int = 1
 
     def _alloc_uuid(self) -> int:
@@ -211,6 +221,12 @@ class PerfettoTrackState:
         if key not in self._counter_group_uuids:
             self._counter_group_uuids[key] = self._alloc_uuid()
         return self._counter_group_uuids[key]
+
+    def has_start_process_marker(self, pid: int) -> bool:
+        return pid in self._start_process_marker_emitted
+
+    def mark_start_process_marker(self, pid: int) -> None:
+        self._start_process_marker_emitted.add(pid)
 
 
 def build_track_descriptor(
@@ -373,6 +389,35 @@ def _emit_process_descriptor(
     return [build_trace_packet(sequence_id, track_descriptor=desc)]
 
 
+def _emit_start_process_marker(
+    pid: int,
+    ts_ns: int,
+    state: PerfettoTrackState,
+    sequence_id: int,
+) -> list[bytes]:
+    """Emit a single dur-0 ``Start Process`` marker on the process track.
+
+    Idempotent per pid. A Perfetto track with zero events is hidden in
+    the UI, which would hide the process track's ``description`` (the
+    joined cmdline) when the caller did not emit any ``InstantEvent``
+    for the pid. Dropping this marker guarantees the process track has
+    at least one event, so the description is always visible. Emitted
+    lazily on the first non-meta event for the pid, using that event's
+    timestamp.
+    """
+    if state.has_start_process_marker(pid):
+        return []
+    state.mark_start_process_marker(pid)
+    proc_uuid = state.get_process_track_uuid(pid)
+    return [build_trace_packet(
+        sequence_id, timestamp=ts_ns, track_event=build_track_event(
+            type=TYPE_INSTANT,
+            track_uuid=proc_uuid,
+            name=_START_PROCESS_INSTANT_NAME,
+        ),
+    )]
+
+
 def _emit_thread_descriptor(
     pid: int,
     iid: int,
@@ -502,6 +547,7 @@ def convert_trace_events_to_perfetto(
             descriptors.extend(_emit_thread_descriptor(pid, event.tid, state, sequence_id))
 
         elif isinstance(event, BeginEvent):
+            _maybe_emit_start_process_marker(event, state, sequence_id, packets)
             thread_uuid = state.get_thread_track_uuid(pid, event.tid)
             annotations = _args_to_debug_annotations(event.args)
             packets.append(build_trace_packet(
@@ -513,6 +559,7 @@ def convert_trace_events_to_perfetto(
             ))
 
         elif isinstance(event, EndEvent):
+            _maybe_emit_start_process_marker(event, state, sequence_id, packets)
             thread_uuid = state.get_thread_track_uuid(pid, event.tid)
             packets.append(build_trace_packet(
                 sequence_id, timestamp=event.ts,
@@ -520,6 +567,7 @@ def convert_trace_events_to_perfetto(
             ))
 
         elif isinstance(event, InstantEvent):
+            _maybe_emit_start_process_marker(event, state, sequence_id, packets)
             proc_uuid = state.get_process_track_uuid(pid)
             packets.append(build_trace_packet(
                 sequence_id, timestamp=event.ts,
@@ -531,6 +579,7 @@ def convert_trace_events_to_perfetto(
             ))
 
         elif isinstance(event, CounterEvent):
+            _maybe_emit_start_process_marker(event, state, sequence_id, packets)
             single_arg = len(event.args) == 1
             for metric, value in event.args.items():
                 display_name = metric if single_arg else f"{event.name} {metric}"
@@ -545,3 +594,19 @@ def convert_trace_events_to_perfetto(
                 ))
 
     return descriptors, packets
+
+
+def _maybe_emit_start_process_marker(
+    event: TraceEvent,
+    state: PerfettoTrackState,
+    sequence_id: int,
+    packets: list[bytes],
+) -> None:
+    """Emit the ``Start Process`` marker once per pid, on the first non-meta
+    event for that pid, using that event's timestamp."""
+    if not state.has_pid(event.pid) or state.has_start_process_marker(event.pid):
+        return
+    ts = getattr(event, "ts", 0)
+    packets.extend(
+        _emit_start_process_marker(event.pid, ts, state, sequence_id)
+    )

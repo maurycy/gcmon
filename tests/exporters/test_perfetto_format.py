@@ -33,6 +33,11 @@ from tests.proto_decoder import (
     get_varint,
 )
 
+# Name of the synthetic marker emitted on the process track so the
+# cmdline description is always visible in the Perfetto UI. Must match
+# ``_START_PROCESS_INSTANT_NAME`` in ``gcmon.exporters.perfetto_format``.
+_START_PROCESS_MARKER_NAME: str = "Start Process"
+
 
 def _convert_item(
     pid: int,
@@ -437,8 +442,20 @@ class TestConvertItemToPerfettoPackets:
             uncollectable=0, candidates=5, duration=0.001,
         )
         _, packets = _convert_item(100, item, state, sequence_id=1)
+        # First packet is the synthetic "Start Process" marker on the
+        # process track; the GC pause slice begin follows. Find the
+        # begin packet by event type.
         assert len(packets) >= 2
-        first_packet_fields = decode_message(packets[0])
+        begin_packet = next(
+            p for p in packets
+            if get_varint(
+                decode_message(
+                    get_bytes(decode_message(p), TracePacketField.TRACK_EVENT) or b""
+                ),
+                TrackEventField.TYPE,
+            ) == TYPE_SLICE_BEGIN
+        )
+        first_packet_fields = decode_message(begin_packet)
         assert get_varint(first_packet_fields, TracePacketField.TIMESTAMP) == 1_000
         track_event_bytes = get_bytes(first_packet_fields, TracePacketField.TRACK_EVENT)
         assert track_event_bytes is not None
@@ -774,7 +791,19 @@ class TestConvertItemToPerfettoPackets:
             uncollectable=2, candidates=3, duration=0.001,
         )
         _, packets = _convert_item(100, item, state, sequence_id=1)
-        first_packet_fields = decode_message(packets[0])
+        # First packet is the synthetic "Start Process" marker; the GC
+        # Pause slice begin (which carries the debug annotations) is
+        # the second packet. Find it by event type.
+        begin_packet = next(
+            p for p in packets
+            if get_varint(
+                decode_message(
+                    get_bytes(decode_message(p), TracePacketField.TRACK_EVENT) or b""
+                ),
+                TrackEventField.TYPE,
+            ) == TYPE_SLICE_BEGIN
+        )
+        first_packet_fields = decode_message(begin_packet)
         te_bytes = get_bytes(first_packet_fields, TracePacketField.TRACK_EVENT)
         assert te_bytes is not None
         te_fields = decode_message(te_bytes)
@@ -798,7 +827,19 @@ class TestConvertItemToPerfettoPackets:
             uncollectable=2, candidates=3, duration=0.001,
         )
         _, packets = _convert_item(100, item, state, sequence_id=1)
-        first_packet_fields = decode_message(packets[0])
+        # First packet is the synthetic "Start Process" marker; the GC
+        # Pause slice begin (with the debug annotations) is the second
+        # packet. Find it by event type.
+        begin_packet = next(
+            p for p in packets
+            if get_varint(
+                decode_message(
+                    get_bytes(decode_message(p), TracePacketField.TRACK_EVENT) or b""
+                ),
+                TrackEventField.TYPE,
+            ) == TYPE_SLICE_BEGIN
+        )
+        first_packet_fields = decode_message(begin_packet)
         te_bytes = get_bytes(first_packet_fields, 11)
         assert te_bytes is not None
         te_fields = decode_message(te_bytes)
@@ -837,8 +878,28 @@ class TestConvertInstantToPerfettoPacket:
             instant_event(100, "start GC monitor", ts_ns=5_000),
         ]
         _, packets = convert_trace_events_to_perfetto(events, state, sequence_id=1)
-        assert len(packets) == 1
-        fields = decode_message(packets[0])
+        # Two packets: the synthetic "Start Process" marker (on the
+        # process track) and the user-provided instant event (also on
+        # the process track).
+        assert len(packets) == 2
+        names = [
+            get_string(
+                decode_message(
+                    get_bytes(decode_message(p), TracePacketField.TRACK_EVENT) or b""
+                ),
+                TrackEventField.NAME,
+            )
+            for p in packets
+        ]
+        assert names == [_START_PROCESS_MARKER_NAME, "start GC monitor"]
+        instant_packet = next(
+            p for p in packets
+            if get_string(
+                decode_message(get_bytes(decode_message(p), TracePacketField.TRACK_EVENT) or b""),
+                TrackEventField.NAME,
+            ) == "start GC monitor"
+        )
+        fields = decode_message(instant_packet)
         assert get_varint(fields, TracePacketField.TIMESTAMP) == 5_000
         te_bytes = get_bytes(fields, TracePacketField.TRACK_EVENT)
         assert te_bytes is not None
@@ -848,7 +909,7 @@ class TestConvertInstantToPerfettoPacket:
 
     def test_reuses_process_descriptor(self) -> None:
         state = PerfettoTrackState()
-        desc1, _ = convert_trace_events_to_perfetto(
+        desc1, packets1 = convert_trace_events_to_perfetto(
             [process_meta(100, "Process 100"), instant_event(100, "start", ts_ns=5_000)],
             state, sequence_id=1,
         )
@@ -856,7 +917,12 @@ class TestConvertInstantToPerfettoPacket:
             [process_meta(100, "Process 100"), instant_event(100, "stop", ts_ns=10_000)],
             state, sequence_id=1,
         )
+        # First call: 1 descriptor + 2 packets (marker + instant event).
+        # Second call: 0 descriptors (process descriptor already emitted
+        # and the marker is idempotent) + 1 packet (the new instant
+        # event only).
         assert len(desc1) == 1
+        assert len(packets1) == 2
         assert len(desc2) == 0
 
     def test_instant_after_gc_event_no_duplicate_descriptor(self) -> None:

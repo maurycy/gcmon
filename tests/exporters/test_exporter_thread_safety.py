@@ -29,7 +29,12 @@ from gcmon.exporters.perfetto_format import (
 from gcmon.protocol import TGCStatsInfo, TInstantMsg
 from tests.data_helpers import create_instant_msg
 from tests.helpers import create_mock_stats_item
-from tests.proto_decoder import ProtoField, decode_message, get_fields, get_varint
+from tests.proto_decoder import (
+    ProtoField,
+    decode_message,
+    get_fields,
+    get_varint,
+)
 
 N_GC = 100
 N_INSTANT = 100
@@ -327,10 +332,20 @@ class TestExporterThreadSafety:
             f"[{exporter_factory.name}] expected {N_GC} complete events, "
             f"got {capture.count_completes()}"
         )
-        assert capture.count_instants() == N_INSTANT, (
-            f"[{exporter_factory.name}] expected {N_INSTANT} instant events, "
-            f"got {capture.count_instants()}"
-        )
+        if isinstance(capture, PerfettoFileCapture):
+            # Both pids (MAIN_PID, CTRL_PID) get one synthetic
+            # "Start Process" dur=0 marker each, on top of the
+            # N_INSTANT user-provided instant events.
+            assert capture.count_instants() == N_INSTANT + 2, (
+                f"[perfetto] expected {N_INSTANT + 2} instant events "
+                f"({N_INSTANT} user + 2 Start Process markers), "
+                f"got {capture.count_instants()}"
+            )
+        else:
+            assert capture.count_instants() == N_INSTANT, (
+                f"[{exporter_factory.name}] expected {N_INSTANT} instant events, "
+                f"got {capture.count_instants()}"
+            )
 
     def test_concurrent_add_event_and_close_no_data_loss(
         self, exporter_factory: ExporterFactory, tmp_path: Path
@@ -461,10 +476,20 @@ class TestExporterThreadSafety:
             f"[{exporter_factory.name}] expected {N_GC} complete events, "
             f"got {capture.count_completes()}"
         )
-        assert capture.count_instants() == N_INSTANT, (
-            f"[{exporter_factory.name}] expected {N_INSTANT} instant events, "
-            f"got {capture.count_instants()}"
-        )
+        if isinstance(capture, PerfettoFileCapture):
+            # Perfetto also emits one synthetic "Start Process" dur=0
+            # marker per pid to keep the cmdline description visible in
+            # the UI; other exporters don't.
+            assert capture.count_instants() == N_INSTANT + 1, (
+                f"[perfetto] expected {N_INSTANT + 1} instant events "
+                f"({N_INSTANT} user + 1 Start Process marker), "
+                f"got {capture.count_instants()}"
+            )
+        else:
+            assert capture.count_instants() == N_INSTANT, (
+                f"[{exporter_factory.name}] expected {N_INSTANT} instant events, "
+                f"got {capture.count_instants()}"
+            )
         if isinstance(capture, PerfettoFileCapture):
             proc_descs = capture.count_process_descriptors()
             assert proc_descs == 1, (
@@ -519,8 +544,9 @@ class TestPerfettoExporterCmdlinePath:
         assert capture.count_completes() == 1
         assert capture.count_process_descriptors() == 1
 
-        # The process descriptor must have NO cmdline entries and NO
-        # description field. This is the "graceful degradation" path.
+        # The process descriptor must have NO cmdline entries. The
+        # process track itself does NOT carry the joined description in
+        # this case (cmdline_provider returned None for every pid).
         for pf in capture._packets():
             td = capture._get_bytes_at(pf, TracePacketField.TRACK_DESCRIPTOR)
             if not td:

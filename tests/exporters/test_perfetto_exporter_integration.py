@@ -65,6 +65,11 @@ _ARG_PREFIX: dict[str, str] = {
 _FAKE_CMDLINE: tuple[str, ...] = ("python3", "-m", "fake_target")
 _FAKE_CMDLINE_JOINED: str = " ".join(_FAKE_CMDLINE)
 
+# Name of the synthetic marker emitted on the process track so the
+# cmdline description is always visible in the Perfetto UI. Must match
+# ``_START_PROCESS_INSTANT_NAME`` in ``gcmon.exporters.perfetto_format``.
+_START_PROCESS_MARKER_NAME: str = "Start Process"
+
 
 def _fake_cmdline_provider(pid: int) -> list[str] | None:
     """Returns a known fake cmdline for the two PIDs the trace uses and
@@ -151,6 +156,38 @@ def _write_trace(
     return path
 
 
+def _write_trace_no_instant(
+    tmp: Path, fmt: str,
+    cmdline_provider: Callable[[int], list[str] | None] = lambda _pid: None,
+) -> Path:
+    path = tmp / ("trace.json" if fmt == "chrome" else "trace.pb")
+    exporter: TraceExporter | PerfettoExporter
+    if fmt == "chrome":
+        exporter = TraceExporter(
+            output_path=path, flush_threshold=1000,
+        )
+    else:
+        exporter = PerfettoExporter(
+            output_path=path,
+            flush_threshold=1000,
+            cmdline_provider=cmdline_provider,
+        )
+    exporter.add_event(DEFAULT_PID, create_mock_stats_item(
+        gen=_GEN, iid=_IID,
+        collections=_COLLECTIONS, collected=_COLLECTED,
+        uncollectable=_UNCOLLECTABLE, candidates=_CANDIDATES,
+        heap_size=_HEAP_SIZE,
+    ))
+    exporter.add_event(_SECOND_PID, create_mock_stats_item(
+        gen=_GEN, iid=0,
+        collections=_COLLECTIONS, collected=_COLLECTED,
+        uncollectable=_UNCOLLECTABLE, candidates=_CANDIDATES,
+        heap_size=_HEAP_SIZE,
+    ))
+    exporter.close()
+    return path
+
+
 @pytest.fixture
 def trace_processor(tmp_path: Path, fmt: str) -> Iterator[TraceProcessor]:
     path = _write_trace(tmp_path, fmt)
@@ -167,6 +204,19 @@ def trace_processor_with_cmdline(
     tmp_path: Path, fmt: str,
 ) -> Iterator[TraceProcessor]:
     path = _write_trace(tmp_path, fmt, cmdline_provider=_fake_cmdline_provider)
+    config = TraceProcessorConfig(load_timeout=300)
+    tp = TraceProcessor(trace=str(path), config=config)
+    try:
+        yield tp
+    finally:
+        tp.close()
+
+
+@pytest.fixture
+def trace_processor_no_instant(
+    tmp_path: Path, fmt: str,
+) -> Iterator[TraceProcessor]:
+    path = _write_trace_no_instant(tmp_path, fmt)
     config = TraceProcessorConfig(load_timeout=300)
     tp = TraceProcessor(trace=str(path), config=config)
     try:
@@ -516,3 +566,71 @@ class TestCmdlineEncoding:
     ) -> None:
         assert self._description(trace_processor, DEFAULT_PID) is None
         assert self._description(trace_processor, _SECOND_PID) is None
+
+
+class TestStartProcessMarker:
+    """The Perfetto encoder emits a single synthetic dur-0 ``Start Process``
+    instant event on the process track itself, lazily on the first
+    non-meta event for the pid. This guarantees the process track has at
+    least one event so its ``description`` (the joined cmdline) is
+    always visible in the Perfetto UI — independent of whether the caller
+    emitted any ``InstantEvent`` for the pid.
+    """
+
+    @pytest.mark.parametrize("fmt", ["perfetto"])
+    def test_marker_emitted_with_user_instant(
+        self, fmt: str, trace_processor_with_cmdline: TraceProcessor,
+    ) -> None:
+        """The user-provided instant events (``GC monitor started``) and
+        the synthetic marker (``Start Process``) both land on the
+        process track. Verify one marker per pid."""
+        markers = list(trace_processor_with_cmdline.query(
+            f"SELECT p.pid FROM slice s "
+            f"JOIN process_track pt ON s.track_id = pt.id "
+            f"JOIN process p ON pt.upid = p.upid "
+            f"WHERE s.name = '{_START_PROCESS_MARKER_NAME}' AND s.dur = 0 "
+            f"ORDER BY p.pid"
+        ))
+        assert [r.pid for r in markers] == [DEFAULT_PID, _SECOND_PID], (
+            f"expected one {_START_PROCESS_MARKER_NAME!r} marker per pid, "
+            f"got {markers}"
+        )
+
+    @pytest.mark.parametrize("fmt", ["perfetto"])
+    def test_marker_emitted_without_user_instant(
+        self, fmt: str, trace_processor_no_instant: TraceProcessor,
+    ) -> None:
+        """This is the regression case: the caller never calls
+        ``add_instant_event``, so the process track would otherwise be
+        empty and the UI would hide the description. The marker keeps
+        the process track rendered."""
+        markers = list(trace_processor_no_instant.query(
+            f"SELECT p.pid FROM slice s "
+            f"JOIN process_track pt ON s.track_id = pt.id "
+            f"JOIN process p ON pt.upid = p.upid "
+            f"WHERE s.name = '{_START_PROCESS_MARKER_NAME}' AND s.dur = 0 "
+            f"ORDER BY p.pid"
+        ))
+        assert [r.pid for r in markers] == [DEFAULT_PID, _SECOND_PID], (
+            f"expected one {_START_PROCESS_MARKER_NAME!r} marker per pid "
+            f"even without user instant events, got {markers}"
+        )
+
+    @pytest.mark.parametrize("fmt", ["perfetto"])
+    def test_marker_at_first_event_timestamp(
+        self, fmt: str, trace_processor_with_cmdline: TraceProcessor,
+    ) -> None:
+        """The marker is placed at the timestamp of the first non-meta
+        event for the pid, not at 0."""
+        rows = list(trace_processor_with_cmdline.query(
+            f"SELECT p.pid, s.ts FROM slice s "
+            f"JOIN process_track pt ON s.track_id = pt.id "
+            f"JOIN process p ON pt.upid = p.upid "
+            f"WHERE s.name = '{_START_PROCESS_MARKER_NAME}' AND s.dur = 0 "
+            f"ORDER BY p.pid"
+        ))
+        assert len(rows) == 2
+        for r in rows:
+            assert r.ts > 0, (
+                f"expected marker ts > 0 for pid {r.pid}, got {r.ts}"
+            )

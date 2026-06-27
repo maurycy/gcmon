@@ -26,6 +26,11 @@ from gcmon.exporters.perfetto_format import (
     TrackEventField,
 )
 
+# Name of the synthetic marker emitted on the process track so the
+# cmdline description is always visible in the Perfetto UI. Must match
+# ``_START_PROCESS_INSTANT_NAME`` in ``gcmon.exporters.perfetto_format``.
+_START_PROCESS_MARKER_NAME: str = "Start Process"
+
 
 def _read_trace_packets(path) -> list[list[ProtoField]]:
     """Read a Perfetto binary trace file and return list of parsed TracePacket fields."""
@@ -200,7 +205,10 @@ class TestPerfettoExporter:
                 name = get_string(te, TrackEventField.NAME)
                 if name:
                     names.append(name)
-        assert names == ["start GC monitor"]
+        # First the synthetic "Start Process" marker (emitted on the
+        # process track itself so the cmdline description is always
+        # visible in the UI), then the user-provided instant event.
+        assert names == [_START_PROCESS_MARKER_NAME, "start GC monitor"]
 
     def test_multiple_add_instant_event(self, perfetto_exporter) -> None:
         exporter, path = perfetto_exporter()
@@ -216,7 +224,10 @@ class TestPerfettoExporter:
                 name = get_string(te, TrackEventField.NAME)
                 if name:
                     names.append(name)
-        assert names == ["start GC monitor", "stop GC monitor"]
+        # The marker is emitted only on the first event for the pid.
+        assert names == [
+            _START_PROCESS_MARKER_NAME, "start GC monitor", "stop GC monitor",
+        ]
 
     def test_events_have_valid_timestamps(self, mock_stats_item, perfetto_exporter) -> None:
         exporter, path = perfetto_exporter()
