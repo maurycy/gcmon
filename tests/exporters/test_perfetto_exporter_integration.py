@@ -70,6 +70,12 @@ _FAKE_CMDLINE_JOINED: str = " ".join(_FAKE_CMDLINE)
 # ``_START_PROCESS_INSTANT_NAME`` in ``gcmon.exporters.perfetto_format``.
 _START_PROCESS_MARKER_NAME: str = "Start Process"
 
+# Name of the shared top-level Perfetto track that holds one slice per
+# pid spanning the first-to-last non-meta event timestamps for that
+# pid. Must match ``_PROCESS_LIFETIME_TRACK_NAME`` in
+# ``gcmon.exporters.perfetto_format``.
+_PROCESS_LIFETIME_TRACK_NAME: str = "Processes"
+
 
 def _fake_cmdline_provider(pid: int) -> list[str] | None:
     """Returns a known fake cmdline for the two PIDs the trace uses and
@@ -633,4 +639,124 @@ class TestStartProcessMarker:
         for r in rows:
             assert r.ts > 0, (
                 f"expected marker ts > 0 for pid {r.pid}, got {r.ts}"
+            )
+
+
+class TestProcessesTrack:
+    """The Perfetto encoder emits a single shared top-level track named
+    ``Processes`` that holds one ``TYPE_SLICE_BEGIN`` /
+    ``TYPE_SLICE_END`` pair per pid, spanning the first-to-last
+    non-counter non-meta event timestamps for that pid.
+    """
+
+    @pytest.mark.parametrize("fmt", ["perfetto"])
+    def test_track_present(
+        self, fmt: str, trace_processor: TraceProcessor,
+    ) -> None:
+        """The ``Processes`` track is present exactly once."""
+        rows = list(trace_processor.query(
+            f"SELECT name FROM track WHERE name = '{_PROCESS_LIFETIME_TRACK_NAME}'"
+        ))
+        assert len(rows) == 1, (
+            f"expected exactly one {_PROCESS_LIFETIME_TRACK_NAME!r} track, "
+            f"got {[r.name for r in rows]}"
+        )
+
+    @pytest.mark.parametrize("fmt", ["perfetto"])
+    def test_slice_per_pid(
+        self, fmt: str, trace_processor: TraceProcessor,
+    ) -> None:
+        """There is exactly one BEGIN+END pair per pid on the
+        ``Processes`` track. The trace processor collapses matching
+        BEGIN/END pairs into a single dur-bearing slice, so we expect
+        one dur>0 row per pid."""
+        rows = list(trace_processor.query(
+            f"SELECT s.name, s.dur FROM slice s "
+            f"JOIN track t ON s.track_id = t.id "
+            f"WHERE t.name = '{_PROCESS_LIFETIME_TRACK_NAME}' "
+            f"ORDER BY s.name"
+        ))
+        assert [r.name for r in rows] == [
+            f"Process {DEFAULT_PID}",
+            f"Process {_SECOND_PID}",
+        ], (
+            f"expected exactly one dur-bearing Process <pid> slice per pid, "
+            f"got {[(r.name, r.dur) for r in rows]}"
+        )
+        for r in rows:
+            assert r.dur > 0, f"slice {r.name!r} has dur={r.dur}, expected > 0"
+
+    @pytest.mark.parametrize("fmt", ["perfetto"])
+    def test_slice_name_format(
+        self, fmt: str, trace_processor: TraceProcessor,
+    ) -> None:
+        """Every slice name on the ``Processes`` track matches the
+        ``Process <pid>`` pattern."""
+        import re
+        rows = list(trace_processor.query(
+            f"SELECT s.name FROM slice s "
+            f"JOIN track t ON s.track_id = t.id "
+            f"WHERE t.name = '{_PROCESS_LIFETIME_TRACK_NAME}'"
+        ))
+        pat = re.compile(r"^Process \d+$")
+        for r in rows:
+            assert pat.match(r.name), (
+                f"slice name {r.name!r} on the {_PROCESS_LIFETIME_TRACK_NAME!r} "
+                f"track must match 'Process <pid>'"
+            )
+
+    @pytest.mark.parametrize("fmt", ["perfetto"])
+    def test_begin_end_match_first_last_event(
+        self, fmt: str, trace_processor: TraceProcessor,
+    ) -> None:
+        """For each pid, the slice BEGIN is at the first non-meta event
+        ts, and the slice END (BEGIN + dur) is at the last Begin/End/
+        Instant event ts (counter events excluded)."""
+        # The fixture adds an instant event at _TS_START - 1_000_000,
+        # then a GC item at _TS_START / _TS_START + dur, then a second
+        # item etc. The first non-meta event for each pid is the
+        # instant event. The last non-counter non-meta event for each
+        # pid is the EndEvent of the last GC item.
+        #
+        # We compare against SQL: take the min(ts) and max(ts) of all
+        # Begin/End/Instant events for the pid (joined through
+        # thread_track for EndEvents and through process_track for
+        # Instants), then verify the slice matches.
+        for pid in (DEFAULT_PID, _SECOND_PID):
+            # First non-meta ts: min over all slices on both
+            # process_track (instant events) and thread_track (Begin/
+            # End events) for this pid.
+            candidates: list[int] = []
+            for join_clause in (
+                f"JOIN process_track pt ON s.track_id = pt.id "
+                f"JOIN process p ON pt.upid = p.upid "
+                f"WHERE p.pid = {pid}",
+                f"JOIN thread_track tt ON s.track_id = tt.id "
+                f"JOIN thread th ON tt.utid = th.utid "
+                f"JOIN process p ON th.upid = p.upid "
+                f"WHERE p.pid = {pid}",
+            ):
+                rows = trace_processor.query(
+                    f"SELECT MIN(s.ts) AS ts FROM slice s {join_clause}"
+                )
+                for r in rows:
+                    if r.ts is not None:
+                        candidates.append(r.ts)
+            assert candidates, f"no first event found for pid {pid}"
+            expected_first = min(candidates)
+
+            slice_rows = list(trace_processor.query(
+                f"SELECT s.ts, s.dur FROM slice s "
+                f"JOIN track t ON s.track_id = t.id "
+                f"WHERE t.name = '{_PROCESS_LIFETIME_TRACK_NAME}' "
+                f"AND s.name = 'Process {pid}' "
+                f"AND s.dur > 0"
+            ))
+            assert len(slice_rows) == 1, (
+                f"expected exactly one duration-bearing Process {pid} "
+                f"slice, got {slice_rows}"
+            )
+            assert slice_rows[0].ts == expected_first, (
+                f"slice begin ts mismatch for pid {pid}: "
+                f"got {slice_rows[0].ts}, expected {expected_first}"
             )

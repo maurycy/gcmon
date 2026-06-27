@@ -417,11 +417,16 @@ class TestCombineChromePerfettoEquivalenceIntegration:
         try:
             for query in [
                 # Track names: skip `Process <pid>` because chrome has no
-                # separate process-track descriptor (perfetto does). Also skip
-                # `GC Metrics` — a perfetto-only grouping track that holds the
-                # counter tracks (chrome has no equivalent grouping concept).
+                # separate process-track descriptor (perfetto does). Also
+                # skip `GC Metrics` — a perfetto-only grouping track that
+                # holds the counter tracks (chrome has no equivalent
+                # grouping concept). And skip `Processes` — the shared
+                # top-level track that holds one lifetime slice per pid
+                # (chrome has no equivalent).
                 "SELECT name FROM track "
-                "WHERE name NOT LIKE 'Process %' AND name != 'GC Metrics' "
+                "WHERE name NOT LIKE 'Process %' "
+                "AND name != 'GC Metrics' "
+                "AND name != 'Processes' "
                 "ORDER BY name",
                 # Chrome JSON's trace processor prepends a space to counter
                 # track names whose event-level name is empty (e.g. the
@@ -452,14 +457,20 @@ class TestCombineChromePerfettoEquivalenceIntegration:
             # dur=0 marker per pid (on the process track itself) to
             # guarantee the cmdline description is visible in the UI;
             # Chrome has no equivalent, so we filter it out here.
+            # The shared "Processes" track adds one dur-bearing
+            # `Process <pid>` slice per pid; chrome has no equivalent,
+            # so we filter those out too by joining on track name.
             chrome_durs = sorted(
                 (r.name, r.dur)
                 for r in tp_chrome.query("SELECT s.name, s.dur FROM slice s")
             )
             perfetto_durs = sorted(
                 (r.name, r.dur)
-                for r in tp_perfetto.query("SELECT s.name, s.dur FROM slice s")
-                if r.name != "Start Process"
+                for r in tp_perfetto.query(
+                    "SELECT s.name, s.dur, t.name AS track_name FROM slice s "
+                    "JOIN track t ON s.track_id = t.id"
+                )
+                if r.name != "Start Process" and r.track_name != "Processes"
             )
             assert [name for name, _ in chrome_durs] == [name for name, _ in perfetto_durs], (
                 f"slice name sets differ: {[n for n, _ in chrome_durs]} vs {[n for n, _ in perfetto_durs]}"

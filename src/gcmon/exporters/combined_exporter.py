@@ -15,7 +15,7 @@ def derive_combined_paths(base_path: Path) -> tuple[Path, Path]:
     """Derive (chrome_path, perfetto_path) from a user-supplied base path.
 
     The chrome path uses the ``.json`` extension; the perfetto path uses
-    ``.pftrace`` (Perfetto's official file extension, per spec-feat-11).
+    ``.pftrace`` (Perfetto's official file extension).
     The parent directory is preserved; the last extension of ``base_path``
     is stripped via :py:meth:`pathlib.PurePath.stem`.
 

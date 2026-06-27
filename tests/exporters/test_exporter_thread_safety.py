@@ -328,8 +328,11 @@ class TestExporterThreadSafety:
         for exc in captured:
             raise exc
 
-        assert capture.count_completes() == N_GC, (
-            f"[{exporter_factory.name}] expected {N_GC} complete events, "
+        assert capture.count_completes() == N_GC + (
+            2 if isinstance(capture, PerfettoFileCapture) else 0
+        ), (
+            f"[{exporter_factory.name}] expected {N_GC} complete events "
+            f"(plus 1 Processes-track lifetime begin per pid for Perfetto), "
             f"got {capture.count_completes()}"
         )
         if isinstance(capture, PerfettoFileCapture):
@@ -370,9 +373,13 @@ class TestExporterThreadSafety:
         # Pre-fill must always arrive. The remaining events may or may
         # not depending on whether the close beat the writer or vice
         # versa, but the total must be in [PRE_FILL, PRE_FILL + N_GC].
-        assert PRE_FILL <= completes <= PRE_FILL + N_GC, (
+        # For Perfetto, add 1 for the Processes-track lifetime begin
+        # emitted for the pid.
+        lifetime_extra = 1 if isinstance(capture, PerfettoFileCapture) else 0
+        assert PRE_FILL <= completes <= PRE_FILL + N_GC + lifetime_extra, (
             f"[{exporter_factory.name}] expected between {PRE_FILL} and "
-            f"{PRE_FILL + N_GC} complete events, got {completes}"
+            f"{PRE_FILL + N_GC + lifetime_extra} complete events, "
+            f"got {completes}"
         )
 
     def test_double_close_safe(
@@ -392,8 +399,11 @@ class TestExporterThreadSafety:
         for exc in captured:
             raise exc
 
-        assert capture.count_completes() == 5, (
-            f"[{exporter_factory.name}] expected exactly 5 complete events, "
+        assert capture.count_completes() == 5 + (
+            1 if isinstance(capture, PerfettoFileCapture) else 0
+        ), (
+            f"[{exporter_factory.name}] expected 5 complete events "
+            f"(plus 1 Processes-track lifetime begin for Perfetto), "
             f"got {capture.count_completes()}"
         )
 
@@ -428,8 +438,11 @@ class TestExporterThreadSafety:
         for exc in captured:
             raise exc
 
-        assert capture.count_completes() == 2 * N_GC, (
-            f"[{exporter_factory.name}] expected {2 * N_GC} complete events, "
+        assert capture.count_completes() == 2 * N_GC + (
+            1 if isinstance(capture, PerfettoFileCapture) else 0
+        ), (
+            f"[{exporter_factory.name}] expected {2 * N_GC} complete events "
+            f"(plus 1 Processes-track lifetime begin for Perfetto), "
             f"got {capture.count_completes()}"
         )
         if isinstance(capture, PerfettoFileCapture):
@@ -472,8 +485,11 @@ class TestExporterThreadSafety:
         for exc in captured:
             raise exc
 
-        assert capture.count_completes() == N_GC, (
-            f"[{exporter_factory.name}] expected {N_GC} complete events, "
+        assert capture.count_completes() == N_GC + (
+            1 if isinstance(capture, PerfettoFileCapture) else 0
+        ), (
+            f"[{exporter_factory.name}] expected {N_GC} complete events "
+            f"(plus 1 Processes-track lifetime begin for Perfetto), "
             f"got {capture.count_completes()}"
         )
         if isinstance(capture, PerfettoFileCapture):
@@ -541,7 +557,9 @@ class TestPerfettoExporterCmdlinePath:
         exporter.close()
 
         capture = PerfettoFileCapture(path)
-        assert capture.count_completes() == 1
+        # 1 GC pause slice begin on the thread track + 1 Processes-track
+        # lifetime begin for the only pid.
+        assert capture.count_completes() == 2
         assert capture.count_process_descriptors() == 1
 
         # The process descriptor must have NO cmdline entries. The
@@ -598,7 +616,9 @@ class TestPerfettoExporterCmdlinePath:
             raise exc
 
         capture = PerfettoFileCapture(path)
-        assert capture.count_completes() == 2 * N_GC
+        # 2*N_GC GC pause slice begins on the thread track + 1
+        # Processes-track lifetime begin for the only pid.
+        assert capture.count_completes() == 2 * N_GC + 1
         assert capture.count_process_descriptors() == 1
 
 

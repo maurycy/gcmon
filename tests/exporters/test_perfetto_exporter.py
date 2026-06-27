@@ -172,7 +172,9 @@ class TestPerfettoExporter:
         exporter.close()
 
         packets = _read_trace_packets(path)
-        assert _count_event_type(packets, TYPE_SLICE_BEGIN) == 1
+        # 1 GC pause slice begin + 1 Processes-track lifetime begin
+        # for the single pid.
+        assert _count_event_type(packets, TYPE_SLICE_BEGIN) == 2
 
     def test_different_generation_events(self, perfetto_exporter) -> None:
         exporter, path = perfetto_exporter()

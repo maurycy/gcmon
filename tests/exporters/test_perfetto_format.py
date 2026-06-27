@@ -38,6 +38,12 @@ from tests.proto_decoder import (
 # ``_START_PROCESS_INSTANT_NAME`` in ``gcmon.exporters.perfetto_format``.
 _START_PROCESS_MARKER_NAME: str = "Start Process"
 
+# Name of the shared top-level Perfetto track that holds one slice per
+# pid spanning the first-to-last non-meta event timestamps for that
+# pid. Must match ``_PROCESS_LIFETIME_TRACK_NAME`` in
+# ``gcmon.exporters.perfetto_format``.
+_PROCESS_LIFETIME_TRACK_NAME: str = "Processes"
+
 
 def _convert_item(
     pid: int,
@@ -110,6 +116,60 @@ class TestPerfettoTrackState:
         state.get_or_create_counter_track_uuid(100, 0, "G0", "collected")
         assert state.has_counter_track(100, 0, "G0", "collected")
         assert not state.has_counter_track(100, 0, "G1", "collected")
+
+
+class TestProcessLifetimeState:
+    """State accessors for the shared ``Processes`` track."""
+
+    def test_track_uuid_lazy_and_idempotent(self) -> None:
+        state = PerfettoTrackState()
+        assert not state.has_process_lifetime_track()
+        uuid1 = state.get_or_create_process_lifetime_track_uuid()
+        assert state.has_process_lifetime_track()
+        uuid2 = state.get_or_create_process_lifetime_track_uuid()
+        assert uuid1 == uuid2
+
+    def test_track_uuid_distinct_from_process_uuid(self) -> None:
+        state = PerfettoTrackState()
+        proc_uuid = state.get_process_track_uuid(100)
+        lifetime_uuid = state.get_or_create_process_lifetime_track_uuid()
+        assert lifetime_uuid != proc_uuid
+
+    def test_open_is_idempotent(self) -> None:
+        state = PerfettoTrackState()
+        assert not state.has_process_lifetime(100)
+        state.mark_process_lifetime_opened(100)
+        assert state.has_process_lifetime(100)
+        state.mark_process_lifetime_opened(100)  # no-op
+        assert state.has_process_lifetime(100)
+        assert not state.has_process_lifetime(200)
+
+    def test_end_ts_update_overwrites(self) -> None:
+        state = PerfettoTrackState()
+        state.update_process_lifetime_end_ts(100, 1_000)
+        state.update_process_lifetime_end_ts(100, 2_000)
+        state.update_process_lifetime_end_ts(100, 1_500)
+        ends = dict(state.pop_process_lifetime_ends())
+        assert ends == {100: 1_500}
+
+    def test_pop_returns_sorted_by_end_then_pid(self) -> None:
+        state = PerfettoTrackState()
+        # Pids intentionally in pid-asc order, end-ts intentionally in
+        # reverse order so that the sort key is non-trivial.
+        state.update_process_lifetime_end_ts(200, 1_000)
+        state.update_process_lifetime_end_ts(100, 2_000)
+        state.update_process_lifetime_end_ts(300, 1_000)
+        ends = state.pop_process_lifetime_ends()
+        # Expected order: (1_000, 200), (1_000, 300), (2_000, 100).
+        assert ends == [(200, 1_000), (300, 1_000), (100, 2_000)]
+
+    def test_pop_clears_end_ts_but_keeps_opened(self) -> None:
+        state = PerfettoTrackState()
+        state.update_process_lifetime_end_ts(100, 1_000)
+        state.mark_process_lifetime_opened(100)
+        state.pop_process_lifetime_ends()
+        assert state.has_process_lifetime(100)
+        assert state.pop_process_lifetime_ends() == []
 
 
 class TestBuildTrackDescriptor:
@@ -442,18 +502,29 @@ class TestConvertItemToPerfettoPackets:
             uncollectable=0, candidates=5, duration=0.001,
         )
         _, packets = _convert_item(100, item, state, sequence_id=1)
-        # First packet is the synthetic "Start Process" marker on the
-        # process track; the GC pause slice begin follows. Find the
-        # begin packet by event type.
-        assert len(packets) >= 2
+        # Three packets are emitted before the GC pause slice: the
+        # synthetic "Start Process" marker on the process track, then
+        # the "Process 100" slice begin on the shared "Processes" track,
+        # then the GC pause slice begin on the thread track. Find the
+        # GC pause slice by name to disambiguate.
+        assert len(packets) >= 3
+        lifetime_uuid = state.get_or_create_process_lifetime_track_uuid()
+
+        def _packet_name(p: bytes) -> str | None:
+            pf = decode_message(p)
+            te_bytes = get_bytes(pf, TracePacketField.TRACK_EVENT)
+            if not te_bytes:
+                return None
+            tef = decode_message(te_bytes)
+            return get_string(tef, TrackEventField.NAME)
+
         begin_packet = next(
             p for p in packets
-            if get_varint(
-                decode_message(
-                    get_bytes(decode_message(p), TracePacketField.TRACK_EVENT) or b""
-                ),
-                TrackEventField.TYPE,
-            ) == TYPE_SLICE_BEGIN
+            if (lambda f: get_varint(f, TrackEventField.TYPE) == TYPE_SLICE_BEGIN and
+                get_varint(f, TrackEventField.TRACK_UUID) != lifetime_uuid and
+                _packet_name(p) == "GC Pause (gen=0)")(
+                decode_message(get_bytes(decode_message(p), TracePacketField.TRACK_EVENT) or b"")
+            )
         )
         first_packet_fields = decode_message(begin_packet)
         assert get_varint(first_packet_fields, TracePacketField.TIMESTAMP) == 1_000
@@ -791,17 +862,18 @@ class TestConvertItemToPerfettoPackets:
             uncollectable=2, candidates=3, duration=0.001,
         )
         _, packets = _convert_item(100, item, state, sequence_id=1)
-        # First packet is the synthetic "Start Process" marker; the GC
-        # Pause slice begin (which carries the debug annotations) is
-        # the second packet. Find it by event type.
+        # Three packets precede the GC pause slice begin: the synthetic
+        # "Start Process" marker, the "Process 100" slice begin on the
+        # shared "Processes" track, and any other warm-up events.
+        # Identify the GC pause slice by its name.
+        lifetime_uuid = state.get_or_create_process_lifetime_track_uuid()
         begin_packet = next(
             p for p in packets
-            if get_varint(
-                decode_message(
-                    get_bytes(decode_message(p), TracePacketField.TRACK_EVENT) or b""
-                ),
-                TrackEventField.TYPE,
-            ) == TYPE_SLICE_BEGIN
+            if (lambda f: get_varint(f, TrackEventField.TYPE) == TYPE_SLICE_BEGIN and
+                get_varint(f, TrackEventField.TRACK_UUID) != lifetime_uuid and
+                get_string(f, TrackEventField.NAME) == "GC Pause (gen=0)")(
+                decode_message(get_bytes(decode_message(p), TracePacketField.TRACK_EVENT) or b"")
+            )
         )
         first_packet_fields = decode_message(begin_packet)
         te_bytes = get_bytes(first_packet_fields, TracePacketField.TRACK_EVENT)
@@ -827,17 +899,16 @@ class TestConvertItemToPerfettoPackets:
             uncollectable=2, candidates=3, duration=0.001,
         )
         _, packets = _convert_item(100, item, state, sequence_id=1)
-        # First packet is the synthetic "Start Process" marker; the GC
-        # Pause slice begin (with the debug annotations) is the second
-        # packet. Find it by event type.
+        # Disambiguate by name (and exclude the spec-15 "Processes" track
+        # slice begin) to find the GC pause slice.
+        lifetime_uuid = state.get_or_create_process_lifetime_track_uuid()
         begin_packet = next(
             p for p in packets
-            if get_varint(
-                decode_message(
-                    get_bytes(decode_message(p), TracePacketField.TRACK_EVENT) or b""
-                ),
-                TrackEventField.TYPE,
-            ) == TYPE_SLICE_BEGIN
+            if (lambda f: get_varint(f, TrackEventField.TYPE) == TYPE_SLICE_BEGIN and
+                get_varint(f, TrackEventField.TRACK_UUID) != lifetime_uuid and
+                get_string(f, TrackEventField.NAME) == "GC Pause (gen=0)")(
+                decode_message(get_bytes(decode_message(p), TracePacketField.TRACK_EVENT) or b"")
+            )
         )
         first_packet_fields = decode_message(begin_packet)
         te_bytes = get_bytes(first_packet_fields, 11)
@@ -859,6 +930,199 @@ class TestConvertItemToPerfettoPackets:
         assert ("uncollectable", 2) in ann_values
         assert ("candidates", 3) in ann_values
 
+    def test_process_lifetime_track_emitted_once(self) -> None:
+        """The ``Processes`` track descriptor is emitted at most
+        once for a single pid, even across multiple convert passes."""
+        state = PerfettoTrackState()
+        item = GCStatsInfo(
+            gen=0, iid=0, ts_start=1_000, ts_stop=2_000,
+            heap_size=1000, collections=1, collected=10,
+            uncollectable=0, candidates=5, duration=0.001,
+        )
+        desc1, _ = _convert_item(100, item, state, sequence_id=1)
+        desc2, _ = _convert_item(100, GCStatsInfo(
+            gen=1, iid=0, ts_start=3_000, ts_stop=4_000,
+            heap_size=2000, collections=2, collected=20,
+            uncollectable=0, candidates=10, duration=0.002,
+        ), state, sequence_id=1)
+        lifetime_uuid = state.get_or_create_process_lifetime_track_uuid()
+        # All "Processes" track descriptors in desc1 + desc2 must share
+        # the same UUID and there must be exactly one.
+        seen = 0
+        for desc_bytes in (*desc1, *desc2):
+            fields = decode_message(desc_bytes)
+            td_bytes = get_bytes(fields, TracePacketField.TRACK_DESCRIPTOR)
+            if td_bytes:
+                td_fields = decode_message(td_bytes)
+                if get_varint(td_fields, TrackDescriptorField.UUID) == lifetime_uuid:
+                    assert get_string(td_fields, TrackDescriptorField.NAME) == _PROCESS_LIFETIME_TRACK_NAME
+                    # The descriptor carries no parent_uuid (root), no
+                    # process, no thread, no counter, no child_ordering,
+                    # no sibling_order_rank, no description.
+                    assert get_field(td_fields, TrackDescriptorField.PARENT_UUID) is None
+                    assert get_field(td_fields, TrackDescriptorField.PROCESS) is None
+                    assert get_field(td_fields, TrackDescriptorField.THREAD) is None
+                    assert get_field(td_fields, TrackDescriptorField.COUNTER) is None
+                    assert get_field(td_fields, TrackDescriptorField.CHILD_ORDERING) is None
+                    assert get_field(td_fields, TrackDescriptorField.SIBLING_ORDER_RANK) is None
+                    assert get_field(td_fields, TrackDescriptorField.DESCRIPTION) is None
+                    seen += 1
+        assert seen == 1, f"expected exactly one Processes track descriptor, got {seen}"
+
+    def test_process_lifetime_slice_begin_at_first_event_ts(self) -> None:
+        """The ``Process <pid>`` slice BEGIN is emitted at the ts of the
+        first non-meta event for the pid, on the shared ``Processes``
+        track."""
+        state = PerfettoTrackState()
+        item = GCStatsInfo(
+            gen=0, iid=0, ts_start=1_000, ts_stop=2_000,
+            heap_size=1000, collections=1, collected=10,
+            uncollectable=0, candidates=5, duration=0.001,
+        )
+        _, packets = _convert_item(100, item, state, sequence_id=1)
+        lifetime_uuid = state.get_or_create_process_lifetime_track_uuid()
+        begin_packets = [
+            p for p in packets
+            if (lambda f: get_varint(f, TrackEventField.TYPE) == TYPE_SLICE_BEGIN and
+                get_varint(f, TrackEventField.TRACK_UUID) == lifetime_uuid)(
+                decode_message(get_bytes(decode_message(p), TracePacketField.TRACK_EVENT) or b"")
+            )
+        ]
+        assert len(begin_packets) == 1, f"expected exactly one slice BEGIN on Processes track, got {len(begin_packets)}"
+        packet_fields = decode_message(begin_packets[0])
+        assert get_varint(packet_fields, TracePacketField.TIMESTAMP) == 1_000
+        te_fields = decode_message(get_bytes(packet_fields, TracePacketField.TRACK_EVENT) or b"")
+        assert get_string(te_fields, TrackEventField.NAME) == "Process 100"
+
+    def test_process_lifetime_slice_end_at_last_event_ts(self) -> None:
+        """The ``Process <pid>`` slice END is emitted at the ts of the
+        last non-meta event for the pid, on the shared ``Processes``
+        track."""
+        state = PerfettoTrackState()
+        item = GCStatsInfo(
+            gen=0, iid=0, ts_start=1_000, ts_stop=2_000,
+            heap_size=1000, collections=1, collected=10,
+            uncollectable=0, candidates=5, duration=0.001,
+        )
+        _, packets = _convert_item(100, item, state, sequence_id=1)
+        lifetime_uuid = state.get_or_create_process_lifetime_track_uuid()
+        end_packets = [
+            p for p in packets
+            if (lambda f: get_varint(f, TrackEventField.TYPE) == TYPE_SLICE_END and
+                get_varint(f, TrackEventField.TRACK_UUID) == lifetime_uuid)(
+                decode_message(get_bytes(decode_message(p), TracePacketField.TRACK_EVENT) or b"")
+            )
+        ]
+        assert len(end_packets) == 1, f"expected exactly one slice END on Processes track, got {len(end_packets)}"
+        packet_fields = decode_message(end_packets[0])
+        # Last non-meta event ts in this fixture is 2_000 (ts_stop).
+        assert get_varint(packet_fields, TracePacketField.TIMESTAMP) == 2_000
+        te_fields = decode_message(get_bytes(packet_fields, TracePacketField.TRACK_EVENT) or b"")
+        assert get_string(te_fields, TrackEventField.NAME) == "Process 100"
+
+    def test_process_lifetime_two_pids_one_shared_track(self) -> None:
+        """Two distinct pids share the same ``Processes`` track UUID and
+        each get their own slice pair, ordered by end-ts at closeout."""
+        state = PerfettoTrackState()
+        item_late_pid = GCStatsInfo(
+            gen=0, iid=0, ts_start=1_000, ts_stop=5_000,
+            heap_size=1000, collections=1, collected=10,
+            uncollectable=0, candidates=5, duration=0.001,
+        )
+        item_early_pid = GCStatsInfo(
+            gen=0, iid=0, ts_start=500, ts_stop=1_500,
+            heap_size=1000, collections=1, collected=10,
+            uncollectable=0, candidates=5, duration=0.001,
+        )
+        _, packets_late = _convert_item(200, item_late_pid, state, sequence_id=1)
+        _, packets_early = _convert_item(100, item_early_pid, state, sequence_id=1)
+        lifetime_uuid = state.get_or_create_process_lifetime_track_uuid()
+
+        def _slice_pairs(packets: list[bytes]) -> list[tuple[int, int, str]]:
+            """Return ``[(ts, type, name), ...]`` for slice events on the
+            ``Processes`` track."""
+            out: list[tuple[int, int, str]] = []
+            for p in packets:
+                pf = decode_message(p)
+                te_bytes = get_bytes(pf, TracePacketField.TRACK_EVENT)
+                if not te_bytes:
+                    continue
+                tef = decode_message(te_bytes)
+                if get_varint(tef, TrackEventField.TRACK_UUID) != lifetime_uuid:
+                    continue
+                if get_varint(tef, TrackEventField.TYPE) not in (TYPE_SLICE_BEGIN, TYPE_SLICE_END):
+                    continue
+                out.append((
+                    get_varint(pf, TracePacketField.TIMESTAMP) or 0,
+                    get_varint(tef, TrackEventField.TYPE) or 0,
+                    get_string(tef, TrackEventField.NAME) or "",
+                ))
+            return out
+
+        all_pairs = _slice_pairs(packets_late) + _slice_pairs(packets_early)
+        # Closeout runs at the end of each convert call. So:
+        # - packets_late (pid 200) contains BEGIN(pid 200) at ts=1000
+        #   and END(pid 200) at ts=5000.
+        # - packets_early (pid 100) contains BEGIN(pid 100) at ts=500
+        #   and END(pid 100) at ts=1500.
+        begins = [p for p in all_pairs if p[1] == TYPE_SLICE_BEGIN]
+        ends = [p for p in all_pairs if p[1] == TYPE_SLICE_END]
+        assert begins == [
+            (1_000, TYPE_SLICE_BEGIN, "Process 200"),
+            (500, TYPE_SLICE_BEGIN, "Process 100"),
+        ]
+        assert ends == [
+            (5_000, TYPE_SLICE_END, "Process 200"),
+            (1_500, TYPE_SLICE_END, "Process 100"),
+        ]
+
+    def test_process_lifetime_idempotent_across_converts(self) -> None:
+        """Two convert passes for the same pid emit only one slice BEGIN
+        (the second pass updates the end-ts only)."""
+        state = PerfettoTrackState()
+        item1 = GCStatsInfo(
+            gen=0, iid=0, ts_start=1_000, ts_stop=2_000,
+            heap_size=1000, collections=1, collected=10,
+            uncollectable=0, candidates=5, duration=0.001,
+        )
+        item2 = GCStatsInfo(
+            gen=1, iid=0, ts_start=3_000, ts_stop=4_000,
+            heap_size=2000, collections=2, collected=20,
+            uncollectable=0, candidates=10, duration=0.002,
+        )
+        _, packets1 = _convert_item(100, item1, state, sequence_id=1)
+        _, packets2 = _convert_item(100, item2, state, sequence_id=1)
+        lifetime_uuid = state.get_or_create_process_lifetime_track_uuid()
+
+        def _count(packets: list[bytes], event_type: int) -> int:
+            n = 0
+            for p in packets:
+                pf = decode_message(p)
+                te_bytes = get_bytes(pf, TracePacketField.TRACK_EVENT)
+                if not te_bytes:
+                    continue
+                tef = decode_message(te_bytes)
+                if (get_varint(tef, TrackEventField.TRACK_UUID) == lifetime_uuid
+                        and get_varint(tef, TrackEventField.TYPE) == event_type):
+                    n += 1
+            return n
+
+        assert _count(packets1, TYPE_SLICE_BEGIN) == 1
+        assert _count(packets1, TYPE_SLICE_END) == 1
+        # Second pass: no new BEGIN, no new END (end-ts updates silently,
+        # the closeout pass happens at the end of the second convert).
+        assert _count(packets2, TYPE_SLICE_BEGIN) == 0
+        assert _count(packets2, TYPE_SLICE_END) == 1
+        # Last event ts after the second pass is 4_000.
+        end_packet = next(
+            p for p in packets2
+            if (lambda f: get_varint(f, TrackEventField.TYPE) == TYPE_SLICE_END and
+                get_varint(f, TrackEventField.TRACK_UUID) == lifetime_uuid)(
+                decode_message(get_bytes(decode_message(p), TracePacketField.TRACK_EVENT) or b"")
+            )
+        )
+        assert get_varint(decode_message(end_packet), TracePacketField.TIMESTAMP) == 4_000
+
 
 class TestConvertInstantToPerfettoPacket:
     def test_emits_process_descriptor(self) -> None:
@@ -868,7 +1132,8 @@ class TestConvertInstantToPerfettoPacket:
             instant_event(100, "start", ts_ns=5_000),
         ]
         descriptors, _ = convert_trace_events_to_perfetto(events, state, sequence_id=1)
-        assert len(descriptors) == 1
+        # 1 process descriptor + 1 "Processes" track descriptor.
+        assert len(descriptors) == 2
         assert state.has_pid(100)
 
     def test_emits_instant_event(self) -> None:
@@ -878,10 +1143,13 @@ class TestConvertInstantToPerfettoPacket:
             instant_event(100, "start GC monitor", ts_ns=5_000),
         ]
         _, packets = convert_trace_events_to_perfetto(events, state, sequence_id=1)
-        # Two packets: the synthetic "Start Process" marker (on the
-        # process track) and the user-provided instant event (also on
-        # the process track).
-        assert len(packets) == 2
+        # Three packets: the synthetic "Start Process" marker (process
+        # track), the "Process 100" slice begin on the shared "Processes"
+        # track, and the user-provided instant event (process track).
+        # The closeout pass appends a slice END for "Process 100" at
+        # the same ts as the begin (since there is only one non-counter
+        # event in this fixture).
+        assert len(packets) == 4
         names = [
             get_string(
                 decode_message(
@@ -891,7 +1159,12 @@ class TestConvertInstantToPerfettoPacket:
             )
             for p in packets
         ]
-        assert names == [_START_PROCESS_MARKER_NAME, "start GC monitor"]
+        assert names == [
+            _START_PROCESS_MARKER_NAME,
+            "Process 100",
+            "start GC monitor",
+            "Process 100",
+        ]
         instant_packet = next(
             p for p in packets
             if get_string(
@@ -917,12 +1190,13 @@ class TestConvertInstantToPerfettoPacket:
             [process_meta(100, "Process 100"), instant_event(100, "stop", ts_ns=10_000)],
             state, sequence_id=1,
         )
-        # First call: 1 descriptor + 2 packets (marker + instant event).
-        # Second call: 0 descriptors (process descriptor already emitted
-        # and the marker is idempotent) + 1 packet (the new instant
-        # event only).
-        assert len(desc1) == 1
-        assert len(packets1) == 2
+        # First call: 2 descriptors (process + "Processes" track) + 4
+        # packets (marker + Process 100 begin + instant + Process 100 end).
+        # Second call: 0 descriptors (both are idempotent) + 1 packet
+        # (the new instant event; no slice begin since pid is already
+        # opened; one closeout END appended at end of convert call).
+        assert len(desc1) == 2
+        assert len(packets1) == 4
         assert len(desc2) == 0
 
     def test_instant_after_gc_event_no_duplicate_descriptor(self) -> None:

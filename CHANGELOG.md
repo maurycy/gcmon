@@ -19,6 +19,7 @@
 - Several metrics moved from counter events to GC slice args: `increment_size` (on `GC Pause` / `Fill increment`), `candidates` (on `Deduce Unreachable`), and the sub-step counts `finalized_garbage_count` / `deleted_garbage_count` / `clear_weakrefs_count` on their respective sub-step slices. `alive_size` is no longer on counter events.
 - `gcmon monitor` / `run` now support `--format chrome+perfetto` (writes both `<base>.json` and `<base>.pftrace`); also fixes `GCMON_FORMAT=perfetto` falling back to `chrome`
 - Perfetto cmdline `description` on the process track's `TrackDescriptor` is now always visible in the Perfetto UI: a single synthetic dur=0 "Start Process" `TYPE_INSTANT` event is emitted on the process track itself, lazily on the first non-meta event for each pid, so the process track is no longer hidden when the caller did not emit any `InstantEvent`. `ProcessDescriptor.cmdline` (the repeated string) is unchanged.
+- Added a shared top-level Perfetto track named `Processes` that holds one `TYPE_SLICE_BEGIN` / `TYPE_SLICE_END` pair per pid, spanning the first-to-last non-counter non-meta event timestamps for that pid. The slice is named `Process <pid>`. Provides a single visual row showing the lifetime of every monitored process. Perfetto-only; no Chrome JSON / JSONL representation is produced.
 
 ## Version 0.2.0 (2026-06-10)
 
