@@ -20,6 +20,7 @@ from gcmon.exporters.perfetto_format import (
     build_track_descriptor,
     build_track_event,
     convert_trace_events_to_perfetto,
+    finalize_perfetto_packets,
 )
 from gcmon.exporters.trace_converter import convert_item_to_trace_format
 from gcmon.trace_event import counter_event, instant_event, process_meta, thread_meta
@@ -56,7 +57,11 @@ def _convert_item(
         process_meta(pid, f"Process {pid}"),
         thread_meta(pid, item.iid, f"Thread {item.iid}"),
     ]
-    return convert_trace_events_to_perfetto(meta + gc_events, state, sequence_id)
+    descriptors, packets = convert_trace_events_to_perfetto(
+        meta + gc_events, state, sequence_id,
+    )
+    packets.extend(finalize_perfetto_packets(state, sequence_id))
+    return descriptors, packets
 
 
 class TestPerfettoTrackState:
@@ -1207,12 +1212,12 @@ class TestConvertInstantToPerfettoPacket:
             instant_event(100, "start GC monitor", ts_ns=5_000),
         ]
         _, packets = convert_trace_events_to_perfetto(events, state, sequence_id=1)
-        # Three packets: the synthetic "Start Process" marker (process
-        # track), the "Process 100" slice begin on the shared "Processes"
-        # track, and the user-provided instant event (process track).
-        # The closeout pass appends a slice END for "Process 100" at
-        # the same ts as the begin (since there is only one non-counter
-        # event in this fixture).
+        # Three packets from the convert call: the synthetic "Start
+        # Process" marker (process track), the "Process 100" slice begin
+        # on the shared "Processes" track, and the user-provided instant
+        # event (process track). The slice END is appended by
+        # finalize_perfetto_packets (the encoder's close()).
+        packets.extend(finalize_perfetto_packets(state, sequence_id=1))
         assert len(packets) == 4
         names = [
             get_string(
@@ -1250,18 +1255,22 @@ class TestConvertInstantToPerfettoPacket:
             [process_meta(100, "Process 100"), instant_event(100, "start", ts_ns=5_000)],
             state, sequence_id=1,
         )
-        desc2, _ = convert_trace_events_to_perfetto(
+        desc2, packets2 = convert_trace_events_to_perfetto(
             [process_meta(100, "Process 100"), instant_event(100, "stop", ts_ns=10_000)],
             state, sequence_id=1,
         )
-        # First call: 2 descriptors (process + "Processes" track) + 4
-        # packets (marker + Process 100 begin + instant + Process 100 end).
+        # First call: 2 descriptors (process + "Processes" track) + 3
+        # packets from the convert (marker + Process 100 begin + instant).
+        # The closeout END is appended by finalize_perfetto_packets.
         # Second call: 0 descriptors (both are idempotent) + 1 packet
         # (the new instant event; no slice begin since pid is already
-        # opened; one closeout END appended at end of convert call).
+        # opened). The closeout END is again emitted by finalize.
         assert len(desc1) == 2
+        assert len(packets1) == 3
+        packets1.extend(finalize_perfetto_packets(state, sequence_id=1))
         assert len(packets1) == 4
         assert len(desc2) == 0
+        assert len(packets2) == 1
 
     def test_instant_after_gc_event_no_duplicate_descriptor(self) -> None:
         state = PerfettoTrackState()
@@ -1322,3 +1331,127 @@ class TestConvertInstantToPerfettoPacket:
         _convert_item(100, item_g1, state, sequence_id=1)
         uuid_after_g1 = state.get_or_create_counter_track_uuid(100, 0, "heap_size", "heap_size")
         assert uuid_after_g0 == uuid_after_g1
+
+    def test_no_closeout_emitted_during_convert(self) -> None:
+        """``convert_trace_events_to_perfetto`` never emits a
+        ``TYPE_SLICE_END`` on the ``Processes`` track; closeout is the
+        caller's job (see ``finalize_perfetto_packets``)."""
+        state = PerfettoTrackState()
+        item = GCStatsInfo(
+            gen=0, iid=0, ts_start=1_000, ts_stop=2_000,
+            heap_size=1000, collections=1, collected=10,
+            uncollectable=0, candidates=5, duration=0.001,
+        )
+        gc_events = convert_item_to_trace_format(100, item)
+        meta = [
+            process_meta(100, "Process 100"),
+            thread_meta(100, item.iid, f"Thread {item.iid}"),
+        ]
+        _, packets = convert_trace_events_to_perfetto(
+            meta + gc_events, state, sequence_id=1,
+        )
+        lifetime_uuid = state.get_or_create_process_lifetime_track_uuid()
+        end_packets = [
+            p for p in packets
+            if (lambda f: get_varint(f, TrackEventField.TYPE) == TYPE_SLICE_END and
+                get_varint(f, TrackEventField.TRACK_UUID) == lifetime_uuid)(
+                decode_message(get_bytes(decode_message(p), TracePacketField.TRACK_EVENT) or b"")
+            )
+        ]
+        assert end_packets == [], (
+            f"convert_trace_events_to_perfetto must not emit slice END "
+            f"on the Processes track; got {len(end_packets)} ENDs"
+        )
+        # Calling finalize_perfetto_packets now produces exactly one END.
+        closeout = finalize_perfetto_packets(state, sequence_id=1)
+        end_packets = [
+            p for p in closeout
+            if (lambda f: get_varint(f, TrackEventField.TYPE) == TYPE_SLICE_END and
+                get_varint(f, TrackEventField.TRACK_UUID) == lifetime_uuid)(
+                decode_message(get_bytes(decode_message(p), TracePacketField.TRACK_EVENT) or b"")
+            )
+        ]
+        assert len(end_packets) == 1
+        assert get_varint(
+            decode_message(end_packets[0]), TracePacketField.TIMESTAMP,
+        ) == 2_000
+
+    def test_closeout_emitted_only_at_finalize(self) -> None:
+        """Across two ``convert_trace_events_to_perfetto`` calls for the
+        same pid, the convert call never emits a slice END on the
+        ``Processes`` track (the END is the caller's job, and
+        ``finalize_perfetto_packets`` is called exactly once at the end
+        of the trace). The single END's ts is the last non-counter
+        non-meta event ts of the *second* convert call, not the first.
+        """
+        state = PerfettoTrackState()
+        item1 = GCStatsInfo(
+            gen=0, iid=0, ts_start=1_000, ts_stop=2_000,
+            heap_size=1000, collections=1, collected=10,
+            uncollectable=0, candidates=5, duration=0.001,
+        )
+        item2 = GCStatsInfo(
+            gen=1, iid=1, ts_start=3_000, ts_stop=4_000,
+            heap_size=2000, collections=2, collected=20,
+            uncollectable=0, candidates=10, duration=0.002,
+        )
+        events1 = [
+            process_meta(100, "Process 100"),
+            thread_meta(100, item1.iid, f"Thread {item1.iid}"),
+            *convert_item_to_trace_format(100, item1),
+        ]
+        events2 = [
+            process_meta(100, "Process 100"),
+            thread_meta(100, item2.iid, f"Thread {item2.iid}"),
+            *convert_item_to_trace_format(100, item2),
+        ]
+        _, packets1 = convert_trace_events_to_perfetto(
+            events1, state, sequence_id=1,
+        )
+        _, packets2 = convert_trace_events_to_perfetto(
+            events2, state, sequence_id=1,
+        )
+        # finalize is called exactly once at the end (mimicking
+        # encoder.close()).
+        closeout = finalize_perfetto_packets(state, sequence_id=1)
+        all_packets = packets1 + packets2 + closeout
+        lifetime_uuid = state.get_or_create_process_lifetime_track_uuid()
+
+        def _count(packets: list[bytes], event_type: int) -> int:
+            n = 0
+            for p in packets:
+                pf = decode_message(p)
+                te_bytes = get_bytes(pf, TracePacketField.TRACK_EVENT)
+                if not te_bytes:
+                    continue
+                tef = decode_message(te_bytes)
+                if (get_varint(tef, TrackEventField.TRACK_UUID) == lifetime_uuid
+                        and get_varint(tef, TrackEventField.TYPE) == event_type):
+                    n += 1
+            return n
+
+        # First batch: BEGIN emitted (first non-meta event), no END.
+        assert _count(packets1, TYPE_SLICE_BEGIN) == 1
+        assert _count(packets1, TYPE_SLICE_END) == 0
+        # Second batch: no new BEGIN (state has the "opened" flag), no
+        # END (convert never emits ENDs).
+        assert _count(packets2, TYPE_SLICE_BEGIN) == 0
+        assert _count(packets2, TYPE_SLICE_END) == 0
+        # The finalize pass: exactly one END.
+        assert _count(closeout, TYPE_SLICE_END) == 1
+        assert _count(closeout, TYPE_SLICE_BEGIN) == 0
+        # Across the union, exactly one BEGIN and one END.
+        assert _count(all_packets, TYPE_SLICE_BEGIN) == 1
+        assert _count(all_packets, TYPE_SLICE_END) == 1
+        # The single END's ts is the last non-counter non-meta event ts
+        # of the *second* batch (4_000), not the first (2_000).
+        end_packet = next(
+            p for p in all_packets
+            if (lambda f: get_varint(f, TrackEventField.TYPE) == TYPE_SLICE_END and
+                get_varint(f, TrackEventField.TRACK_UUID) == lifetime_uuid)(
+                decode_message(get_bytes(decode_message(p), TracePacketField.TRACK_EVENT) or b"")
+            )
+        )
+        assert get_varint(decode_message(end_packet), TracePacketField.TIMESTAMP) == 4_000
+        # Calling finalize again is a no-op (state is drained).
+        assert finalize_perfetto_packets(state, sequence_id=1) == []

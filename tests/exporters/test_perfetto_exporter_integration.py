@@ -788,3 +788,72 @@ class TestProcessesTrack:
                 f"debug.cmdline for pid {pid}: expected "
                 f"{_FAKE_CMDLINE_JOINED!r}, got {rows[0].string_value!r}"
             )
+
+
+@pytest.mark.stress
+class TestMultiFlushProcessesTrack:
+    """Multi-flush stress test for the ``Processes`` track slice END.
+
+    When the buffered exporter's ``flush_threshold`` is small enough to
+    force many flushes for a single pid, the ``Processes``-track slice
+    for that pid must end at the very last non-counter non-meta event
+    ts across all flushes, not the first batch's last event. (Without
+    the fix, the closeout emitted a slice END at the end of every
+    convert call, so the trace processor paired the BEGIN with the
+    first END and dropped the rest as orphan ENDs.)
+    """
+
+    def test_slice_end_is_last_event_ts(self, tmp_path: Path) -> None:
+        pid = DEFAULT_PID
+        n_items = 30
+        # flush_threshold=5 forces ~6+ flushes for the n_items=30 GC
+        # items plus the leading instant event.
+        path = tmp_path / "trace.pftrace"
+        exporter = PerfettoExporter(output_path=path, flush_threshold=5)
+        try:
+            exporter.add_instant_event(
+                pid,
+                create_instant_msg(name=_INSTANT_NAME, ts=0),
+            )
+            for i in range(n_items):
+                ts_start = 1_000_000 * (i + 1)
+                ts_stop = ts_start + 50_000
+                exporter.add_event(pid, create_mock_stats_item(
+                    gen=0, iid=i,
+                    collections=1, collected=10,
+                    uncollectable=0, candidates=5, heap_size=1000,
+                    ts_start=ts_start, ts_stop=ts_stop,
+                ))
+        finally:
+            exporter.close()
+
+        config = TraceProcessorConfig(load_timeout=300)
+        tp = TraceProcessor(trace=str(path), config=config)
+        try:
+            rows = list(tp.query(
+                f"SELECT s.ts, s.dur FROM slice s "
+                f"JOIN track t ON s.track_id = t.id "
+                f"WHERE t.name = '{_PROCESS_LIFETIME_TRACK_NAME}' "
+                f"AND s.name = 'Process {pid}'"
+            ))
+            assert len(rows) == 1, (
+                f"expected exactly one Processes-track slice for pid "
+                f"{pid}, got {rows}"
+            )
+            slice_ts = rows[0].ts
+            slice_dur = rows[0].dur
+            slice_end = slice_ts + slice_dur
+            # Expected end: the EndEvent of the last GC item.
+            expected_end = 1_000_000 * n_items + 50_000
+            assert slice_end == expected_end, (
+                f"slice end mismatch: got {slice_end}, expected "
+                f"{expected_end} (last non-counter non-meta event ts); "
+                f"dur={slice_dur}, ts={slice_ts}"
+            )
+            # Also assert BEGIN is at the first non-meta event ts
+            # (the instant event at ts=0).
+            assert slice_ts == 0, (
+                f"slice begin ts mismatch: got {slice_ts}, expected 0"
+            )
+        finally:
+            tp.close()

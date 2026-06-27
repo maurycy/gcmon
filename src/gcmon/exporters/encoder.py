@@ -24,6 +24,7 @@ from .perfetto_format import (
     PerfettoTrackState,
     TraceField,
     convert_trace_events_to_perfetto,
+    finalize_perfetto_packets,
 )
 from .protobuf_encoder import encode_bytes_field
 
@@ -155,4 +156,11 @@ class ProtobufEventEncoder:
             f.flush()
 
     def close(self) -> None:
-        pass
+        if self._path is None or not self._has_written:
+            return
+        packets = finalize_perfetto_packets(self._track_state, self._sequence_id)
+        if packets:
+            with open(self._path, "ab") as f:
+                for entry in packets:
+                    f.write(encode_bytes_field(TraceField.PACKET, entry))
+                f.flush()

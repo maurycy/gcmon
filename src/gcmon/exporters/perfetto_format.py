@@ -695,8 +695,6 @@ def convert_trace_events_to_perfetto(
                     track_event=_make_counter_event(ctr_uuid, value),
                 ))
 
-    _close_process_lifetimes(state, sequence_id, packets)
-
     return descriptors, packets
 
 
@@ -734,8 +732,9 @@ def _record_or_open_process_lifetime(
     end-ts is updated. Counter events are skipped for end-ts tracking
     because the encoder emits them at the start of a GC pause (not at
     the end), so they would otherwise pull the slice duration down to
-    zero. Closeout is performed by ``_close_process_lifetimes`` at
-    the end of ``convert_trace_events_to_perfetto``.
+    zero. Closeout (the slice END) is emitted exactly once at trace
+    close by ``finalize_perfetto_packets``; this function never emits
+    the END.
 
     A no-op if the process descriptor has not yet been emitted (the
     caller is expected to emit ``ProcessMeta`` before any non-meta
@@ -758,15 +757,32 @@ def _record_or_open_process_lifetime(
         state.update_process_lifetime_end_ts(event.pid, ts)
 
 
-def _close_process_lifetimes(
+def finalize_perfetto_packets(
     state: PerfettoTrackState,
     sequence_id: int,
-    packets: list[bytes],
-) -> None:
-    """Emit one ``TYPE_SLICE_END`` per opened pid, in ascending order of
-    end timestamp (ties broken by ascending pid). Empties the internal
-    end-ts state. Safe to call when no pids have been opened."""
+) -> list[bytes]:
+    """Emit the closeout packets for the entire trace: one
+    ``TYPE_SLICE_END`` per pid whose ``Processes``-track slice was
+    opened, in ascending order of end timestamp (ties broken by
+    ascending pid). Returns the list of closeout packets to append
+    to the trace.
+
+    Call this exactly once, at the end of the trace (typically in the
+    encoder's ``close()``), not at the end of every
+    ``convert_trace_events_to_perfetto`` call. Emitting ENDs
+    per-batch would cause the trace processor to collapse the slice
+    to the first batch's last event (it pairs the BEGIN with the
+    first END and drops the rest as orphan ENDs). The end-ts state
+    accumulates across all batches; this function consumes and
+    clears it.
+
+    Safe to call when no pids have been opened (returns an empty
+    list). Safe to call more than once (subsequent calls return
+    an empty list because the state was already cleared).
+    """
+    packets: list[bytes] = []
     for pid, end_ts in state.pop_process_lifetime_ends():
         packets.append(
             _emit_process_lifetime_slice_end(pid, end_ts, state, sequence_id)
         )
+    return packets
