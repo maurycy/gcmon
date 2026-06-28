@@ -20,7 +20,8 @@
 - `gcmon monitor` / `run` now support `--format chrome+perfetto` (writes both `<base>.json` and `<base>.pftrace`); also fixes `GCMON_FORMAT=perfetto` falling back to `chrome`
 - Perfetto cmdline `description` on the process track's `TrackDescriptor` is now always visible in the Perfetto UI: a single synthetic dur=0 "Start Process" `TYPE_INSTANT` event is emitted on the process track itself, lazily on the first non-meta event for each pid, so the process track is no longer hidden when the caller did not emit any `InstantEvent`. `ProcessDescriptor.cmdline` (the repeated string) is unchanged.
 - Added a shared top-level Perfetto track named `Processes` that holds one `TYPE_SLICE_BEGIN` / `TYPE_SLICE_END` pair per pid, spanning the first-to-last non-counter non-meta event timestamps for that pid. The slice is named `Process <pid>`, and its BEGIN carries a `cmdline` debug annotation (argv joined with single spaces) when the cmdline provider returned a value for the pid. Provides a single visual row showing the lifetime of every monitored process. Perfetto-only; no Chrome JSON / JSONL representation is produced.
-- Fix `Processes` track slice END position: the slice END is now emitted exactly once at the encoder's `close()` (via `finalize_perfetto_packets`), not at the end of every `convert_trace_events_to_perfetto` call. Previously, when the buffered exporter flushed multiple times for a single trace, the wire contained one slice BEGIN and N slice ENDs per pid, and the trace processor paired the BEGIN with the first END, collapsing the visible slice to the last event of the first batch. Symptom: in long traces the `Process <pid>` slice visibly ended 100s of ms or seconds before the process's actual last event.
+- Fix `Processes` track slice END position: the slice END is now emitted exactly once at the encoder's `close()` (via `finalize_perfetto_packets`).
+- Perfetto output now orders process tracks by first event timestamp. Requires Perfetto trace processor 0.57+ and the "canary" UI channel for the ordering to be honored.
 
 ## Version 0.2.0 (2026-06-10)
 
@@ -38,4 +39,3 @@
 - CLI with `monitor` (attach to PID), `run` (spawn + monitor), `combine` (merge traces)
 - Streaming statistics with optional `DDSketch` percentile accuracy
 - Pyperf hook integration for benchmark profiling
-

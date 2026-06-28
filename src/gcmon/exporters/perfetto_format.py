@@ -477,6 +477,14 @@ def _emit_root_descriptor(
     ``state.has_root_descriptor``. The descriptor has no ``name`` and
     no ``process`` / ``thread`` / ``counter`` sub-message, so the
     trace processor does not surface it as a track row.
+
+    NOTE: honoring ``process_ordering`` on the root descriptor requires
+    Perfetto trace processor 0.57+ (not yet released as of this
+    writing), and the corresponding UI feature is gated behind the
+    "canary" channel in ``ui.perfetto.dev`` (Flags → Release channel -> Canary).
+    Older trace processors ignore the hints and fall back to their default
+    ordering. We always emit the hints regardless so traces are
+    forward-compatible — no version gate is applied at write time.
     """
     if state.has_root_descriptor():
         return []
