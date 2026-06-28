@@ -257,6 +257,45 @@ class TestBuildTrackDescriptor:
         assert get_varint(fields, TrackDescriptorField.PARENT_UUID) == 200
         assert get_bytes(fields, TrackDescriptorField.COUNTER) == b""
 
+    def test_process_descriptor_with_start_timestamp_ns(self) -> None:
+        data = build_track_descriptor(
+            uuid=100, name="Process 100", pid=100,
+            start_timestamp_ns=1_700_000_000_123_456_789,
+        )
+        fields = decode_message(data)
+        proc_bytes = get_bytes(fields, TrackDescriptorField.PROCESS)
+        assert proc_bytes is not None
+        proc_fields = decode_message(proc_bytes)
+        assert (
+            get_varint(proc_fields, ProcessDescriptorField.START_TIMESTAMP_NS)
+            == 1_700_000_000_123_456_789
+        )
+
+    def test_process_descriptor_without_start_timestamp_ns(self) -> None:
+        """No start_timestamp_ns is written when the kwarg is omitted
+        (default ``None``). The field must be absent from the bytes."""
+        data = build_track_descriptor(uuid=100, name="Process 100", pid=100)
+        fields = decode_message(data)
+        proc_bytes = get_bytes(fields, TrackDescriptorField.PROCESS)
+        assert proc_bytes is not None
+        proc_fields = decode_message(proc_bytes)
+        assert get_field(proc_fields, ProcessDescriptorField.START_TIMESTAMP_NS) is None
+
+    def test_thread_descriptor_ignores_start_timestamp_ns(self) -> None:
+        """``start_timestamp_ns`` is only valid on a process
+        descriptor. A thread descriptor built with the kwarg must NOT
+        emit it (the field is wrapped in a sub-message that we only
+        emit for process descriptors)."""
+        data = build_track_descriptor(
+            uuid=200, name="Thread 0", pid=100, tid=0, parent_uuid=100,
+            start_timestamp_ns=1_000,
+        )
+        fields = decode_message(data)
+        thread_bytes = get_bytes(fields, TrackDescriptorField.THREAD)
+        assert thread_bytes is not None
+        thread_fields = decode_message(thread_bytes)
+        assert get_field(thread_fields, ProcessDescriptorField.START_TIMESTAMP_NS) is None
+
 
 class TestBuildTracePacket:
     def test_empty_packet(self) -> None:
@@ -1703,3 +1742,108 @@ class TestProcessOrderingByFirstTs:
             for td in _process_descriptor_fields_for_pid(descriptors, pid)
         }
         assert ranks == {1: 0, 2: 1}, f"unexpected rank assignment: {ranks}"
+
+    def test_process_descriptor_writes_start_timestamp_ns(self) -> None:
+        """Each process descriptor carries ``start_timestamp_ns``
+        set to the first non-meta event ts for the pid (nanoseconds).
+        The Perfetto UI uses this to align the process track with the
+        process's actual start time.
+        """
+        state = PerfettoTrackState()
+        events = [
+            process_meta(100, "Process 100"),
+            instant_event(100, "start", ts_ns=5_000),
+            process_meta(200, "Process 200"),
+            instant_event(200, "start", ts_ns=1_000),
+        ]
+        descriptors, _ = convert_trace_events_to_perfetto(
+            events, state, sequence_id=1,
+        )
+        start_ts: dict[int, int | None] = {}
+        for pid in (100, 200):
+            tds = _process_descriptor_fields_for_pid(descriptors, pid)
+            assert len(tds) == 1
+            proc_bytes = get_bytes(tds[0], TrackDescriptorField.PROCESS)
+            assert proc_bytes is not None
+            proc_fields = decode_message(proc_bytes)
+            start_ts[pid] = get_varint(
+                proc_fields, ProcessDescriptorField.START_TIMESTAMP_NS,
+            )
+        assert start_ts == {100: 5_000, 200: 1_000}
+
+    def test_meta_only_pid_has_no_start_timestamp_ns(self) -> None:
+        """A pid with only ``ProcessMeta`` / ``ThreadMeta`` (no
+        non-meta events) has no recorded first-ts, so
+        ``start_timestamp_ns`` must be absent from the descriptor."""
+        state = PerfettoTrackState()
+        events = [
+            process_meta(100, "Process 100"),
+            thread_meta(100, 0, "Thread 0"),
+        ]
+        descriptors, _ = convert_trace_events_to_perfetto(
+            events, state, sequence_id=1,
+        )
+        tds = _process_descriptor_fields_for_pid(descriptors, 100)
+        assert len(tds) == 1
+        proc_bytes = get_bytes(tds[0], TrackDescriptorField.PROCESS)
+        assert proc_bytes is not None
+        proc_fields = decode_message(proc_bytes)
+        assert get_field(proc_fields, ProcessDescriptorField.START_TIMESTAMP_NS) is None
+
+    def test_start_timestamp_ns_uses_ts_start_for_gc_stats(self) -> None:
+        """For ``TGCStatsInfo`` events, the first-ts (and therefore
+        ``start_timestamp_ns``) is the ``ts_start`` of the first GC
+        pause, not the ``ts_stop`` or any sub-event ts."""
+        from gcmon.data import GCStatsInfo
+        state = PerfettoTrackState()
+        item = GCStatsInfo(
+            gen=0, iid=0, ts_start=3_000, ts_stop=4_000,
+            heap_size=1000, collections=1, collected=10,
+            uncollectable=0, candidates=5, duration=0.001,
+        )
+        events = [
+            process_meta(1, "Process 1"),
+            process_meta(2, "Process 2"),
+            instant_event(2, "ev", ts_ns=2_000),
+            *convert_item_to_trace_format(1, item),
+        ]
+        descriptors, _ = convert_trace_events_to_perfetto(
+            events, state, sequence_id=1,
+        )
+        start_ts: dict[int, int | None] = {}
+        for pid in (1, 2):
+            tds = _process_descriptor_fields_for_pid(descriptors, pid)
+            proc_bytes = get_bytes(tds[0], TrackDescriptorField.PROCESS)
+            proc_fields = decode_message(proc_bytes)
+            start_ts[pid] = get_varint(
+                proc_fields, ProcessDescriptorField.START_TIMESTAMP_NS,
+            )
+        assert start_ts == {1: 3_000, 2: 2_000}
+
+    def test_start_timestamp_ns_persists_across_batches(self) -> None:
+        """First-ts recorded in one batch must be remembered when
+        the process descriptor is emitted in a later batch."""
+        s = PerfettoTrackState()
+        d1, _ = convert_trace_events_to_perfetto(
+            [process_meta(1, "p1"), instant_event(1, "a", ts_ns=1_000)],
+            s, sequence_id=1,
+        )
+        d2, _ = convert_trace_events_to_perfetto(
+            [process_meta(2, "p2"), instant_event(2, "b", ts_ns=5_000)],
+            s, sequence_id=1,
+        )
+        # Pid 1 was seen in batch 1; pid 2 in batch 2.
+        tds_1 = _process_descriptor_fields_for_pid(d1, 1)
+        assert len(tds_1) == 1
+        proc_bytes_1 = get_bytes(tds_1[0], TrackDescriptorField.PROCESS)
+        proc_fields_1 = decode_message(proc_bytes_1)
+        assert get_varint(
+            proc_fields_1, ProcessDescriptorField.START_TIMESTAMP_NS,
+        ) == 1_000
+        tds_2 = _process_descriptor_fields_for_pid(d2, 2)
+        assert len(tds_2) == 1
+        proc_bytes_2 = get_bytes(tds_2[0], TrackDescriptorField.PROCESS)
+        proc_fields_2 = decode_message(proc_bytes_2)
+        assert get_varint(
+            proc_fields_2, ProcessDescriptorField.START_TIMESTAMP_NS,
+        ) == 5_000

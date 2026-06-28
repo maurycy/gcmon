@@ -967,3 +967,28 @@ class TestProcessOrderingIntegration:
             f"expected _SECOND_PID (earlier first event) to have lower "
             f"track id; got pid_to_id={pid_to_id}"
         )
+
+    @pytest.mark.parametrize("fmt", ["perfetto"])
+    def test_process_table_start_ts_matches_first_event(
+        self, fmt: str, trace_processor: TraceProcessor,
+    ) -> None:
+        """The ``process.start_ts`` column in the trace processor's
+        SQL table must reflect the first non-meta event timestamp
+        for each pid (i.e. the ``start_timestamp_ns`` written to the
+        ``ProcessDescriptor`` by the encoder).
+
+        The fixture emits ``DEFAULT_PID`` with its first event at
+        ``_TS_START - 1_000_000`` and ``_SECOND_PID`` at
+        ``_TS_START - 2_000_000`` (earlier).
+        """
+        rows = list(trace_processor.query("""
+            SELECT pid, start_ts
+            FROM process
+            WHERE pid IN ({default}, {second})
+            ORDER BY pid
+        """.format(default=DEFAULT_PID, second=_SECOND_PID)))
+        pid_to_start_ts = {r.pid: r.start_ts for r in rows}
+        assert pid_to_start_ts == {
+            DEFAULT_PID: _TS_START - 1_000_000,
+            _SECOND_PID: _TS_START - 2_000_000,
+        }, f"unexpected start_ts values: {pid_to_start_ts}"

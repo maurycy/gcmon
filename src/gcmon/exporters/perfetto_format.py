@@ -79,6 +79,7 @@ class ProcessDescriptorField(IntEnum):
     PID = 1
     CMDLINE = 2
     PROCESS_NAME = 6
+    START_TIMESTAMP_NS = 7
 
 
 class TrackEventField(IntEnum):
@@ -321,6 +322,7 @@ def build_track_descriptor(
     description: str | None = None,
     process_ordering: ProcessOrdering | None = None,
     thread_ordering: ThreadOrdering | None = None,
+    start_timestamp_ns: int | None = None,
 ) -> bytes:
     result = encode_varint_field(TrackDescriptorField.UUID, uuid)
     if name:
@@ -336,6 +338,10 @@ def build_track_descriptor(
             for arg in cmdline:
                 process_desc += encode_string_field(ProcessDescriptorField.CMDLINE, arg)
         process_desc += encode_string_field(ProcessDescriptorField.PROCESS_NAME, name)
+        if start_timestamp_ns is not None:
+            process_desc += encode_varint_field(
+                ProcessDescriptorField.START_TIMESTAMP_NS, start_timestamp_ns,
+            )
         result += encode_bytes_field(TrackDescriptorField.PROCESS, process_desc)
     if parent_uuid is not None:
         result += encode_varint_field(TrackDescriptorField.PARENT_UUID, parent_uuid)
@@ -489,6 +495,7 @@ def _emit_process_descriptor(
     state: PerfettoTrackState,
     sequence_id: int,
     sibling_order_rank: int | None = None,
+    start_timestamp_ns: int | None = None,
 ) -> list[bytes]:
     """Build a process track descriptor if not already emitted for *pid*.
 
@@ -498,6 +505,14 @@ def _emit_process_descriptor(
     the root track descriptor carries
     ``process_ordering = PROCESS_ORDERING_EXPLICIT``; see
     ``_emit_root_descriptor``).
+
+    When *start_timestamp_ns* is not ``None`` it is written into the
+    ``process`` sub-message's ``start_timestamp_ns`` field, per the
+    Perfetto proto at
+    ``protos/perfetto/trace/track_event/process_descriptor.proto`` (field
+    7). The value is the first non-meta event timestamp for *pid* in
+    nanoseconds (the trace's native time unit), which is the same
+    value used to derive ``sibling_order_rank``.
     """
     if state.has_pid(pid):
         return []
@@ -512,6 +527,7 @@ def _emit_process_descriptor(
         sibling_order_rank=sibling_order_rank,
         cmdline=cmdline,
         description=" ".join(cmdline) if cmdline else None,
+        start_timestamp_ns=start_timestamp_ns,
     )
     return [build_trace_packet(sequence_id, track_descriptor=desc)]
 
@@ -732,6 +748,12 @@ def convert_trace_events_to_perfetto(
     that pids whose first event is in the same batch as their
     ``ProcessMeta`` still get a correct rank. Ties are broken by
     ascending pid.
+
+    The same first-ts value is also written into the
+    ``process.start_timestamp_ns`` field of each process descriptor so
+    the Perfetto UI can correlate the process track with the process's
+    actual start time. Pids with no recorded first-ts get no
+    ``start_timestamp_ns`` set.
     """
     descriptors: list[bytes] = []
     packets: list[bytes] = []
@@ -751,6 +773,7 @@ def convert_trace_events_to_perfetto(
                 _emit_process_descriptor(
                     pid, state, sequence_id,
                     sibling_order_rank=ranks.get(pid),
+                    start_timestamp_ns=state.get_first_event_ts(pid),
                 )
             )
 
@@ -761,6 +784,7 @@ def convert_trace_events_to_perfetto(
                 _emit_process_descriptor(
                     pid, state, sequence_id,
                     sibling_order_rank=ranks.get(pid),
+                    start_timestamp_ns=state.get_first_event_ts(pid),
                 )
             )
             descriptors.extend(_emit_thread_descriptor(pid, event.tid, state, sequence_id))
