@@ -22,6 +22,7 @@
 - Added a shared top-level Perfetto track named `Processes` that holds one `TYPE_SLICE_BEGIN` / `TYPE_SLICE_END` pair per pid, spanning the first-to-last non-counter non-meta event timestamps for that pid. The slice is named `Process <pid>`, and its BEGIN carries a `cmdline` debug annotation (argv joined with single spaces) when the cmdline provider returned a value for the pid. Provides a single visual row showing the lifetime of every monitored process. Perfetto-only; no Chrome JSON / JSONL representation is produced.
 - Fix `Processes` track slice END position: the slice END is now emitted exactly once at the encoder's `close()` (via `finalize_perfetto_packets`).
 - Perfetto output now orders process tracks by first event timestamp. Requires Perfetto trace processor 0.57+ and the "canary" UI channel for the ordering to be honored.
+- Perfetto counter tracks with the same metric name now share a Y-axis in the UI.
 
 ## Version 0.2.0 (2026-06-10)
 

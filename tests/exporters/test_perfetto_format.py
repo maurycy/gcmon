@@ -7,6 +7,7 @@ from gcmon.exporters.perfetto_format import (
     TYPE_INSTANT,
     TYPE_SLICE_BEGIN,
     TYPE_SLICE_END,
+    CounterDescriptorField,
     DebugAnnotationField,
     PerfettoTrackState,
     ProcessDescriptorField,
@@ -257,6 +258,21 @@ class TestBuildTrackDescriptor:
         assert get_varint(fields, TrackDescriptorField.PARENT_UUID) == 200
         assert get_bytes(fields, TrackDescriptorField.COUNTER) == b""
 
+    def test_counter_descriptor_with_share_key(self) -> None:
+        data = build_track_descriptor(
+            uuid=300, name="G0 collected", parent_uuid=200,
+            is_counter=True, y_axis_share_key="collected",
+        )
+        fields = decode_message(data)
+        assert get_varint(fields, TrackDescriptorField.UUID) == 300
+        assert get_string(fields, TrackDescriptorField.NAME) == "G0 collected"
+        assert get_varint(fields, TrackDescriptorField.PARENT_UUID) == 200
+        counter_bytes = get_bytes(fields, TrackDescriptorField.COUNTER)
+        assert counter_bytes is not None
+        assert counter_bytes != b""
+        counter_fields = decode_message(counter_bytes)
+        assert get_string(counter_fields, CounterDescriptorField.Y_AXIS_SHARE_KEY) == "collected"
+
     def test_process_descriptor_with_start_timestamp_ns(self) -> None:
         data = build_track_descriptor(
             uuid=100, name="Process 100", pid=100,
@@ -295,6 +311,65 @@ class TestBuildTrackDescriptor:
         assert thread_bytes is not None
         thread_fields = decode_message(thread_bytes)
         assert get_field(thread_fields, ProcessDescriptorField.START_TIMESTAMP_NS) is None
+
+
+class TestBuildCounterDescriptor:
+    """Wire-level tests for ``build_track_descriptor``'s
+    ``y_axis_share_key`` kwarg and the resulting ``CounterDescriptor``
+    submessage payload at ``TrackDescriptor.counter`` (field 8)."""
+
+    def test_y_axis_share_key_emitted_at_field_8(self) -> None:
+        data = build_track_descriptor(
+            uuid=300, name="G0 collected", parent_uuid=200,
+            is_counter=True, y_axis_share_key="collected",
+        )
+        fields = decode_message(data)
+        counter_bytes = get_bytes(fields, TrackDescriptorField.COUNTER)
+        assert counter_bytes is not None
+        assert counter_bytes != b""
+        counter_fields = decode_message(counter_bytes)
+        assert get_string(counter_fields, CounterDescriptorField.Y_AXIS_SHARE_KEY) == "collected"
+
+    def test_no_y_axis_share_key_emits_empty_submessage(self) -> None:
+        data = build_track_descriptor(
+            uuid=300, name="G0 collected", parent_uuid=200, is_counter=True,
+        )
+        fields = decode_message(data)
+        assert get_bytes(fields, TrackDescriptorField.COUNTER) == b""
+
+    def test_y_axis_share_key_ignored_for_non_counter_track(self) -> None:
+        data = build_track_descriptor(
+            uuid=300, name="Track With Key", parent_uuid=200,
+            is_counter=False, y_axis_share_key="ignored",
+        )
+        fields = decode_message(data)
+        assert get_field(fields, TrackDescriptorField.COUNTER) is None
+
+    def test_only_share_key_field_is_set_no_other_counter_fields(self) -> None:
+        data = build_track_descriptor(
+            uuid=300, name="G0 duration", parent_uuid=200,
+            is_counter=True, y_axis_share_key="duration",
+        )
+        fields = decode_message(data)
+        counter_bytes = get_bytes(fields, TrackDescriptorField.COUNTER)
+        assert counter_bytes is not None
+        counter_fields = decode_message(counter_bytes)
+        assert len(counter_fields) == 1
+        assert get_field(counter_fields, CounterDescriptorField.TYPE) is None
+        assert get_field(counter_fields, CounterDescriptorField.CATEGORIES) is None
+        assert get_field(counter_fields, CounterDescriptorField.UNIT) is None
+        assert get_field(counter_fields, CounterDescriptorField.UNIT_MULTIPLIER) is None
+        assert get_field(counter_fields, CounterDescriptorField.IS_INCREMENTAL) is None
+        assert get_field(counter_fields, CounterDescriptorField.UNIT_NAME) is None
+        assert get_string(counter_fields, CounterDescriptorField.Y_AXIS_SHARE_KEY) == "duration"
+
+    def test_y_axis_share_key_empty_string_treated_as_none(self) -> None:
+        data = build_track_descriptor(
+            uuid=300, name="G0 collected", parent_uuid=200,
+            is_counter=True, y_axis_share_key="",
+        )
+        fields = decode_message(data)
+        assert get_bytes(fields, TrackDescriptorField.COUNTER) == b""
 
 
 class TestBuildTracePacket:
@@ -1847,3 +1922,124 @@ class TestProcessOrderingByFirstTs:
         assert get_varint(
             proc_fields_2, ProcessDescriptorField.START_TIMESTAMP_NS,
         ) == 5_000
+
+
+def _counter_track_y_axis_share_key(
+    descriptors: list[bytes], track_name: str,
+) -> str | None:
+    """Find the counter TrackDescriptor whose name equals *track_name*
+    and return its ``y_axis_share_key`` (or ``None`` if the
+    ``CounterDescriptor`` submessage is empty). Returns ``None`` if no
+    such track descriptor exists at all.
+    """
+    for d in descriptors:
+        td_bytes = _track_descriptor_bytes(d)
+        if td_bytes is None:
+            continue
+        td_fields = decode_message(td_bytes)
+        if get_string(td_fields, TrackDescriptorField.NAME) != track_name:
+            continue
+        counter_bytes = get_bytes(td_fields, TrackDescriptorField.COUNTER)
+        if counter_bytes is None or counter_bytes == b"":
+            return None
+        counter_fields = decode_message(counter_bytes)
+        return get_string(counter_fields, CounterDescriptorField.Y_AXIS_SHARE_KEY)
+    return None
+
+
+class TestCounterTrackYAxisShareKey:
+    """End-to-end wire tests that drive ``convert_trace_events_to_perfetto``
+    and inspect the resulting counter track descriptors for the
+    ``y_axis_share_key`` value."""
+
+    def test_grouped_counters_share_y_axis_by_metric(self) -> None:
+        state = PerfettoTrackState()
+        events = [
+            process_meta(100, "Process 100"),
+            thread_meta(100, 0, "Thread 0"),
+            counter_event(100, 0, "G0", 1_000, {"collected": 100, "candidates": 50, "duration": 0.005}),
+            counter_event(100, 0, "G1", 1_001, {"collected": 80, "candidates": 40, "duration": 0.004}),
+            counter_event(100, 0, "G2", 1_002, {"collected": 60, "candidates": 30, "duration": 0.003}),
+        ]
+        descriptors, _ = convert_trace_events_to_perfetto(
+            events, state, sequence_id=1,
+        )
+        for gen in ("G0", "G1", "G2"):
+            for metric in ("collected", "candidates", "duration"):
+                track_name = f"{gen} {metric}"
+                assert _counter_track_y_axis_share_key(descriptors, track_name) == metric, (
+                    f"{track_name} should share Y-axis under {metric!r}"
+                )
+
+    def test_heap_size_has_no_share_key(self) -> None:
+        state = PerfettoTrackState()
+        events = [
+            process_meta(100, "Process 100"),
+            thread_meta(100, 0, "Thread 0"),
+            counter_event(100, 0, "heap_size", 1_000, {"heap_size": 4096}),
+        ]
+        descriptors, _ = convert_trace_events_to_perfetto(
+            events, state, sequence_id=1,
+        )
+        assert _counter_track_y_axis_share_key(descriptors, "heap_size") is None
+
+    def test_uncollectable_share_key_emitted_when_nonzero(self) -> None:
+        state = PerfettoTrackState()
+        events = [
+            process_meta(100, "Process 100"),
+            thread_meta(100, 0, "Thread 0"),
+            counter_event(
+                100, 0, "G0", 1_000,
+                {"collected": 1, "uncollectable": 1, "candidates": 1, "duration": 1},
+            ),
+        ]
+        descriptors, _ = convert_trace_events_to_perfetto(
+            events, state, sequence_id=1,
+        )
+        assert _counter_track_y_axis_share_key(descriptors, "G0 uncollectable") == "uncollectable"
+
+    def test_different_pids_have_independent_share_groups(self) -> None:
+        """Two pids each emit a ``G0 collected`` counter. Both must
+        carry ``y_axis_share_key = "collected"``; the parent-scoping
+        is what the docs require for safe sharing, and is implicit in
+        the existing per-``(pid, tid)`` ``GC Metrics`` group.
+
+        Multiple metric args are used so the track name resolves to
+        ``"G0 collected"`` (the encoder names a single-arg counter
+        track by the metric itself, e.g. ``"collected"``).
+        """
+        state = PerfettoTrackState()
+        events = [
+            process_meta(100, "Process 100"),
+            thread_meta(100, 0, "Thread 0"),
+            counter_event(
+                100, 0, "G0", 1_000, {"collected": 10, "candidates": 5},
+            ),
+            process_meta(200, "Process 200"),
+            thread_meta(200, 0, "Thread 0"),
+            counter_event(
+                200, 0, "G0", 1_001, {"collected": 20, "candidates": 6},
+            ),
+        ]
+        descriptors, _ = convert_trace_events_to_perfetto(
+            events, state, sequence_id=1,
+        )
+        parent_uuids: set[int] = set()
+        for d in descriptors:
+            td_bytes = _track_descriptor_bytes(d)
+            if td_bytes is None:
+                continue
+            td_fields = decode_message(td_bytes)
+            if get_string(td_fields, TrackDescriptorField.NAME) != "G0 collected":
+                continue
+            parent = get_varint(td_fields, TrackDescriptorField.PARENT_UUID)
+            assert parent is not None
+            parent_uuids.add(parent)
+            counter_bytes = get_bytes(td_fields, TrackDescriptorField.COUNTER)
+            assert counter_bytes is not None and counter_bytes != b""
+            counter_fields = decode_message(counter_bytes)
+            assert get_string(counter_fields, CounterDescriptorField.Y_AXIS_SHARE_KEY) == "collected"
+        assert len(parent_uuids) == 2, (
+            f"expected G0 collected tracks under 2 distinct parent groups "
+            f"(one per pid), got {len(parent_uuids)}: {parent_uuids}"
+        )

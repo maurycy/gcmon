@@ -82,6 +82,16 @@ class ProcessDescriptorField(IntEnum):
     START_TIMESTAMP_NS = 7
 
 
+class CounterDescriptorField(IntEnum):
+    TYPE = 1
+    CATEGORIES = 2
+    UNIT = 3
+    UNIT_MULTIPLIER = 4
+    IS_INCREMENTAL = 5
+    UNIT_NAME = 6
+    Y_AXIS_SHARE_KEY = 7
+
+
 class TrackEventField(IntEnum):
     TYPE = 9
     TRACK_UUID = 11
@@ -113,6 +123,7 @@ __all__ = [
     "TYPE_SLICE_BEGIN",
     "TYPE_SLICE_END",
     "ChildTracksOrdering",
+    "CounterDescriptorField",
     "DebugAnnotationField",
     "PerfettoTrackState",
     "ProcessDescriptorField",
@@ -323,7 +334,47 @@ def build_track_descriptor(
     process_ordering: ProcessOrdering | None = None,
     thread_ordering: ThreadOrdering | None = None,
     start_timestamp_ns: int | None = None,
+    y_axis_share_key: str | None = None,
 ) -> bytes:
+    """Build a ``TrackDescriptor`` submessage as wire-format bytes.
+
+    Parameters
+    ----------
+    uuid
+        Track UUID; the special value ``0`` is reserved for the root
+        track descriptor that carries ``process_ordering`` /
+        ``thread_ordering`` hints.
+    name
+        Human-readable track name. Falsy values (empty string) suppress
+        the ``name`` field — used for the root descriptor and for any
+        other track where the name would be redundant.
+    pid, tid, thread_name, cmdline, start_timestamp_ns
+        Populate the OS-association sub-message: ``ThreadDescriptor`` if
+        both ``pid`` and ``tid`` are given, else ``ProcessDescriptor``.
+    parent_uuid
+        Optional parent track UUID; sets ``TrackDescriptor.parent_uuid``.
+    is_counter
+        When ``True``, emits an empty ``CounterDescriptor`` sub-message
+        (or a populated one if ``y_axis_share_key`` is set) at
+        ``TrackDescriptor.counter`` (field 8).
+    child_ordering, sibling_order_rank
+        Grouped-track ordering hints consumed by trace processor.
+    description
+        Human-readable description; surfaced in the Perfetto UI as a
+        tooltip on the track's help icon.
+    process_ordering, thread_ordering
+        Root-descriptor-only hints that tell the UI to honor
+        ``sibling_order_rank`` on process / thread tracks. Only set
+        these on the root descriptor (``uuid = 0``).
+    y_axis_share_key
+        Optional string used to group counter tracks with the same
+        parent on a shared Y-axis in the Perfetto UI. Only effective
+        when ``is_counter=True`` and the value is a non-empty string;
+        an empty string is treated as "no key set" (REQ-6 in
+        ``specs/17 - counter-y-axis-sharing.md``). Ignored entirely
+        when ``is_counter=False``. See
+        https://perfetto.dev/docs/reference/synthetic-track-event#sharing-y-axis-between-counters
+    """
     result = encode_varint_field(TrackDescriptorField.UUID, uuid)
     if name:
         result += encode_string_field(TrackDescriptorField.NAME, name)
@@ -350,7 +401,13 @@ def build_track_descriptor(
     if process_ordering is not None:
         result += encode_varint_field(TrackDescriptorField.PROCESS_ORDERING, process_ordering)
     if is_counter:
-        result += encode_bytes_field(TrackDescriptorField.COUNTER, b"")
+        if y_axis_share_key:
+            counter_desc = encode_string_field(
+                CounterDescriptorField.Y_AXIS_SHARE_KEY, y_axis_share_key,
+            )
+            result += encode_bytes_field(TrackDescriptorField.COUNTER, counter_desc)
+        else:
+            result += encode_bytes_field(TrackDescriptorField.COUNTER, b"")
     if child_ordering is not None:
         result += encode_varint_field(TrackDescriptorField.CHILD_ORDERING, child_ordering)
     if sibling_order_rank is not None:
@@ -723,6 +780,7 @@ def _emit_counter_track_descriptor(
         parent_uuid=group_uuid,
         is_counter=True,
         sibling_order_rank=_COUNTER_RANKS.get(metric, 0),
+        y_axis_share_key=metric,
     )
     return ctr_uuid, [*group_packets, build_trace_packet(sequence_id, track_descriptor=desc)]
 

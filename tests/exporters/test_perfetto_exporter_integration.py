@@ -455,6 +455,76 @@ class TestCounterTracks:
             assert parents[0].name == "GC Metrics"
 
 
+class TestCounterYAxisShareKey:
+    """SQL-level tests for the new ``y_axis_share_key`` field on
+    ``CounterDescriptor``.
+
+    The wire-level tests in ``TestCounterTrackYAxisShareKey``
+    (``test_perfetto_format.py``) are the source of truth for the
+    values. This class is a forward-looking check that the values also
+    survive the round-trip through the Perfetto trace processor into
+    the ``counter_track`` SQL table.
+
+    As of Perfetto 0.56.0 (pinned in ``pyproject.toml:49``), the
+    ``counter_track`` SQL table does not expose ``y_axis_share_key`` as
+    a column. Both tests are therefore marked ``xfail`` unconditionally
+    with ``strict=False``: they will start passing automatically when
+    a future Perfetto version surfaces the column, and ``strict=False``
+    prevents an XPASS-and-fail flip from happening at that point.
+    """
+
+    @pytest.mark.xfail(
+        reason="counter_track.y_axis_share_key not exposed in Perfetto 0.56.0",
+        strict=False,
+    )
+    @pytest.mark.parametrize("fmt", ["perfetto"])
+    def test_y_axis_share_key_shared_across_generations(
+        self, fmt: str, trace_processor: TraceProcessor,
+    ) -> None:
+        """``G0 collected`` / ``G1 collected`` / ``G2 collected`` all
+        carry the same ``y_axis_share_key`` value, and that value
+        matches the metric suffix verbatim. Same for ``candidates`` and
+        ``duration``. Verified via ``counter_track.y_axis_share_key``.
+        """
+        rows = list(trace_processor.query(
+            "SELECT name, y_axis_share_key FROM counter_track "
+            "WHERE name LIKE 'G_ %' AND name != 'heap_size' "
+            "ORDER BY name",
+        ))
+        assert rows, "expected at least one G{N} <metric> track"
+        by_suffix: dict[str, set[str]] = {}
+        for r in rows:
+            suffix = r.name.split(" ", 1)[1]
+            by_suffix.setdefault(suffix, set()).add(r.y_axis_share_key)
+        for suffix, keys in by_suffix.items():
+            assert keys == {suffix}, (
+                f"expected y_axis_share_key for metric {suffix!r} to be exactly "
+                f"the metric name; got {keys}"
+            )
+
+    @pytest.mark.xfail(
+        reason="counter_track.y_axis_share_key not exposed in Perfetto 0.56.0",
+        strict=False,
+    )
+    @pytest.mark.parametrize("fmt", ["perfetto"])
+    def test_heap_size_y_axis_share_key_is_null(
+        self, fmt: str, trace_processor: TraceProcessor,
+    ) -> None:
+        """The top-level ``heap_size`` track has no ``y_axis_share_key``
+        — the SQL value is NULL or empty string, depending on how the
+        trace processor surfaces an absent optional string field.
+        """
+        rows = list(trace_processor.query(
+            "SELECT name, y_axis_share_key FROM counter_track "
+            "WHERE name = 'heap_size'",
+        ))
+        assert len(rows) == 1, f"expected exactly one heap_size row, got {len(rows)}"
+        r = rows[0]
+        assert r.y_axis_share_key is None or r.y_axis_share_key == "", (
+            f"heap_size should have no y_axis_share_key, got {r.y_axis_share_key!r}"
+        )
+
+
 class TestTrackDescriptors:
     """The Perfetto exporter emits a process track descriptor with the
     expected ``Process <pid>`` name. (Chrome JSON does not produce a
