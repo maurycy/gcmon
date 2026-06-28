@@ -1201,8 +1201,8 @@ class TestConvertInstantToPerfettoPacket:
             instant_event(100, "start", ts_ns=5_000),
         ]
         descriptors, _ = convert_trace_events_to_perfetto(events, state, sequence_id=1)
-        # 1 process descriptor + 1 "Processes" track descriptor.
-        assert len(descriptors) == 2
+        # 1 root descriptor + 1 process descriptor + 1 "Processes" track descriptor.
+        assert len(descriptors) == 3
         assert state.has_pid(100)
 
     def test_emits_instant_event(self) -> None:
@@ -1259,13 +1259,13 @@ class TestConvertInstantToPerfettoPacket:
             [process_meta(100, "Process 100"), instant_event(100, "stop", ts_ns=10_000)],
             state, sequence_id=1,
         )
-        # First call: 2 descriptors (process + "Processes" track) + 3
+        # First call: 3 descriptors (root + process + "Processes" track) + 3
         # packets from the convert (marker + Process 100 begin + instant).
         # The closeout END is appended by finalize_perfetto_packets.
-        # Second call: 0 descriptors (both are idempotent) + 1 packet
+        # Second call: 0 descriptors (all are idempotent) + 1 packet
         # (the new instant event; no slice begin since pid is already
         # opened). The closeout END is again emitted by finalize.
-        assert len(desc1) == 2
+        assert len(desc1) == 3
         assert len(packets1) == 3
         packets1.extend(finalize_perfetto_packets(state, sequence_id=1))
         assert len(packets1) == 4
@@ -1455,3 +1455,251 @@ class TestConvertInstantToPerfettoPacket:
         assert get_varint(decode_message(end_packet), TracePacketField.TIMESTAMP) == 4_000
         # Calling finalize again is a no-op (state is drained).
         assert finalize_perfetto_packets(state, sequence_id=1) == []
+
+
+def _track_descriptor_bytes(packet_bytes: bytes) -> bytes | None:
+    """Extract the inner ``TrackDescriptor`` bytes from a ``TracePacket``.
+
+    Returns ``None`` if the packet is not a track-descriptor packet.
+    """
+    fields = decode_message(packet_bytes)
+    return get_bytes(fields, TracePacketField.TRACK_DESCRIPTOR)
+
+
+def _process_descriptor_fields_for_pid(
+    descriptors: list[bytes], pid: int,
+) -> list:
+    """Return the ``TrackDescriptor`` proto fields for the process
+    descriptor of *pid* (i.e. a TrackDescriptor with a ``process``
+    sub-message carrying the matching pid). Returns an empty list if
+    no matching descriptor exists.
+    """
+    matched: list = []
+    for d in descriptors:
+        td_bytes = _track_descriptor_bytes(d)
+        if td_bytes is None:
+            continue
+        td_fields = decode_message(td_bytes)
+        proc_bytes = get_bytes(td_fields, TrackDescriptorField.PROCESS)
+        if proc_bytes is None:
+            continue
+        proc_fields = decode_message(proc_bytes)
+        if get_varint(proc_fields, ProcessDescriptorField.PID) == pid:
+            matched.append(td_fields)
+    return matched
+
+
+def _root_descriptor_fields(descriptors: list[bytes]) -> list:
+    """Return the ``TrackDescriptor`` proto fields for the root
+    descriptor (the one with ``uuid = 0``)."""
+    matched: list = []
+    for d in descriptors:
+        td_bytes = _track_descriptor_bytes(d)
+        if td_bytes is None:
+            continue
+        td_fields = decode_message(td_bytes)
+        if get_varint(td_fields, TrackDescriptorField.UUID) == 0:
+            matched.append(td_fields)
+    return matched
+
+
+class TestProcessOrderingByFirstTs:
+    """Wire-level tests for the root descriptor and per-process
+    ``sibling_order_rank`` derived from the first event timestamp."""
+
+    def test_root_descriptor_present_with_explicit_ordering(self) -> None:
+        state = PerfettoTrackState()
+        events = [
+            process_meta(100, "Process 100"),
+            instant_event(100, "start", ts_ns=5_000),
+        ]
+        descriptors, _ = convert_trace_events_to_perfetto(
+            events, state, sequence_id=1,
+        )
+        roots = _root_descriptor_fields(descriptors)
+        assert len(roots) == 1
+        td = roots[0]
+        assert get_varint(td, TrackDescriptorField.PROCESS_ORDERING) == 1
+        assert get_varint(td, TrackDescriptorField.THREAD_ORDERING) == 1
+        assert get_field(td, TrackDescriptorField.NAME) is None
+        assert get_field(td, TrackDescriptorField.PROCESS) is None
+        assert get_field(td, TrackDescriptorField.THREAD) is None
+        assert get_field(td, TrackDescriptorField.COUNTER) is None
+        assert get_field(td, TrackDescriptorField.PARENT_UUID) is None
+        assert get_field(td, TrackDescriptorField.CHILD_ORDERING) is None
+
+    def test_root_descriptor_emitted_exactly_once_across_calls(self) -> None:
+        state = PerfettoTrackState()
+        events1 = [
+            process_meta(100, "Process 100"),
+            instant_event(100, "first", ts_ns=1_000),
+        ]
+        events2 = [
+            process_meta(200, "Process 200"),
+            instant_event(200, "second", ts_ns=2_000),
+        ]
+        d1, _ = convert_trace_events_to_perfetto(events1, state, sequence_id=1)
+        d2, _ = convert_trace_events_to_perfetto(events2, state, sequence_id=1)
+        total_roots = len(_root_descriptor_fields(d1)) + len(_root_descriptor_fields(d2))
+        assert total_roots == 1, f"expected one root descriptor total, got {total_roots}"
+
+    def test_root_descriptor_not_emitted_for_empty_input(self) -> None:
+        state = PerfettoTrackState()
+        descriptors, packets = convert_trace_events_to_perfetto([], state, sequence_id=1)
+        assert descriptors == []
+        assert packets == []
+
+    def test_process_descriptor_carries_sibling_order_rank_by_first_ts(self) -> None:
+        """Pid with earlier first ts gets the smaller rank."""
+        state = PerfettoTrackState()
+        events = [
+            process_meta(1, "Process 1"),
+            instant_event(1, "ev1", ts_ns=2_000),
+            process_meta(2, "Process 2"),
+            instant_event(2, "ev2", ts_ns=1_000),
+        ]
+        descriptors, _ = convert_trace_events_to_perfetto(
+            events, state, sequence_id=1,
+        )
+        ranks = {
+            pid: get_varint(td, TrackDescriptorField.SIBLING_ORDER_RANK)
+            for pid in (1, 2)
+            for td in _process_descriptor_fields_for_pid(descriptors, pid)
+        }
+        assert ranks == {1: 1, 2: 0}, f"unexpected rank assignment: {ranks}"
+
+    def test_sibling_order_rank_ties_broken_by_pid(self) -> None:
+        """When two pids share the same first event ts, ranks follow
+        ascending pid (deterministic)."""
+        state = PerfettoTrackState()
+        events = [
+            process_meta(2, "Process 2"),
+            instant_event(2, "ev", ts_ns=1_000),
+            process_meta(1, "Process 1"),
+            instant_event(1, "ev", ts_ns=1_000),
+        ]
+        descriptors, _ = convert_trace_events_to_perfetto(
+            events, state, sequence_id=1,
+        )
+        ranks = {
+            pid: get_varint(td, TrackDescriptorField.SIBLING_ORDER_RANK)
+            for pid in (1, 2)
+            for td in _process_descriptor_fields_for_pid(descriptors, pid)
+        }
+        assert ranks == {1: 0, 2: 1}, f"expected pid-ascending tiebreak; got {ranks}"
+
+    def test_meta_only_pid_has_no_sibling_order_rank(self) -> None:
+        """A pid with only ProcessMeta / ThreadMeta (no non-meta events)
+        must not carry a ``sibling_order_rank`` on its descriptor."""
+        state = PerfettoTrackState()
+        events = [
+            process_meta(100, "Process 100"),
+            thread_meta(100, 0, "Thread 0"),
+        ]
+        descriptors, _ = convert_trace_events_to_perfetto(
+            events, state, sequence_id=1,
+        )
+        tds = _process_descriptor_fields_for_pid(descriptors, 100)
+        assert len(tds) == 1
+        assert get_field(tds[0], TrackDescriptorField.SIBLING_ORDER_RANK) is None
+
+    def test_meta_events_do_not_contribute_to_first_ts(self) -> None:
+        """``ProcessMeta`` / ``ThreadMeta`` must not set the first
+        event ts; the rank is driven solely by non-meta events."""
+        state = PerfettoTrackState()
+        events = [
+            process_meta(100, "Process 100"),
+            thread_meta(100, 0, "Thread 0"),
+            process_meta(200, "Process 200"),
+            thread_meta(200, 0, "Thread 0"),
+            instant_event(100, "late", ts_ns=5_000),
+            instant_event(200, "early", ts_ns=1_000),
+        ]
+        descriptors, _ = convert_trace_events_to_perfetto(
+            events, state, sequence_id=1,
+        )
+        ranks = {
+            pid: get_varint(td, TrackDescriptorField.SIBLING_ORDER_RANK)
+            for pid in (100, 200)
+            for td in _process_descriptor_fields_for_pid(descriptors, pid)
+        }
+        assert ranks == {100: 1, 200: 0}, f"unexpected rank assignment: {ranks}"
+
+    def test_sibling_order_rank_uses_ts_start_for_gc_stats(self) -> None:
+        """For ``TGCStatsInfo`` events, the first event ts is the
+        ``ts_start`` (the earliest emitted event for that pause)."""
+        state = PerfettoTrackState()
+        item1 = GCStatsInfo(
+            gen=0, iid=0, ts_start=3_000, ts_stop=4_000,
+            heap_size=1000, collections=1, collected=10,
+            uncollectable=0, candidates=5, duration=0.001,
+        )
+        events = [
+            process_meta(1, "Process 1"),
+            process_meta(2, "Process 2"),
+            instant_event(2, "ev", ts_ns=2_000),
+            *convert_item_to_trace_format(1, item1),
+        ]
+        descriptors, _ = convert_trace_events_to_perfetto(
+            events, state, sequence_id=1,
+        )
+        ranks = {
+            pid: get_varint(td, TrackDescriptorField.SIBLING_ORDER_RANK)
+            for pid in (1, 2)
+            for td in _process_descriptor_fields_for_pid(descriptors, pid)
+        }
+        assert ranks == {1: 1, 2: 0}, f"unexpected rank assignment: {ranks}"
+
+    def test_sibling_order_rank_unchanged_when_input_pid_order_swapped(self) -> None:
+        """Reordering the input pids (with the same first-ts values)
+        must produce identical rank assignments."""
+        def _make_events(ordered_pids: list[int]) -> list:
+            ts_map = {1: 2_000, 2: 1_000}
+            return [
+                ev
+                for pid in ordered_pids
+                for ev in (
+                    process_meta(pid, f"Process {pid}"),
+                    instant_event(pid, "ev", ts_ns=ts_map[pid]),
+                )
+            ]
+
+        s1 = PerfettoTrackState()
+        d1, _ = convert_trace_events_to_perfetto(_make_events([1, 2]), s1, sequence_id=1)
+        s2 = PerfettoTrackState()
+        d2, _ = convert_trace_events_to_perfetto(_make_events([2, 1]), s2, sequence_id=1)
+        ranks1 = {
+            pid: get_varint(td, TrackDescriptorField.SIBLING_ORDER_RANK)
+            for pid in (1, 2)
+            for td in _process_descriptor_fields_for_pid(d1, pid)
+        }
+        ranks2 = {
+            pid: get_varint(td, TrackDescriptorField.SIBLING_ORDER_RANK)
+            for pid in (1, 2)
+            for td in _process_descriptor_fields_for_pid(d2, pid)
+        }
+        assert ranks1 == ranks2 == {1: 1, 2: 0}
+
+    def test_rank_persists_across_batches(self) -> None:
+        """First-ts recorded in one batch must be remembered when
+        computing ranks in a later batch (multi-flush invariant)."""
+        s = PerfettoTrackState()
+        d1, _ = convert_trace_events_to_perfetto(
+            [process_meta(1, "p1"), instant_event(1, "a", ts_ns=1_000)],
+            s, sequence_id=1,
+        )
+        d2, _ = convert_trace_events_to_perfetto(
+            [process_meta(2, "p2"), instant_event(2, "b", ts_ns=5_000)],
+            s, sequence_id=1,
+        )
+        # The pre-scan also re-records for batch 2, but the first-ts
+        # for pid 1 from batch 1 is preserved (record_first_event_ts
+        # only sets the first ts for a pid). Pid 1 should still get
+        # rank 0 (ts=1_000) and pid 2 rank 1 (ts=5_000).
+        ranks = {
+            pid: get_varint(td, TrackDescriptorField.SIBLING_ORDER_RANK)
+            for descriptors in (d1, d2)
+            for pid in (1, 2)
+            for td in _process_descriptor_fields_for_pid(descriptors, pid)
+        }
+        assert ranks == {1: 0, 2: 1}, f"unexpected rank assignment: {ranks}"

@@ -48,6 +48,8 @@ class TrackDescriptorField(IntEnum):
     CHILD_ORDERING = 11
     SIBLING_ORDER_RANK = 12
     DESCRIPTION = 14
+    PROCESS_ORDERING = 19
+    THREAD_ORDERING = 20
 
 
 class ChildTracksOrdering(IntEnum):
@@ -55,6 +57,16 @@ class ChildTracksOrdering(IntEnum):
     LEXICOGRAPHIC = 1
     CHRONOLOGICAL = 2
     EXPLICIT = 3
+
+
+class ProcessOrdering(IntEnum):
+    UNSPECIFIED = 0
+    EXPLICIT = 1
+
+
+class ThreadOrdering(IntEnum):
+    UNSPECIFIED = 0
+    EXPLICIT = 1
 
 
 class ThreadDescriptorField(IntEnum):
@@ -103,7 +115,9 @@ __all__ = [
     "DebugAnnotationField",
     "PerfettoTrackState",
     "ProcessDescriptorField",
+    "ProcessOrdering",
     "ThreadDescriptorField",
+    "ThreadOrdering",
     "TraceField",
     "TracePacketField",
     "TrackDescriptorField",
@@ -176,6 +190,8 @@ class PerfettoTrackState:
         self._process_lifetime_track_uuid: int | None = None
         self._process_lifetime_opened: set[int] = set()
         self._process_lifetime_end_ts: dict[int, int] = {}
+        self._first_event_ts: dict[int, int] = {}
+        self._root_descriptor_emitted: bool = False
         self._next_uuid: int = 1
 
     def _alloc_uuid(self) -> int:
@@ -261,6 +277,35 @@ class PerfettoTrackState:
         self._process_lifetime_end_ts.clear()
         return ends
 
+    def record_first_event_ts(self, pid: int, ts: int) -> None:
+        """Record the first non-meta event timestamp for *pid*. Subsequent
+        calls for the same *pid* are ignored (the first ts wins)."""
+        if pid not in self._first_event_ts:
+            self._first_event_ts[pid] = ts
+
+    def get_first_event_ts(self, pid: int) -> int | None:
+        return self._first_event_ts.get(pid)
+
+    def get_process_track_ranks(self) -> dict[int, int]:
+        """Return a ``{pid: rank}`` map for every pid with a recorded
+        first event ts. Ranks are assigned by sorting pids by
+        ``(first_ts, pid)`` ascending and assigning sequential ranks
+        starting at ``0``. Pids with no recorded first ts are absent
+        from the result."""
+        if not self._first_event_ts:
+            return {}
+        sorted_pids = sorted(
+            self._first_event_ts.keys(),
+            key=lambda p: (self._first_event_ts[p], p),
+        )
+        return {pid: rank for rank, pid in enumerate(sorted_pids)}
+
+    def has_root_descriptor(self) -> bool:
+        return self._root_descriptor_emitted
+
+    def mark_root_descriptor_emitted(self) -> None:
+        self._root_descriptor_emitted = True
+
 
 def build_track_descriptor(
     uuid: int,
@@ -274,9 +319,12 @@ def build_track_descriptor(
     thread_name: str | None = None,
     cmdline: list[str] | None = None,
     description: str | None = None,
+    process_ordering: ProcessOrdering | None = None,
+    thread_ordering: ThreadOrdering | None = None,
 ) -> bytes:
     result = encode_varint_field(TrackDescriptorField.UUID, uuid)
-    result += encode_string_field(TrackDescriptorField.NAME, name)
+    if name:
+        result += encode_string_field(TrackDescriptorField.NAME, name)
     if pid is not None and tid is not None:
         thread_desc = encode_varint_field(ThreadDescriptorField.PID, pid) + encode_varint_field(ThreadDescriptorField.TID, tid)
         if thread_name is not None:
@@ -291,6 +339,10 @@ def build_track_descriptor(
         result += encode_bytes_field(TrackDescriptorField.PROCESS, process_desc)
     if parent_uuid is not None:
         result += encode_varint_field(TrackDescriptorField.PARENT_UUID, parent_uuid)
+    if thread_ordering is not None:
+        result += encode_varint_field(TrackDescriptorField.THREAD_ORDERING, thread_ordering)
+    if process_ordering is not None:
+        result += encode_varint_field(TrackDescriptorField.PROCESS_ORDERING, process_ordering)
     if is_counter:
         result += encode_bytes_field(TrackDescriptorField.COUNTER, b"")
     if child_ordering is not None:
@@ -406,12 +458,47 @@ def _args_to_debug_annotations(args: dict[str, int]) -> list[bytes]:
     return [_build_debug_annotation_int(k, v) for k, v in args.items()]
 
 
+def _emit_root_descriptor(
+    state: PerfettoTrackState,
+    sequence_id: int,
+) -> list[bytes]:
+    """Build the special root ``TrackDescriptor`` (``uuid = 0``) that
+    carries the ``process_ordering`` and ``thread_ordering`` hints.
+
+    The root descriptor is the magic uuid-0 track that tells the
+    Perfetto UI to honor ``sibling_order_rank`` on top-level process /
+    thread tracks. It is emitted exactly once per trace, guarded by
+    ``state.has_root_descriptor``. The descriptor has no ``name`` and
+    no ``process`` / ``thread`` / ``counter`` sub-message, so the
+    trace processor does not surface it as a track row.
+    """
+    if state.has_root_descriptor():
+        return []
+    state.mark_root_descriptor_emitted()
+    desc = build_track_descriptor(
+        uuid=0,
+        name="",
+        process_ordering=ProcessOrdering.EXPLICIT,
+        thread_ordering=ThreadOrdering.EXPLICIT,
+    )
+    return [build_trace_packet(sequence_id, track_descriptor=desc)]
+
+
 def _emit_process_descriptor(
     pid: int,
     state: PerfettoTrackState,
     sequence_id: int,
+    sibling_order_rank: int | None = None,
 ) -> list[bytes]:
-    """Build a process track descriptor if not already emitted for *pid*."""
+    """Build a process track descriptor if not already emitted for *pid*.
+
+    When *sibling_order_rank* is not ``None`` it is written into the
+    descriptor's ``sibling_order_rank`` field so the Perfetto UI can
+    order this process track relative to siblings (only honored when
+    the root track descriptor carries
+    ``process_ordering = PROCESS_ORDERING_EXPLICIT``; see
+    ``_emit_root_descriptor``).
+    """
     if state.has_pid(pid):
         return []
     state.mark_pid(pid)
@@ -422,6 +509,7 @@ def _emit_process_descriptor(
         f"Process {pid}",
         pid=pid,
         child_ordering=ChildTracksOrdering.EXPLICIT,
+        sibling_order_rank=sibling_order_rank,
         cmdline=cmdline,
         description=" ".join(cmdline) if cmdline else None,
     )
@@ -628,20 +716,53 @@ def convert_trace_events_to_perfetto(
 
     Returns ``(descriptors, packets)``, each element being a list of encoded
     ``TracePacket`` bytes ready to be wrapped by ``build_trace``.
+
+    On the first call for a given ``state`` (or the first call after a
+    reset), this function emits a single root ``TrackDescriptor``
+    (``uuid = 0``) carrying ``process_ordering = PROCESS_ORDERING_EXPLICIT``
+    and ``thread_ordering = THREAD_ORDERING_EXPLICIT``. The root
+    descriptor is what tells the Perfetto UI to honor
+    ``sibling_order_rank`` on top-level process and thread tracks.
+
+    Each process descriptor is emitted with a ``sibling_order_rank``
+    derived from the pid's first non-meta event timestamp. The
+    ``state._first_event_ts`` dict carries the cumulative first-ts
+    state across all batches in the trace; before the main loop this
+    function pre-scans the current batch for any first-ts updates so
+    that pids whose first event is in the same batch as their
+    ``ProcessMeta`` still get a correct rank. Ties are broken by
+    ascending pid.
     """
     descriptors: list[bytes] = []
     packets: list[bytes] = []
+
+    if events:
+        for event in events:
+            _record_first_event_ts(event, state)
+        descriptors.extend(_emit_root_descriptor(state, sequence_id))
+
+    ranks = state.get_process_track_ranks()
 
     for event in events:
         pid = event.pid
 
         if isinstance(event, ProcessMeta):
-            descriptors.extend(_emit_process_descriptor(pid, state, sequence_id))
+            descriptors.extend(
+                _emit_process_descriptor(
+                    pid, state, sequence_id,
+                    sibling_order_rank=ranks.get(pid),
+                )
+            )
 
         # The exporter is expected to emit ProcessMeta before any
         # ThreadMeta for a given pid.
         elif isinstance(event, ThreadMeta):
-            descriptors.extend(_emit_process_descriptor(pid, state, sequence_id))
+            descriptors.extend(
+                _emit_process_descriptor(
+                    pid, state, sequence_id,
+                    sibling_order_rank=ranks.get(pid),
+                )
+            )
             descriptors.extend(_emit_thread_descriptor(pid, event.tid, state, sequence_id))
 
         elif isinstance(event, BeginEvent):
@@ -755,6 +876,26 @@ def _record_or_open_process_lifetime(
     )
     if not isinstance(event, CounterEvent):
         state.update_process_lifetime_end_ts(event.pid, ts)
+
+
+def _record_first_event_ts(
+    event: TraceEvent,
+    state: PerfettoTrackState,
+) -> None:
+    """Record the first non-meta event timestamp for *event*'s pid.
+
+    ``ProcessMeta`` and ``ThreadMeta`` are skipped. The first ts for
+    each pid wins (subsequent calls for the same pid are ignored via
+    ``PerfettoTrackState.record_first_event_ts``). This mirrors the
+    pattern of ``_record_or_open_process_lifetime`` so a single
+    per-event call site handles both concerns.
+    """
+    if isinstance(event, (ProcessMeta, ThreadMeta)):
+        return
+    ts = getattr(event, "ts", None)
+    if ts is None:
+        return
+    state.record_first_event_ts(event.pid, ts)
 
 
 def finalize_perfetto_packets(

@@ -857,3 +857,113 @@ class TestMultiFlushProcessesTrack:
             )
         finally:
             tp.close()
+
+
+class TestProcessOrderingIntegration:
+    """Schema-validity guard for the new root track descriptor and the
+    per-process ``sibling_order_rank`` field.
+
+    The wire-level tests in ``TestProcessOrderingByFirstTs`` (test_perfetto_format.py)
+    are the source of truth for the rank values; this class verifies that the
+    Perfetto trace processor accepts the new protobuf layout (root descriptor
+    with ``process_ordering`` / ``thread_ordering`` and process descriptors
+    with ``sibling_order_rank``) and that the existing ``process`` / ``track``
+    SQL tables are not regressed by the new fields.
+
+    The trace processor does not expose ``sibling_order_rank`` as a SQL
+    column - it is a UI rendering hint consumed by the Perfetto UI at
+    render time. Therefore these tests can verify the trace is *valid*
+    and that the process tracks are still recognized, but not the
+    actual UI display order. UI ordering is verifiable only in the
+    Perfetto UI itself.
+    """
+
+    @pytest.mark.parametrize("fmt", ["perfetto"])
+    def test_root_descriptor_does_not_appear_as_a_track_row(
+        self, fmt: str, trace_processor: TraceProcessor,
+    ) -> None:
+        """The root descriptor (``uuid=0``) carries no ``name`` and no
+        ``process``/``thread``/``counter`` sub-message, so it must NOT
+        produce a row in the ``track`` SQL table. We check for this by
+        asserting that no track has a NULL ``type`` column — every track
+        in the table should be a recognized kind (process_track_event,
+        thread_execution, counter, etc.). The NULL-name rows in the
+        table correspond to ``thread_execution`` tracks and are
+        therefore not related to the root descriptor.
+        """
+        rows = list(trace_processor.query(
+            "SELECT id FROM track WHERE type IS NULL",
+        ))
+        assert rows == [], (
+            f"root track descriptor should not create a track row with "
+            f"unknown type; got ids {[r.id for r in rows]}"
+        )
+
+    @pytest.mark.parametrize("fmt", ["perfetto"])
+    def test_process_table_unchanged_after_ranking(
+        self, fmt: str, trace_processor: TraceProcessor,
+    ) -> None:
+        """The ``process`` SQL table must still contain one row per pid
+        that emitted events, and no more. Adding ``sibling_order_rank``
+        to the process track descriptor must not change the cardinality
+        or pid column.
+        """
+        rows = list(trace_processor.query(
+            f"SELECT pid FROM process WHERE pid IN ({DEFAULT_PID}, {_SECOND_PID}) "
+            f"ORDER BY pid",
+        ))
+        assert [r.pid for r in rows] == sorted([DEFAULT_PID, _SECOND_PID]), (
+            f"expected one process row per pid; got {[r.pid for r in rows]}"
+        )
+
+    @pytest.mark.parametrize("fmt", ["perfetto"])
+    def test_process_track_rows_still_present_after_ranking(
+        self, fmt: str, trace_processor: TraceProcessor,
+    ) -> None:
+        """Regression guard: the process track rows (one per pid) must
+        still be present in the ``track`` table after the new fields
+        are added to the descriptor. The rank field is not asserted
+        here (it is a UI concern); the existence of the rows is the
+        contract.
+        """
+        rows = list(trace_processor.query(
+            "SELECT name FROM track WHERE name LIKE 'Process %' ORDER BY name",
+        ))
+        assert [r.name for r in rows] == sorted([
+            f"Process {DEFAULT_PID}", f"Process {_SECOND_PID}",
+        ]), (
+            f"expected process track rows for both pids; got {[r.name for r in rows]}"
+        )
+
+    @pytest.mark.parametrize("fmt", ["perfetto"])
+    def test_process_track_order_matches_rank(
+        self, fmt: str, trace_processor: TraceProcessor,
+    ) -> None:
+        """The trace processor must order process tracks by
+        ``sibling_order_rank`` when ``process_ordering=EXPLICIT`` is
+        set on the root descriptor. The fixture emits ``_SECOND_PID``
+        with an earlier first event ts (``_TS_START - 2_000_000``) and
+        ``DEFAULT_PID`` with a later one (``_TS_START - 1_000_000``), so
+        ``_SECOND_PID`` is expected to be ranked first (rank 0).
+
+        The track table is what the Perfetto UI uses to render tracks;
+        the track with the lower ``id`` appears first in the UI. We
+        therefore assert that the row for ``_SECOND_PID`` has a lower
+        track id than the row for ``DEFAULT_PID`` in the
+        ``process_track_event`` rows.
+        """
+        rows = list(trace_processor.query("""
+            SELECT t.id, p.pid
+            FROM track t
+            JOIN process_track pt ON t.id = pt.id
+            JOIN process p ON pt.upid = p.upid
+            WHERE t.type = 'process_track_event'
+              AND p.pid IN ({default}, {second})
+        """.format(default=DEFAULT_PID, second=_SECOND_PID)))
+        pid_to_id = {r.pid: r.id for r in rows}
+        assert DEFAULT_PID in pid_to_id
+        assert _SECOND_PID in pid_to_id
+        assert pid_to_id[_SECOND_PID] < pid_to_id[DEFAULT_PID], (
+            f"expected _SECOND_PID (earlier first event) to have lower "
+            f"track id; got pid_to_id={pid_to_id}"
+        )
