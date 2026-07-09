@@ -22,6 +22,8 @@ jobs:
         python-version: ["3.15"]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
         with:
           python-version: ${{ matrix.python-version }}
@@ -39,6 +41,8 @@ jobs:
         python-version: ["3.15"]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
         with:
           python-version: ${{ matrix.python-version }}
@@ -56,6 +60,8 @@ jobs:
         python-version: ["3.15"]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
         with:
           python-version: ${{ matrix.python-version }}
@@ -89,6 +95,8 @@ jobs:
           sudo security authorizationdb read system.privilege.taskport
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
         with:
           python-version: ${{ matrix.python-version }}
@@ -106,7 +114,7 @@ jobs:
 
       - name: Run tests
         run: |
-          poetry run pytest -q --basetemp=.temp --cov=src/gcmon --cov-report=xml --cov-report=term-missing --cov-branch --cov-reset --junitxml=reports/tests.xml
+          poetry run pytest -q --basetemp=.temp --cov=src/gcmon --cov-report=xml:coverage-${{ matrix.os }}.xml --cov-report=term-missing --cov-branch --junitxml=reports/tests.xml
 
       - name: Upload test results
         if: always()
@@ -117,9 +125,10 @@ jobs:
 
       - name: Upload coverage reports to Codecov
         if: always()
-        uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe # v5
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage-${{ matrix.os }}.xml
 
   stress-test:
     if: github.ref_name != 'main' && !startsWith(github.ref_name, 'release/')
@@ -132,6 +141,8 @@ jobs:
         python-version: ["3.15"]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
         with:
           python-version: ${{ matrix.python-version }}
@@ -146,4 +157,3 @@ jobs:
       - name: Run stress-tests
         run: |
           poetry run pytest --basetemp=.temp -m stress --count 20
-
