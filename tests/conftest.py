@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import types
+from collections.abc import Callable, Generator
 from unittest.mock import Mock
 
 import pytest
 
-from gcmon.data import GCStatsInfo
+from gcmon.data import GCStatsInfo, InstantMsg
 from gcmon.monitor import EventsMonitor
-from gcmon.protocol import TGCStatsInfo, to_mapping
+from gcmon.protocol import TGCStatsInfo, TMapping, to_mapping
 from gcmon.stats import StreamingStats
 from gcmon.target_process import ExternalProcess
 from tests.data_helpers import create_instant_msg
@@ -18,7 +20,7 @@ DEFAULT_PID: int = 12345
 
 
 @pytest.fixture(autouse=True)
-def _caplog_gcmon(caplog: pytest.LogCaptureFixture) -> pytest.LogCaptureFixture:
+def _caplog_gcmon(caplog: pytest.LogCaptureFixture) -> Generator[pytest.LogCaptureFixture]:
     """Auto-configure gcmon logger to INFO level for caplog.
 
     Also snapshots and restores ``logging.getLogger("gcmon")``'s handlers and
@@ -118,13 +120,13 @@ def stats() -> StreamingStats:
 
 
 @pytest.fixture
-def monitor(exporter, process: ExternalProcess, stats: StreamingStats) -> EventsMonitor:
+def monitor(exporter: MockExporter, process: ExternalProcess, stats: StreamingStats) -> EventsMonitor:
     return EventsMonitor(process, exporter, stats)
 
 
 @pytest.fixture
-def make_monitor(exporter, stats):
-    def _make(pid: int = 12345, exp=None):
+def make_monitor(exporter: MockExporter, stats: StreamingStats) -> Callable[..., EventsMonitor]:
+    def _make(pid: int = 12345, exp: MockExporter | None = None) -> EventsMonitor:
         proc = ExternalProcess(pid=pid)
         return EventsMonitor(proc, exp or exporter, stats)
 
@@ -132,7 +134,7 @@ def make_monitor(exporter, stats):
 
 
 @pytest.fixture
-def env_module():
+def env_module() -> types.ModuleType:
     """Provide the _env module for testing."""
     from gcmon import _env
 
@@ -140,7 +142,7 @@ def env_module():
 
 
 @pytest.fixture
-def simple_item():
+def simple_item() -> GCStatsInfo:
     return GCStatsInfo(
         gen=0,
         iid=1,
@@ -156,7 +158,7 @@ def simple_item():
 
 
 @pytest.fixture
-def incremental_item():
+def incremental_item() -> GCStatsInfo:
     return GCStatsInfo(
         gen=1,
         iid=2,
@@ -190,20 +192,20 @@ def incremental_item():
 
 
 @pytest.fixture
-def instant_item():
+def instant_item() -> InstantMsg:
     return create_instant_msg()
 
 
 @pytest.fixture
-def gc_stats_dict(simple_item):
+def gc_stats_dict(simple_item: GCStatsInfo) -> TMapping:
     return to_mapping(simple_item)
 
 
 @pytest.fixture
-def incremental_dict(incremental_item):
+def incremental_dict(incremental_item: GCStatsInfo) -> TMapping:
     return to_mapping(incremental_item)
 
 
 @pytest.fixture
-def instant_dict(instant_item):
+def instant_dict(instant_item: InstantMsg) -> TMapping:
     return to_mapping(instant_item)

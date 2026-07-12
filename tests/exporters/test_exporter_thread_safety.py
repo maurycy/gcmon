@@ -7,7 +7,7 @@ import json
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, override
 
 import pytest
 
@@ -28,7 +28,7 @@ from gcmon.exporters.perfetto_format import (
 )
 from gcmon.protocol import TGCStatsInfo, TInstantMsg
 from tests.data_helpers import create_instant_msg
-from tests.helpers import create_mock_stats_item
+from tests.helpers import JsonlRecord, create_mock_stats_item
 from tests.proto_decoder import (
     ProtoField,
     decode_message,
@@ -131,20 +131,22 @@ class JsonlFileCapture(OutputCapture):
     def __init__(self, path: Path) -> None:
         self._path = path
 
-    def _lines(self) -> list[dict[str, object]]:
+    def _lines(self) -> list[JsonlRecord]:
         if not self._path.exists():
             return []
-        out: list[dict[str, object]] = []
+        out: list[JsonlRecord] = []
         for ln in self._path.read_text(encoding="utf-8").splitlines():
             if not ln:
                 continue
             out.append(json.loads(ln))
         return out
 
+    @override
     def count_completes(self) -> int:
         # GC events: no 'type' field. Instant events: type == 'i'.
         return sum(1 for e in self._lines() if e.get("type") != "i")
 
+    @override
     def count_instants(self) -> int:
         return sum(1 for e in self._lines() if e.get("type") == "i")
 
@@ -160,9 +162,11 @@ class ChromeTraceFileCapture(OutputCapture):
             return ""
         return self._path.read_text(encoding="utf-8")
 
+    @override
     def count_completes(self) -> int:
         return self._text().count('"ph":"B"')
 
+    @override
     def count_instants(self) -> int:
         return self._text().count('"ph":"I"')
 
@@ -199,9 +203,11 @@ class PerfettoFileCapture(OutputCapture):
                 n += 1
         return n
 
+    @override
     def count_completes(self) -> int:
         return self._count_event_type(TYPE_SLICE_BEGIN)
 
+    @override
     def count_instants(self) -> int:
         return self._count_event_type(TYPE_INSTANT)
 
@@ -228,6 +234,7 @@ class _LockingStringIO(io.StringIO):
         super().__init__()
         self._lock = threading.Lock()
 
+    @override
     def write(self, s: str) -> int:
         with self._lock:
             return super().write(s)
@@ -239,17 +246,19 @@ class StdoutCapture(OutputCapture):
     def __init__(self, buffer: _LockingStringIO) -> None:
         self._buffer = buffer
 
-    def _lines(self) -> list[dict[str, object]]:
-        out: list[dict[str, object]] = []
+    def _lines(self) -> list[JsonlRecord]:
+        out: list[JsonlRecord] = []
         for ln in self._buffer.getvalue().splitlines():
             if not ln:
                 continue
             out.append(json.loads(ln))
         return out
 
+    @override
     def count_completes(self) -> int:
         return sum(1 for e in self._lines() if e.get("type") != "i")
 
+    @override
     def count_instants(self) -> int:
         return sum(1 for e in self._lines() if e.get("type") == "i")
 
@@ -307,7 +316,8 @@ def _all_factories() -> list[ExporterFactory]:
 
 @pytest.fixture(params=_all_factories(), ids=lambda f: f.name)
 def exporter_factory(request: pytest.FixtureRequest) -> ExporterFactory:
-    return request.param  # type: ignore[return-value]
+    param: ExporterFactory = request.param
+    return param
 
 
 @pytest.mark.stress

@@ -1,15 +1,18 @@
 """Tests for Chrome Trace Event format types and conversion utilities."""
 
-from types import SimpleNamespace
-
 import msgspec
 from msgspec import structs
 
+from gcmon.data import GCStatsInfo
 from gcmon.exporters.chrome_trace_format import (
     convert_item_to_trace_format,
     convert_to_trace_format,
 )
+from gcmon.protocol import TGCStatsInfo, TInstantMsg
 from gcmon.trace_event import (
+    BeginEvent,
+    CounterEvent,
+    EndEvent,
     begin_event,
     counter_event,
     end_event,
@@ -95,7 +98,7 @@ class TestEndEvent:
 
 class TestCounterEvent:
     def test_returns_counter_event(self) -> None:
-        args = {
+        args: dict[str, int | float] = {
             "collected": 50,
             "uncollectable": 1,
             "candidates": 20,
@@ -133,19 +136,18 @@ def _make_incremental_item(
     finalized_garbage_count: int = 42,
     deleted_garbage_count: int = 13,
     clear_weakrefs_count: int = 7,
-) -> SimpleNamespace:
-    base = create_mock_stats_item(gen=gen, ts_start=ts_start, ts_stop=ts_stop)
-    return SimpleNamespace(
-        gen=base.gen,
-        iid=base.iid,
-        ts_start=base.ts_start,
-        ts_stop=base.ts_stop,
-        collections=base.collections,
-        heap_size=base.heap_size,
-        collected=base.collected,
-        uncollectable=base.uncollectable,
-        candidates=base.candidates,
-        duration=base.duration,
+) -> GCStatsInfo:
+    return GCStatsInfo(
+        gen=gen,
+        iid=0,
+        ts_start=ts_start,
+        ts_stop=ts_stop,
+        collections=50,
+        collected=200,
+        uncollectable=10,
+        candidates=40,
+        heap_size=52428800,
+        duration=0.005,
         increment_size=increment_size,
         alive_size=alive_size,
         ts_mark_alive_start=ts_start,
@@ -248,7 +250,7 @@ class TestConvertItemToTraceFormat:
 
     def test_zero_duration_sub_steps_are_skipped(self) -> None:
         base = _make_incremental_item(gen=0)
-        item = SimpleNamespace(
+        item = GCStatsInfo(
             gen=base.gen,
             iid=base.iid,
             ts_start=base.ts_start,
@@ -374,24 +376,15 @@ class TestConvertItemToTraceFormat:
             assert "heap_size" not in per_gen[0].args
             assert len(heap) == 1
             assert set(heap[0].args.keys()) == {"heap_size"}
-        assert (
-            events_g0[next(i for i, e in enumerate(events_g0) if e.ph == "C" and e.name == "heap_size")].args[
-                "heap_size"
-            ]
-            == 1000
-        )
-        assert (
-            events_g1[next(i for i, e in enumerate(events_g1) if e.ph == "C" and e.name == "heap_size")].args[
-                "heap_size"
-            ]
-            == 2000
-        )
-        assert (
-            events_g2[next(i for i, e in enumerate(events_g2) if e.ph == "C" and e.name == "heap_size")].args[
-                "heap_size"
-            ]
-            == 3000
-        )
+        heap0 = next(e for e in events_g0 if e.ph == "C" and e.name == "heap_size")
+        assert isinstance(heap0, (BeginEvent, EndEvent, CounterEvent))
+        assert heap0.args["heap_size"] == 1000
+        heap1 = next(e for e in events_g1 if e.ph == "C" and e.name == "heap_size")
+        assert isinstance(heap1, (BeginEvent, EndEvent, CounterEvent))
+        assert heap1.args["heap_size"] == 2000
+        heap2 = next(e for e in events_g2 if e.ph == "C" and e.name == "heap_size")
+        assert isinstance(heap2, (BeginEvent, EndEvent, CounterEvent))
+        assert heap2.args["heap_size"] == 3000
 
     def test_pid_is_passed_through(self) -> None:
         item = create_mock_stats_item()
@@ -404,6 +397,7 @@ class TestConvertItemToTraceFormat:
         events = convert_item_to_trace_format(pid=12345, item=item)
         for event in events:
             if event.ph not in ("M",):
+                assert isinstance(event, (BeginEvent, EndEvent, CounterEvent))
                 assert event.tid == 42
 
     def test_incremental_gen0_pause_data_has_count_fields(self) -> None:
@@ -505,7 +499,7 @@ class TestConvertToTraceFormat:
     def test_multiple_pids(self) -> None:
         item1 = create_mock_stats_item(iid=0)
         item2 = create_mock_stats_item(iid=1)
-        items = {1: [item1], 2: [item2]}
+        items: dict[int, list[TGCStatsInfo | TInstantMsg]] = {1: [item1], 2: [item2]}
         events = convert_to_trace_format(items)
         pids = {e.pid for e in events}
         assert pids == {1, 2}
@@ -529,7 +523,7 @@ class TestConvertToTraceFormat:
 
 class TestConvertToTraceFormatWithInstant:
     def test_instant_msg_only(self) -> None:
-        items = [create_instant_msg(name="start GC monitor", ts=1_500_000_000)]
+        items: list[TGCStatsInfo | TInstantMsg] = [create_instant_msg(name="start GC monitor", ts=1_500_000_000)]
         events = convert_to_trace_format({1: items})
         instants = [e for e in events if e.ph == "I"]
         assert len(instants) == 1
@@ -540,14 +534,14 @@ class TestConvertToTraceFormatWithInstant:
     def test_mixed_gc_stats_and_instant_msg(self) -> None:
         item = create_mock_stats_item()
         instant = create_instant_msg(name="stop GC monitor", ts=2_000_000_000)
-        items = {12345: [item, instant]}
+        items: dict[int, list[TGCStatsInfo | TInstantMsg]] = {12345: [item, instant]}
         events = convert_to_trace_format(items)
         assert any(e.ph == "I" for e in events)
         assert any(e.ph == "B" for e in events)
         assert any(e.ph == "C" for e in events)
 
     def test_multiple_instant_messages(self) -> None:
-        items = [
+        items: list[TGCStatsInfo | TInstantMsg] = [
             create_instant_msg(name="start GC monitor", ts=1_000_000_000),
             create_instant_msg(name="stop GC monitor", ts=2_000_000_000),
         ]

@@ -1,9 +1,10 @@
 import json
 import os
 import subprocess
+from collections.abc import Generator
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -12,7 +13,7 @@ from tests.monitoring.conftest import MonitorArgsFactory
 
 
 @pytest.fixture
-def mock_monitoring_loop():
+def mock_monitoring_loop() -> Generator[MagicMock]:
     with patch("gcmon.commands.monitor_cmd.run_monitoring_loop") as mock:
         yield mock
 
@@ -23,7 +24,7 @@ def mock_monitoring_loop():
 
 
 def test_cmd_monitor_connect_failure(
-    caplog: pytest.LogCaptureFixture, monitor_args: MonitorArgsFactory, mock_monitoring_loop
+    caplog: pytest.LogCaptureFixture, monitor_args: MonitorArgsFactory, mock_monitoring_loop: MagicMock
 ) -> None:
     from gcmon.commands import monitor_cmd
 
@@ -45,8 +46,8 @@ class TestCmdMonitorFormat:
         caplog: pytest.LogCaptureFixture,
         monitor_args: MonitorArgsFactory,
         fmt: str,
-        extra_kwargs: dict,
-        mock_monitoring_loop,
+        extra_kwargs: dict[str, int],
+        mock_monitoring_loop: MagicMock,
     ) -> None:
         from gcmon.commands import monitor_cmd
 
@@ -68,7 +69,11 @@ class TestCmdMonitorValidation:
         ],
     )
     def test_invalid_params(
-        self, caplog: pytest.LogCaptureFixture, monitor_args: MonitorArgsFactory, override: dict, expected_msg: str
+        self,
+        caplog: pytest.LogCaptureFixture,
+        monitor_args: MonitorArgsFactory,
+        override: dict[str, int],
+        expected_msg: str,
     ) -> None:
         from gcmon.commands import monitor_cmd
 
@@ -77,14 +82,14 @@ class TestCmdMonitorValidation:
         assert expected_msg in caplog.text
 
 
-def test_cmd_monitor_quiet_mode(monitor_args: MonitorArgsFactory, mock_monitoring_loop) -> None:
+def test_cmd_monitor_quiet_mode(monitor_args: MonitorArgsFactory, mock_monitoring_loop: MagicMock) -> None:
     from gcmon.commands import monitor_cmd
 
     mock_monitoring_loop.return_value = 0
     assert monitor_cmd.cmd_monitor(monitor_args(verbose=0, duration=0.05)) == 0
 
 
-def test_cmd_monitor_self_pid(monitor_args: MonitorArgsFactory, mock_monitoring_loop) -> None:
+def test_cmd_monitor_self_pid(monitor_args: MonitorArgsFactory, mock_monitoring_loop: MagicMock) -> None:
     from gcmon.commands import monitor_cmd
 
     mock_monitoring_loop.return_value = 0
