@@ -2,6 +2,26 @@
 
 ## WIP
 
+### Breaking changes
+
+- Remove `MonitorThread` (#63); use `MonitorLoop` instead
+- `TYPE_SLICE_BEGIN`, `TYPE_SLICE_END`, `TYPE_INSTANT`, `TYPE_COUNTER` removed from `gcmon.exporters.perfetto_format.__all__` in favor of `TrackEventType` enum
+
+### Features
+
+- Add `TrackEventType` enum (`SLICE_BEGIN`, `SLICE_END`, `INSTANT`, `COUNTER`) to `gcmon.exporters.perfetto_format`
+
+### Bugfixes
+
+- Wait for process termination before reading return code in `run_monitoring_loop()` (#65)
+- Fix type annotations in source code and test suite
+- Remove `proto_decoder` and rely on the `perfetto` package for testing the `Perfetto` binary format.
+
+### CI / Infrastructure
+
+- Update pyrefly type checker to 1.1.1
+- Add pre-commit and editor configs, clean up tests, add CodSpeed benchmarks, bump actions/checkout, bump perfetto version and add protobuf dependency
+
 ## Version 0.3.1 (2026-06-29)
 
 - Fix PyPI classifiers
