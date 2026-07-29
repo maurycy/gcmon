@@ -10,6 +10,7 @@
 ### Features
 
 - Add `TrackEventType` enum (`SLICE_BEGIN`, `SLICE_END`, `INSTANT`, `COUNTER`) to `gcmon.exporters.perfetto_format`
+- Add a `Read Time` row to the `--stats` table: the time each poll spends reading GC stats from the target process
 - Track RSS (Resident Set Size) of monitored processes in Perfetto traces (#55)
 - Add `--rss` / `--rss-interval` CLI flags and `GCMON_RSS` / `GCMON_RSS_INTERVAL` env vars (#55)
 

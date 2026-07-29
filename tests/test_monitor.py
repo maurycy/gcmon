@@ -1,13 +1,17 @@
 """Tests for GCMonitor."""
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gcmon.monitor import EventsMonitor
 from gcmon.poll_status import PollStatus
+from gcmon.protocol import TGCStatsInfo
+from gcmon.stats import StreamingStats
 from tests.helpers import MockExporter, create_mock_stats_item
+
+NO_EVENTS: list[TGCStatsInfo] = []
 
 # =============================================================================
 # Local fixtures
@@ -17,6 +21,13 @@ from tests.helpers import MockExporter, create_mock_stats_item
 @pytest.fixture
 def mock_gc_stats() -> Generator[MagicMock]:
     with patch("gcmon.monitor.get_gc_stats") as mock:
+        yield mock
+
+
+@pytest.fixture
+def mock_monotonic() -> Generator[MagicMock]:
+    """Patch the clock used to measure read time, in nanoseconds."""
+    with patch("gcmon.monitor.time.monotonic_ns") as mock:
         yield mock
 
 
@@ -90,3 +101,85 @@ class TestGCMonitor:
         monitor.stop()
         monitor.stop()
         assert not monitor.is_enabled
+
+
+class TestGCMonitorReadTime:
+    """Tests for read time tracking around get_gc_stats."""
+
+    def test_poll_records_read_time(
+        self, monitor: EventsMonitor, stats: StreamingStats, mock_gc_stats: MagicMock, mock_monotonic: MagicMock
+    ) -> None:
+        mock_monotonic.side_effect = [1_000_000_000, 1_002_500_000]
+        mock_gc_stats.return_value = [create_mock_stats_item()]
+
+        assert monitor.poll(12345) == PollStatus.OK
+
+        # 2.5 ms between the two monotonic_ns readings, stored as nanoseconds
+        assert stats.read_time.count() == 1
+        assert stats.read_time.sum() == 2_500_000
+
+    def test_poll_records_read_time_without_events(
+        self, monitor: EventsMonitor, stats: StreamingStats, mock_gc_stats: MagicMock
+    ) -> None:
+        mock_gc_stats.return_value = NO_EVENTS
+
+        assert monitor.poll(12345) == PollStatus.OK
+
+        assert stats.count() == 0
+        assert stats.read_time.count() == 1
+
+    def test_poll_keeps_sub_microsecond_read_time(
+        self, monitor: EventsMonitor, stats: StreamingStats, mock_gc_stats: MagicMock, mock_monotonic: MagicMock
+    ) -> None:
+        mock_monotonic.side_effect = [1_000_000_000, 1_000_000_750]
+        mock_gc_stats.return_value = NO_EVENTS
+
+        assert monitor.poll(12345) == PollStatus.OK
+
+        assert stats.read_time.sum() == 750
+
+    def test_read_time_accumulates_over_polls(
+        self, monitor: EventsMonitor, stats: StreamingStats, mock_gc_stats: MagicMock, mock_monotonic: MagicMock
+    ) -> None:
+        mock_monotonic.side_effect = [0, 1_000_000, 5_000_000, 8_000_000]
+        mock_gc_stats.return_value = NO_EVENTS
+
+        monitor.poll(12345)
+        monitor.poll(12345)
+
+        assert stats.read_time.count() == 2
+        assert stats.read_time.sum() == 4_000_000
+        assert stats.read_time.average() == 2_000_000
+
+    def test_read_time_shared_across_pids(
+        self,
+        make_monitor: Callable[..., EventsMonitor],
+        stats: StreamingStats,
+        mock_gc_stats: MagicMock,
+    ) -> None:
+        mock_gc_stats.return_value = NO_EVENTS
+
+        make_monitor(pid=111).poll(111)
+        make_monitor(pid=222).poll(222)
+
+        assert stats.read_time.count() == 2
+
+    def test_read_time_not_recorded_on_failed_read(
+        self, monitor: EventsMonitor, stats: StreamingStats, mock_gc_stats: MagicMock
+    ) -> None:
+        mock_gc_stats.side_effect = RuntimeError("Failed to initialize process handle")
+
+        assert monitor.poll(12345) == PollStatus.INVALID_PROCESS
+
+        assert stats.read_time.count() == 0
+
+    def test_read_time_not_recorded_after_stop(
+        self, monitor: EventsMonitor, stats: StreamingStats, mock_gc_stats: MagicMock
+    ) -> None:
+        mock_gc_stats.return_value = NO_EVENTS
+        monitor.stop()
+
+        assert monitor.poll(12345) == PollStatus.FAIL
+
+        assert stats.read_time.count() == 0
+        mock_gc_stats.assert_not_called()

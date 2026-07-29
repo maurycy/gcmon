@@ -240,6 +240,49 @@ class TestPrintStatsEdgeCases:
         assert "GC Clear Weakrefs" in captured.out
         assert "GC Delete Garbage" in captured.out
 
+    def test_read_time_row_omitted_when_not_recorded(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        gc_stats_item_factory: Callable[..., GCStatsInfo],
+    ) -> None:
+        stats = StreamingStats()
+        stats.update(12345, gc_stats_item_factory())
+
+        print_stats(stats)
+        captured = capsys.readouterr()
+        assert "Read Time" not in captured.out
+
+    def test_read_time_row_printed(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        gc_stats_item_factory: Callable[..., GCStatsInfo],
+    ) -> None:
+        stats = StreamingStats()
+        stats.update(12345, gc_stats_item_factory())
+        stats.record_read_time(1_000_000)
+        stats.record_read_time(3_000_000)
+
+        print_stats(stats)
+        captured = capsys.readouterr()
+        read_time_line = next(line for line in captured.out.splitlines() if "Read Time" in line)
+        cells = [c.strip() for c in read_time_line.strip().strip("|").split("|")]
+        # PID, Metric, Count, Sum, Avg, P50, P90, P95, P99 - durations in milliseconds
+        assert cells[0] == ""
+        assert cells[1] == "Read Time"
+        assert cells[2] == "2"
+        assert cells[3] == "4.000"
+        assert cells[4] == "2.000"
+
+    def test_read_time_row_without_gc_data(self, capsys: pytest.CaptureFixture[str]) -> None:
+        stats = StreamingStats()
+        stats.record_read_time(2_500_000)
+
+        print_stats(stats)
+        captured = capsys.readouterr()
+        assert "No GC statistics collected." not in captured.out
+        assert "Read Time" in captured.out
+        assert "2.500" in captured.out
+
     def test_markdown_format(
         self,
         capsys: pytest.CaptureFixture[str],

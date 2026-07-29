@@ -241,6 +241,7 @@ class StreamingStats:
         self._metrics_per_pid: OrderedDict[int, TStatsData] = OrderedDict()
         self._materialized_metrics: dict[int, TStatsData] = {}
         self._heap_size: dict[int, int] = {}
+        self._read_time: Stats = Stats()
 
     def update(self, pid: int, item: TGCStatsInfo) -> None:
         self._count += 1
@@ -264,6 +265,15 @@ class StreamingStats:
             _record(self._metrics_per_pid[pid], item, metric)
 
         self._heap_size[pid] = max(self._heap_size.get(pid, 0), item.heap_size)
+
+    def record_read_time(self, duration_ns: int) -> None:
+        """Record the time spent reading GC stats from a target process."""
+        self._read_time.update(duration_ns)
+
+    @property
+    def read_time(self) -> Stats:
+        """Read durations in nanoseconds, aggregated over all polled PIDs."""
+        return self._read_time
 
     def get_pid_stats(self, pid: int) -> TStatsData | None:
         return self._metrics_per_pid.get(pid) or self._materialized_metrics.get(pid)

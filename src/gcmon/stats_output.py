@@ -8,6 +8,10 @@ from .stats import METRICS, Stats, StreamingStats
 _SEP_GROUP: Any = object()
 _SEP_PHASE: Any = object()
 
+# Table durations are printed in milliseconds, sources differ in resolution.
+_US_PER_MS = 1_000
+_NS_PER_MS = 1_000_000
+
 
 class TableFormat(Enum):
     PLAIN = "plain"
@@ -61,24 +65,31 @@ def _print_table(rows: list[list[str] | Any], table_format: TableFormat = TableF
         )
 
 
+def _format_stats(s: Stats, per_ms: int = _US_PER_MS) -> list[str]:
+    """Format a Stats as table cells in milliseconds.
+
+    Args:
+        s: Collected durations.
+        per_ms: Units of ``s`` per millisecond.
+    """
+    return [
+        str(s.count()),
+        f"{s.sum() / per_ms:.3f}",
+        f"{s.average() / per_ms:.3f}",
+        f"{s.percentile(50) / per_ms:.3f}",
+        f"{s.percentile(90) / per_ms:.3f}",
+        f"{s.percentile(95) / per_ms:.3f}",
+        f"{s.percentile(99) / per_ms:.3f}",
+    ]
+
+
 def _build_rows(gen_stats: dict[int, Stats], label: str) -> list[list[str]]:
     rows = []
     for gen in sorted(gen_stats.keys()):
         s = gen_stats[gen]
         if s.count() == 0:
             continue
-        rows.append(
-            [
-                f"{label}({gen})",
-                str(s.count()),
-                f"{s.sum() / 1_000:.3f}",
-                f"{s.average() / 1_000:.3f}",
-                f"{s.percentile(50) / 1_000:.3f}",
-                f"{s.percentile(90) / 1_000:.3f}",
-                f"{s.percentile(95) / 1_000:.3f}",
-                f"{s.percentile(99) / 1_000:.3f}",
-            ]
-        )
+        rows.append([f"{label}({gen})", *_format_stats(s)])
     return rows
 
 
@@ -114,6 +125,11 @@ def print_stats(stats: StreamingStats, table_format: TableFormat = TableFormat.P
                     all_rows.append([str(pid) if first else "", *row])
                     first = False
                 has_rows = True
+
+    rt = stats.read_time
+    if rt.count() > 0:
+        all_rows.append(_SEP_GROUP)
+        all_rows.append(["", "Read Time", *_format_stats(rt, per_ms=_NS_PER_MS)])
 
     if not all_rows:
         print("No GC statistics collected.")

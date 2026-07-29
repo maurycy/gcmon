@@ -1,6 +1,7 @@
 """Core GC monitoring functionality."""
 
 import logging
+import time
 from _remote_debugging import get_child_pids, get_gc_stats
 from typing import Self
 
@@ -47,7 +48,10 @@ class EventsMonitor:
             return PollStatus.FAIL
 
         try:
+            ts_read_start = time.monotonic_ns()
             events = get_gc_stats(pid, all_interpreters=True)
+            ts_read_stop = time.monotonic_ns()
+            self._stats.record_read_time(ts_read_stop - ts_read_start)
             last_ts = self._last_ts.get(pid, 0)
             for event in events:
                 # Skip events with timestamps already processed

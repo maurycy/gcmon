@@ -225,6 +225,61 @@ class TestStreamingStatsPidEviction:
         assert StreamingStats.MAX_ACTIVE_PIDS in streaming_stats._metrics_per_pid
 
 
+class TestStreamingStatsReadTime:
+    """Tests for StreamingStats.record_read_time and the read_time property."""
+
+    def test_read_time_empty_by_default(self, streaming_stats: StreamingStats) -> None:
+        assert streaming_stats.read_time.count() == 0
+        assert streaming_stats.read_time.sum() == 0
+        assert streaming_stats.read_time.average() == 0.0
+
+    def test_record_read_time_accumulates(self, streaming_stats: StreamingStats) -> None:
+        for duration_ns in (100_000, 200_000, 300_000):
+            streaming_stats.record_read_time(duration_ns)
+
+        assert streaming_stats.read_time.count() == 3
+        assert streaming_stats.read_time.sum() == 600_000
+        assert streaming_stats.read_time.average() == 200_000
+
+    def test_record_read_time_stores_nanoseconds_exactly(self, streaming_stats: StreamingStats) -> None:
+        streaming_stats.record_read_time(1_500)
+        streaming_stats.record_read_time(501)
+
+        assert streaming_stats.read_time.sum() == 2_001
+
+    def test_record_read_time_percentiles(self, streaming_stats: StreamingStats) -> None:
+        for value in range(1, 101):
+            streaming_stats.record_read_time(value)
+
+        assert streaming_stats.read_time.percentile(50) == 50.5
+        assert abs(streaming_stats.read_time.percentile(99) - 99.01) < 1e-9
+        assert streaming_stats.read_time.percentile(100) == 100.0
+
+    def test_record_read_time_zero(self, streaming_stats: StreamingStats) -> None:
+        streaming_stats.record_read_time(0)
+
+        assert streaming_stats.read_time.count() == 1
+        assert streaming_stats.read_time.sum() == 0
+
+    def test_read_time_independent_of_pause_metrics(
+        self,
+        streaming_stats: StreamingStats,
+        gc_stats_item_factory: Callable[..., GCStatsInfo],
+    ) -> None:
+        streaming_stats.update(12345, gc_stats_item_factory(ts_start=0, ts_stop=1_000_000))
+        streaming_stats.record_read_time(42_000)
+
+        assert streaming_stats.count() == 1
+        assert streaming_stats.read_time.count() == 1
+        assert streaming_stats.read_time.sum() == 42_000
+        assert streaming_stats.metrics["pause"][0].sum() == 1_000
+
+    def test_read_time_excluded_from_aggregate(self, streaming_stats: StreamingStats) -> None:
+        streaming_stats.record_read_time(1_000_000)
+
+        assert streaming_stats.aggregate() == {"pause_count": 0}
+
+
 class TestStreamingStatsAggregate:
     """Tests for StreamingStats.aggregate method."""
 
