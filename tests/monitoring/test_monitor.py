@@ -71,6 +71,35 @@ class TestEventsMonitorExtra:
 
         assert exporter.events == []
 
+    def test_poll_tracks_last_timestamp_per_pid(self, monitor: EventsMonitor, exporter: MockExporter) -> None:
+        """A child PID's events are not suppressed by a later timestamp seen on
+        another PID. One monitor polls the target and every child, and their
+        event streams interleave in time."""
+        per_pid = {
+            12345: [create_mock_stats_item(ts_start=5_000, ts_stop=5_100)],
+            999: [
+                create_mock_stats_item(ts_start=4_000, ts_stop=4_100),
+                create_mock_stats_item(ts_start=6_000, ts_stop=6_100),
+            ],
+        }
+
+        with patch("gcmon.monitor.get_gc_stats", side_effect=lambda pid, **_: per_pid[pid]):
+            monitor.poll(12345)
+            monitor.poll(999)
+
+        assert [e.ts_start for e in exporter.events] == [5_000, 4_000, 6_000]
+
+    def test_poll_still_skips_already_seen_timestamps_for_same_pid(
+        self, monitor: EventsMonitor, exporter: MockExporter
+    ) -> None:
+        item = create_mock_stats_item(ts_start=5_000, ts_stop=5_100)
+
+        with patch("gcmon.monitor.get_gc_stats", return_value=[item]):
+            monitor.poll(12345)
+            monitor.poll(12345)
+
+        assert [e.ts_start for e in exporter.events] == [5_000]
+
 
 class TestCreateMonitor:
     def test_returns_events_monitor(

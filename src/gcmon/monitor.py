@@ -25,7 +25,7 @@ class EventsMonitor:
         self._process = process
         self._exporter = exporter
         self._enabled = True
-        self._last_ts: int = 0
+        self._last_ts: dict[int, int] = {}
         self._stats = stats
 
     def get_child_pids(self) -> list[int]:
@@ -48,12 +48,14 @@ class EventsMonitor:
 
         try:
             events = get_gc_stats(pid, all_interpreters=True)
+            last_ts = self._last_ts.get(pid, 0)
             for event in events:
                 # Skip events with timestamps already processed
-                if event.ts_start > self._last_ts and event.ts_start < event.ts_stop:
+                if event.ts_start > last_ts and event.ts_start < event.ts_stop:
                     self._exporter.add_event(pid, event)
                     self._stats.update(pid, event)
-                    self._last_ts = event.ts_start
+                    last_ts = event.ts_start
+            self._last_ts[pid] = last_ts
 
             return PollStatus.OK
         except RuntimeError as exc:

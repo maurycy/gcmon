@@ -15,6 +15,7 @@
 
 ### Bugfixes
 
+- Fix under-reported GC activity for child processes
 - Fix doubled `Count` and `Sum` in the `--stats` table's `GC Pause` rows
 - Wait for process termination before reading return code in `run_monitoring_loop()` (#65)
 - Fix type annotations in source code and test suite
