@@ -260,7 +260,6 @@ class StreamingStats:
 
         self._metrics_per_pid.move_to_end(pid)
 
-        _record(self._metrics_per_pid[pid], item, "pause")
         for metric in METRICS:
             _record(self._metrics_per_pid[pid], item, metric)
 

@@ -155,6 +155,38 @@ class TestStreamingStatsPidTracking:
     def test_get_pid_stats_missing_returns_none(self, streaming_stats: StreamingStats) -> None:
         assert streaming_stats.get_pid_stats(99999) is None
 
+    def test_per_pid_pause_recorded_once(
+        self,
+        streaming_stats: StreamingStats,
+        gc_stats_item_factory: Callable[..., GCStatsInfo],
+    ) -> None:
+        """The per-PID 'pause' metric is recorded once per event, matching the
+        global total. It used to be recorded twice, doubling Count/Sum/Avg in
+        the per-PID rows of the --stats table."""
+        streaming_stats.update(12345, gc_stats_item_factory(ts_start=1_000, ts_stop=6_000))
+
+        pid_stats = streaming_stats.get_pid_stats(12345)
+        assert pid_stats is not None
+        assert pid_stats["pause"][0].count() == 1
+        assert pid_stats["pause"][0].sum() == 5
+        assert pid_stats["pause"][0].count() == streaming_stats.metrics["pause"][0].count()
+        assert pid_stats["pause"][0].sum() == streaming_stats.metrics["pause"][0].sum()
+
+    def test_per_pid_metrics_match_totals_for_single_pid(
+        self,
+        streaming_stats: StreamingStats,
+        incremental_gc_stats_item: GCStatsInfo,
+    ) -> None:
+        """With a single PID, every per-PID metric equals the global total."""
+        streaming_stats.update(12345, incremental_gc_stats_item)
+
+        pid_stats = streaming_stats.get_pid_stats(12345)
+        assert pid_stats is not None
+        for metric_key, gen_stats in streaming_stats.metrics.items():
+            for gen, total in gen_stats.items():
+                assert pid_stats[metric_key][gen].count() == total.count(), metric_key
+                assert pid_stats[metric_key][gen].sum() == total.sum(), metric_key
+
 
 class TestStreamingStatsPidEviction:
     """Tests for StreamingStats PID eviction."""

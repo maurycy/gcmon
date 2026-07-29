@@ -15,6 +15,7 @@
 
 ### Bugfixes
 
+- Fix doubled `Count` and `Sum` in the `--stats` table's `GC Pause` rows
 - Wait for process termination before reading return code in `run_monitoring_loop()` (#65)
 - Fix type annotations in source code and test suite
 - Remove `proto_decoder` and rely on the `perfetto` package for testing the `Perfetto` binary format.
