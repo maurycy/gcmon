@@ -75,6 +75,14 @@ class TestCombinedTraceExporter:
         chrome.add_instant_event.assert_called_once_with(DEFAULT_PID, msg)
         perfetto.add_instant_event.assert_called_once_with(DEFAULT_PID, msg)
 
+    def test_add_rss_sample_forwards_to_both(self) -> None:
+        chrome = Mock()
+        perfetto = Mock()
+        combined = CombinedTraceExporter(chrome=chrome, perfetto=perfetto)
+        combined.add_rss_sample(DEFAULT_PID, 4096, 1_000_000)
+        chrome.add_rss_sample.assert_called_once_with(DEFAULT_PID, 4096, 1_000_000)
+        perfetto.add_rss_sample.assert_called_once_with(DEFAULT_PID, 4096, 1_000_000)
+
     def test_close_calls_both_subexporters(self) -> None:
         chrome = Mock()
         perfetto = Mock()
@@ -125,6 +133,28 @@ class TestCombinedTraceExporter:
 
         pf_bytes = (tmp_path / "trace.pftrace").read_bytes()
         assert len(pf_bytes) > 0
+
+    def test_rss_sample_reaches_both_output_files(self, tmp_path: Path) -> None:
+        """An RSS sample emitted through the combined exporter lands in the
+        Chrome JSON as a counter event and in the Perfetto file."""
+        chrome = TraceExporter(tmp_path / "trace.json", flush_threshold=100)
+        perfetto = PerfettoExporter(tmp_path / "trace.pftrace", flush_threshold=100)
+        combined = CombinedTraceExporter(chrome=chrome, perfetto=perfetto)
+
+        combined.add_event(DEFAULT_PID, create_mock_stats_item(gen=0, iid=0))
+        combined.add_rss_sample(DEFAULT_PID, 4096, 1_000_000)
+        combined.close()
+
+        data = assert_valid_chrome_trace_format(tmp_path / "trace.json")
+        rss_counters = []
+        for event in data:
+            args = event.get("args")
+            if event["ph"] == "C" and isinstance(args, dict) and args.get("rss") == 4096:
+                rss_counters.append(event)
+        assert len(rss_counters) == 1
+        assert rss_counters[0]["pid"] == DEFAULT_PID
+
+        assert (tmp_path / "trace.pftrace").stat().st_size > 0
 
     def test_real_subexporters_produce_both_files(self, tmp_path: Path) -> None:
         """End-to-end: real TraceExporter + real PerfettoExporter as sub-exporters

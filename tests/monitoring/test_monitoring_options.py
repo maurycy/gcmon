@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from gcmon.commands.monitoring_options import get_monitoring_options
+from gcmon.commands.monitoring_options import RSS_CAPABLE_FORMATS, get_monitoring_options
 from gcmon.stats_output import TableFormat
 
 
@@ -127,3 +127,32 @@ class TestRssIntervalWarning:
         result = get_monitoring_options(args)
         assert result is not None
         assert not result.rss_enabled
+
+
+class TestRssFormatWarning:
+    """--rss is accepted for every format, but only some exporters implement
+    add_rss_sample; the rest discard the samples and must say so."""
+
+    @pytest.mark.parametrize("output_format", ["jsonl", "stdout"])
+    def test_unsupported_format_warns(self, output_format: str, caplog: pytest.LogCaptureFixture) -> None:
+        caplog.set_level(logging.WARNING)
+        args = _make_args(rss=True, format=output_format)
+        result = get_monitoring_options(args)
+        assert result is not None
+        assert result.rss_enabled
+        assert "RSS tracking is not supported" in caplog.text
+
+    @pytest.mark.parametrize("output_format", list(RSS_CAPABLE_FORMATS))
+    def test_supported_format_does_not_warn(self, output_format: str, caplog: pytest.LogCaptureFixture) -> None:
+        caplog.set_level(logging.WARNING)
+        args = _make_args(rss=True, format=output_format)
+        result = get_monitoring_options(args)
+        assert result is not None
+        assert "RSS tracking is not supported" not in caplog.text
+
+    def test_rss_disabled_does_not_warn_on_unsupported_format(self, caplog: pytest.LogCaptureFixture) -> None:
+        caplog.set_level(logging.WARNING)
+        args = _make_args(rss=False, format="jsonl")
+        result = get_monitoring_options(args)
+        assert result is not None
+        assert "RSS tracking is not supported" not in caplog.text

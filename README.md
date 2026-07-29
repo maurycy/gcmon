@@ -41,7 +41,7 @@ metrics into benchmarks.
   without in-process overhead
 - **Multiple export formats** - Chrome Trace Event, Perfetto binary protobuf, JSONL file, and JSONL to stdout ([examples](#example-chrome-trace-output))
 - **CLI** - Monitor processes or run scripts with GC monitoring ([usage](#cli-usage))
-- **RSS tracking** - Track Resident Set Size of monitored processes in Perfetto traces ([details](#rss-tracking))
+- **RSS tracking** - Track Resident Set Size of monitored processes in Chrome and Perfetto traces ([details](#rss-tracking))
 - **Pyperf hook integration** - Seamlessly integrate with pyperf benchmarks ([pyperf hook](#pyperf-hook-integration))
 
 ## When to Use
@@ -305,7 +305,7 @@ You must specify exactly one of `-s`/`--script` or `-m`/`--module`.
 | `--flush-threshold` | both | Number of events to buffer before flushing | `100` |
 | `--stats` | both | Show statistics table at end of monitoring (see [Statistics](#statistics)) | `False` |
 | `--table-format` | both | Table format: `plain` or `markdown`/`md` | `plain` |
-| `--rss` | both | Track RSS (Resident Set Size) of monitored process (Perfetto-only; requires `[cmdline]` extra) | `False` |
+| `--rss` | both | Track RSS (Resident Set Size) of monitored process (`chrome`, `perfetto`, `chrome+perfetto` formats; requires `[cmdline]` extra) | `False` |
 | `--rss-interval` | both | RSS sampling interval in seconds | `1.0` |
 
 ### Environment Variables
@@ -612,7 +612,9 @@ ORDER BY p.start_ts, c.ts
 
 ## RSS Tracking
 
-RSS (Resident Set Size) tracking is a Perfetto-only feature that samples the physical memory usage of each monitored process and emits it as a process-level counter track.
+RSS (Resident Set Size) tracking samples the physical memory usage of each monitored process and emits it as a process-level counter track.
+
+Supported by the `chrome`, `perfetto`, and `chrome+perfetto` formats. The `jsonl` and `stdout` formats discard RSS samples; `--rss` logs a warning when combined with them.
 
 ### How to Use
 
@@ -622,6 +624,9 @@ gcmon 12345 --format perfetto -o trace.pftrace --rss
 
 # Custom sampling interval
 gcmon 12345 --format perfetto --rss --rss-interval 0.5
+
+# Both Chrome and Perfetto outputs, each with the rss counter track
+gcmon 12345 --format chrome+perfetto -o trace --rss
 ```
 
 Requires the `[cmdline]` extra (which installs `psutil`). Without psutil, `--rss` is silently ignored and an info log is emitted.

@@ -17,6 +17,8 @@
 
 - Fix under-reported GC activity for child processes
 - Fix doubled `Count` and `Sum` in the `--stats` table's `GC Pause` rows
+- Fix `--rss` samples discarded with `--format chrome+perfetto`
+- Warn that `--rss` has no effect with `jsonl` or `stdout`
 - Wait for process termination before reading return code in `run_monitoring_loop()` (#65)
 - Fix type annotations in source code and test suite
 - Remove `proto_decoder` and rely on the `perfetto` package for testing the `Perfetto` binary format.

@@ -32,6 +32,10 @@ from gcmon.stats_output import TableFormat
 
 logger = logging.getLogger("gcmon")
 
+# Formats whose exporters implement EventsExporter.add_rss_sample. The others
+# inherit the no-op base implementation and silently discard RSS samples.
+RSS_CAPABLE_FORMATS = ("chrome", "trace", "perfetto", "chrome+perfetto")
+
 
 def _normalize_table_format(val: str) -> TableFormat:
     val = val.lower()
@@ -110,7 +114,10 @@ def add_monitoring_options(parser: argparse.ArgumentParser) -> None:
         "--rss",
         action="store_true",
         default=get_env_rss(),
-        help=f"Track RSS (Resident Set Size) of monitored process (Perfetto-only; requires psutil; or {ENV_RSS}=1 env var)",
+        help=(
+            f"Track RSS (Resident Set Size) of monitored process (supported for --format chrome, "
+            f"perfetto, chrome+perfetto; requires psutil; or {ENV_RSS}=1 env var)"
+        ),
     )
     parser.add_argument(
         "--rss-interval",
@@ -176,6 +183,11 @@ def get_monitoring_options(
         logger.info("Duration: %s", duration_label)
     if rss_enabled:
         logger.info("RSS tracking: enabled (interval: %ss)", rss_interval)
+        if output_format not in RSS_CAPABLE_FORMATS:
+            logger.warning(
+                "RSS tracking is not supported for --format %s; RSS samples will be discarded.",
+                output_format,
+            )
         if rss_interval < rate:
             logger.warning(
                 "RSS interval (%ss) is shorter than poll rate (%ss); "

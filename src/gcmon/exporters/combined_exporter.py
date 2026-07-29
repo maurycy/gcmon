@@ -65,6 +65,11 @@ class CombinedTraceExporter(EventsExporter):
         self._perfetto.add_instant_event(pid, item)
 
     @override
+    def add_rss_sample(self, pid: int, rss_bytes: int, ts_ns: int) -> None:
+        self._chrome.add_rss_sample(pid, rss_bytes, ts_ns)
+        self._perfetto.add_rss_sample(pid, rss_bytes, ts_ns)
+
+    @override
     def close(self) -> None:
         try:
             self._chrome.close()
