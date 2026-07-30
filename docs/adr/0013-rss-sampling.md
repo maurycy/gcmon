@@ -1,0 +1,101 @@
+# ADR-0013: Sample RSS in a standalone `RssSampler`, on a `tid = -1` sentinel track
+
+- **Status:** Accepted
+- **Date:** 2026-07-13
+
+## Context
+
+gcmon tracked GC-level object counts, where `heap_size` counts live objects rather than
+bytes, but nothing about the process's memory footprint. Correlating GC activity with real
+memory pressure (is GC driving RSS growth, or is RSS growth driving GC?) needs the
+OS-reported resident set size alongside the GC events.
+
+Three constraints shaped the design.
+
+**Cost.** `psutil.Process(pid).memory_info().rss` is cheap on Linux (a `/proc` read) but
+carries syscall overhead on Windows and macOS. The GC poll runs at 10 Hz by default,
+and multiplying that by each child pid is a meaningful tax for a metric that moves
+slowly.
+
+**RSS has no thread.** The other counters are emitted per `(pid, tid)`, where `tid` is
+the interpreter id. RSS is a process-level number with no thread affinity, so no
+honest `tid` exists to give it.
+
+**`MonitorLoop` should not learn about `psutil`.** The loop polls and paces.
+Threading sampling logic, timers and exception handling through it would spread a
+soft-optional dependency across the core.
+
+## Decision
+
+**Sampling lives in its own class**, `RssSampler` in `src/gcmon/rss_sampler.py`. It holds
+the exporter, the interval, and the last-sample time. Its only public method is
+`tick(now, live_pids)`, and the timer check is internal. `MonitorLoop` gains one optional
+constructor argument and one line in the loop body. It knows nothing about `psutil`,
+timers, or how a sample turns into an event.
+
+**The sampler callback is injectable**, the same pattern as `cmdline_provider` in
+`ProtobufEventEncoder`. Tests pass a mock and never touch `psutil`. The constructor checks
+availability **once**: if the import fails, it disables the sampler, logs at info level,
+and `tick()` becomes a no-op. No per-sample import guard.
+
+**Only pids that returned `PollStatus.OK` from the most recent GC poll are sampled.** The
+live set is cleared each iteration, so a pid must pass a fresh poll to be sampled. No
+stale pids, and a process that dies between the poll and the RSS read yields nothing.
+
+**The RSS counter uses a sentinel `tid = -1`.** `_build_meta` gates thread-meta emission on
+`iid >= 0`, so the `ProcessMeta` goes out once, deduped as usual, and **no phantom
+`ThreadMeta` is created**. The counter track key is `(pid, -1, "rss", "rss")`.
+
+`"rss"` is in `_TOPLEVEL_COUNTER_METRICS`, so the track is parented directly to the process
+track, outside the `GC Metrics` group, with the display name `rss`
+([ADR-0004](0004-toplevel-shared-counters.md)).
+
+**Opt-in, with a decoupled interval.** `--rss` / `GCMON_RSS` (truthy: `1`, `true`, `yes`,
+`on`) enables it; `--rss-interval` / `GCMON_RSS_INTERVAL` defaults to 1.0 s, independent of
+the 0.1 s GC poll rate.
+
+## Consequences
+
+- The default 1 Hz sampling costs an order of magnitude less than sampling at the GC poll
+  rate, and RSS does not move fast enough for the resolution to matter.
+- You can unit-test `RssSampler` without `psutil` and without a monitor loop.
+- Missing `psutil`, a dead process, or a permission error each produce no sample and no
+  error. `--rss` on a machine without `psutil` is ignored, with one info log.
+- **Perfetto-only in practice.** The base `EventsExporter.add_rss_sample` is a no-op and
+  `BufferedTraceExporter` overrides it, so JSONL and stdout carry no RSS. Chrome traces
+  *technically* contain the counter event, since it flows through the same buffered base
+  into `JsonEventEncoder`, but that is a side effect of the shared base. Nobody validates
+  or tests it. Only the Perfetto path is a supported feature.
+- Adding `"rss"` to `_TOPLEVEL_COUNTER_METRICS` brings the accepted trade-off
+  from ADR-0004 with it: its `sibling_order_rank` is dropped because its parent is OS-scoped.
+- The counter payload key is `"rss"` (`{"rss": rss_bytes}`). The event carries a
+  single argument, so the display name normalizes to the metric name and the key never
+  surfaces in the UI.
+
+## Alternatives considered
+
+- **`tid = 0` for the process-level counter.** Rejected: `0` is a legitimate interpreter id,
+  so it can collide with a real thread, and `_build_meta` would manufacture a
+  `ThreadMeta(pid, 0, "Thread 0")` that describes nothing. A negative sentinel cannot
+  collide, and one comparison guards it.
+- **Sampling inside `MonitorLoop` at the GC poll rate.** Rejected on cost and coupling:
+  ten times the syscalls for a slow-moving metric, and `psutil` knowledge pushed into the
+  core loop.
+- **Making RSS always-on.** Rejected: it requires `psutil` and adds syscalls to each run,
+  for a metric most people do not need.
+- **A guard-and-import inside `_sample`.** Rejected: the availability answer cannot change
+  during a run, so checking once at construction is cheaper and clearer.
+
+## Implementation
+
+- `src/gcmon/rss_sampler.py:14`, `RssSampler`; `:54`, `tick(now, live_pids)`; `:64`,
+  `_sample`; `:79`, `_default_rss_sampler`, catching `NoSuchProcess` / `AccessDenied`.
+- `src/gcmon/exporters/_buffered_exporter.py:18`, `_RSS_TID = -1`; `:61`, the `iid >= 0`
+  guard in `_build_meta`; `:77-82`, `add_rss_sample`.
+- `src/gcmon/exporters/perfetto_format.py:169`, `"rss"` in `_TOPLEVEL_COUNTER_METRICS`.
+- `src/gcmon/monitor_loop.py:62-67`, live-pid collection then `tick`;
+  `src/gcmon/commands/monitoring_base.py:58`, construction.
+- `src/gcmon/_env.py:209,221`, `get_env_rss` and `get_env_rss_interval`.
+- Tests: `tests/test_rss_sampler.py` (interval timing, live-pid filtering, injected sampler,
+  psutil-unavailable fallback); `tests/exporters/test_buffered_exporter.py` (`iid = -1`
+  emits no `ThreadMeta`); `tests/benchmarks/test_rss_sampler_bench.py` (read latency).

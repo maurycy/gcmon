@@ -1,0 +1,123 @@
+# ADR-0012: Support Perfetto output in `combine`, and dual output only in live mode
+
+- **Status:** Accepted
+- **Date:** 2026-06-25 (`chrome+perfetto` added 2026-06-27)
+
+## Context
+
+Two related questions about where trace formats are produced.
+
+**Offline.** `gcmon combine` merged Chrome JSON or JSONL inputs and wrote Chrome JSON or
+JSONL. Producing a Perfetto trace from existing captures meant re-running `monitor
+--format perfetto`, which is impossible after the fact.
+
+**Live.** A monitoring session produced one format. If you wanted both a `chrome://tracing`
+file and a `ui.perfetto.dev` file, you ran the monitor twice against different runs, and
+the two traces described different executions.
+
+The pieces to fix both already existed:
+[ADR-0007](0007-shared-trace-converter-pipeline.md) made `list[TraceEvent]` a
+format-independent intermediate, and [ADR-0008](0008-buffered-exporter-and-encoder-protocol.md)
+made `ProtobufEventEncoder` usable on its own, outside any exporter.
+
+## Decision
+
+### `combine --output-format perfetto`
+
+All paths except `jsonl → jsonl` funnel through a single `list[TraceEvent]`, then dispatch
+on output format. `jsonl → jsonl` keeps its fast path, since it needs no intermediate.
+
+| from ↓ / to → | chrome | jsonl | perfetto |
+|---|---|---|---|
+| chrome | yes | **rejected** | yes |
+| jsonl | yes | yes | yes |
+| perfetto | n/a | n/a | n/a |
+
+`chrome → jsonl` exits 1: the Chrome format has already lost the `TGCStatsInfo` structure
+JSONL needs. **Perfetto is not accepted as an input.** That would require a protobuf
+decoder, which is substantial work and sits outside the encoder's remit
+([ADR-0001](0001-hand-rolled-perfetto-protobuf-encoder.md)).
+
+**Normalization is per input file** on each `TraceEvent`-based path. `chrome → chrome`
+already worked this way; `jsonl → chrome` normalized over the combined list. The refactor
+unified them on the per-file contract. `jsonl → jsonl` still normalizes over the merged
+dict, on purpose: those items keep their original `TGCStatsInfo` / `TInstantMsg`
+structure, and per-pid zeroing across the merge is the established behaviour.
+
+The CLI does not derive a file extension from `--output-format`; it uses the `-o` path
+verbatim.
+
+### `--format chrome+perfetto` on `monitor` and `run`
+
+`CombinedTraceExporter` is a thin forwarder over a real `TraceExporter` and a real
+`PerfettoExporter`. It implements `EventsExporter` directly and does **not** extend
+`BufferedTraceExporter`, so each sub-exporter owns its own buffer, locks and meta-dedup
+state. `close()` closes Chrome inside a `try` and Perfetto in the `finally`, so a Chrome
+failure still closes Perfetto.
+
+`derive_combined_paths(base)` turns one `-o` argument into two files using
+`Path.stem`, which strips only the last extension:
+
+| `-o` | chrome | perfetto |
+|---|---|---|
+| `trace` | `trace.json` | `trace.pftrace` |
+| `trace.json` | `trace.json` | `trace.pftrace` |
+| `trace.foo` | `trace.json` | `trace.pftrace` |
+| `out/gcmon` | `out/gcmon.json` | `out/gcmon.pftrace` |
+
+Both files keep the parent directory, so the existing parent-directory check covers both.
+
+**`chrome+perfetto` is rejected by `combine`.** Combining is a single-output operation;
+dual output is a live-mode concern. `combine`'s `--output-format` choices stay
+`["jsonl", "chrome", "perfetto"]`.
+
+This change also fixed a pre-existing bug: `get_env_format`'s whitelist was
+`("chrome", "stdout", "jsonl")`, so `GCMON_FORMAT=perfetto` silently fell back to Chrome.
+It now accepts `perfetto` and `chrome+perfetto` too.
+
+## Consequences
+
+- You can convert existing captures to Perfetto without re-running anything.
+- One monitoring session yields both viewers' formats, describing the same run.
+- **Cross-file ordering is not guaranteed under multi-threaded callers.** If two threads
+  interleave between the Chrome and Perfetto calls inside `add_event`, the two files may
+  order events differently. The monitor loop is single-threaded, so the primary use case
+  is unaffected.
+- **Partial failure is not rolled back.** Chrome is written first, so if the Perfetto
+  sub-exporter raises mid-write, the Chrome file may contain events the Perfetto file does
+  not. Two back-to-back monitor runs fail the same way.
+- In `combine`, the pids are historical and usually dead, so cmdline lookup fails and
+  descriptors go out without it. See
+  [ADR-0010](0010-process-identity-cmdline-and-start-marker.md).
+- `chrome+perfetto` stays **undocumented in the README** on purpose. It is an internal
+  debugging convenience, and documenting it would promise support for the
+  ordering and partial-failure caveats above. `--help` still lists it.
+- Combining is not streaming. The whole output is built in memory, as before.
+
+## Alternatives considered
+
+- **A `MultiEncoder` driving two encoders from one `BufferedTraceExporter`.** Rejected: it
+  would have to reconcile two flush thresholds and two file-mode lifecycles inside one
+  buffer. Two independent sub-exporters are simpler and reuse code that is already tested.
+- **Extending `combine` to dual output.** Rejected as scope creep; `combine` takes one
+  `-o` and writes one file.
+- **Auto-deriving the output extension from `--output-format` in `combine`.** Rejected:
+  you control `-o`, and rewriting a path you typed would surprise you.
+- **A custom `cmdline_provider` for `combine`.** Rejected: the default degrades gracefully,
+  and historical pids have no cmdline to find.
+
+## Implementation
+
+- `src/gcmon/commands/convert_cmd.py:65-70`, `--output-format` choices; `:90-95`, the
+  `chrome → jsonl` rejection.
+- `src/gcmon/exporters/chrome_trace_io.py:169-230`, `combine_files`, with the `jsonl → jsonl`
+  fast path at `:182`, per-file normalization in the load loop, and the `perfetto` branch at
+  `:222-228`.
+- `src/gcmon/exporters/combined_exporter.py:14`, `derive_combined_paths`; `:36`,
+  `CombinedTraceExporter`.
+- `src/gcmon/exporters/exporter_factory.py:27-31`, the `chrome+perfetto` case.
+- `src/gcmon/_env.py:135`, the corrected `get_env_format` whitelist.
+- Tests: `tests/test_convert_cmd_perfetto.py` (609 lines, trace-processor driven; the
+  chrome↔perfetto content-equivalence class at `:465`);
+  `tests/exporters/test_combined_exporter.py` and `test_combined_exporter_integration.py`;
+  `tests/monitoring/test_monitor_cmd.py:208-267` (end-to-end, both files written).
