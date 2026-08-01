@@ -23,6 +23,7 @@ from tests.helpers import create_mock_incremental_item, create_mock_stats_item
 _PAUSE_NAME: str = "GC Pause (gen=0)"
 _INSTANT_NAME: str = "GC monitor started"
 _SECOND_PID: int = 67890
+_THIRD_PID: int = 54321
 
 _GEN: int = 0
 _IID: int = 0
@@ -228,6 +229,92 @@ def _write_trace_no_instant(
     )
     exporter.close()
     return path
+
+
+def _misplaced_end_events(tp: TraceProcessor) -> int:
+    """Return the trace processor's ``misplaced_end_event`` counter.
+
+    The ``stats`` table is the trace processor's own diagnostics: each
+    row is a named counter the parser bumps when it hits something
+    wrong. ``misplaced_end_event`` (severity ``data_loss``) counts slice
+    ENDs that had nothing to close and were therefore thrown away.
+    """
+    rows = list(tp.query("SELECT value FROM stats WHERE name = 'misplaced_end_event'"))
+    return int(rows[0].value) if rows else 0
+
+
+# Timestamps for the crossing-span trace: pid A is observed first and
+# dies first, but pid B starts while A is still running, so the two
+# spans cross rather than nest.
+_CROSS_A_START: int = 100_000_000
+_CROSS_B_START: int = 200_000_000
+_CROSS_A_STOP: int = 400_000_000
+_CROSS_B_STOP: int = 600_000_000
+
+
+def _write_crossing_trace(tmp: Path) -> Path:
+    """Write a Perfetto trace whose two pids have crossing spans."""
+    path = tmp / "crossing.pb"
+    exporter = PerfettoExporter(output_path=path, flush_threshold=1000)
+    for pid, ts in (
+        (DEFAULT_PID, _CROSS_A_START),
+        (_SECOND_PID, _CROSS_B_START),
+        (DEFAULT_PID, _CROSS_A_STOP),
+        (_SECOND_PID, _CROSS_B_STOP),
+    ):
+        exporter.add_instant_event(pid, create_instant_msg(name=_INSTANT_NAME, ts=ts))
+    exporter.close()
+    return path
+
+
+@pytest.fixture
+def crossing_trace_processor(tmp_path: Path) -> Iterator[TraceProcessor]:
+    path = _write_crossing_trace(tmp_path)
+    tp = TraceProcessor(trace=str(path), config=TraceProcessorConfig(load_timeout=300))
+    try:
+        yield tp
+    finally:
+        tp.close()
+
+
+# Timestamps for the zero-duration trace. _THIRD_PID is seen at a single
+# instant, so its span is zero-length as observed. DEFAULT_PID's span is
+# clipped to zero by _SECOND_PID starting one nanosecond later.
+_ZERO_INSTANT_TS: int = 100_000_000
+_ZERO_CLIPPED_START: int = 300_000_000
+_ZERO_CLIPPED_STOP: int = 800_000_000
+_ZERO_CROSSER_START: int = 300_000_001
+# The crosser must *outlive* the clipped span, or the two nest instead
+# of crossing and nothing is clipped at all.
+_ZERO_CROSSER_STOP: int = 900_000_000
+
+
+def _write_zero_duration_trace(tmp: Path) -> Path:
+    """Write a Perfetto trace containing both ways a ``Processes`` slice
+    can end up zero-length: a pid observed at a single instant, and a pid
+    clipped down to nothing by a pid starting 1ns later."""
+    path = tmp / "zero.pb"
+    exporter = PerfettoExporter(output_path=path, flush_threshold=1000)
+    for pid, ts in (
+        (_THIRD_PID, _ZERO_INSTANT_TS),
+        (DEFAULT_PID, _ZERO_CLIPPED_START),
+        (_SECOND_PID, _ZERO_CROSSER_START),
+        (DEFAULT_PID, _ZERO_CLIPPED_STOP),
+        (_SECOND_PID, _ZERO_CROSSER_STOP),
+    ):
+        exporter.add_instant_event(pid, create_instant_msg(name=_INSTANT_NAME, ts=ts))
+    exporter.close()
+    return path
+
+
+@pytest.fixture
+def zero_duration_trace_processor(tmp_path: Path) -> Iterator[TraceProcessor]:
+    path = _write_zero_duration_trace(tmp_path)
+    tp = TraceProcessor(trace=str(path), config=TraceProcessorConfig(load_timeout=300))
+    try:
+        yield tp
+    finally:
+        tp.close()
 
 
 @pytest.fixture
@@ -815,12 +902,23 @@ class TestProcessesTrack:
         trace_processor: TraceProcessor,
     ) -> None:
         """There is exactly one BEGIN+END pair per pid on the
-        ``Processes`` track. The trace processor collapses matching
-        BEGIN/END pairs into a single dur-bearing slice, so we expect
-        one dur>0 row per pid."""
+        ``Processes`` track, at the right timestamps.
+
+        Asserting the timestamps and not just the row count matters:
+        a crossing pair leaves the row count intact while silently
+        handing one pid a duration that is not its own.
+
+        This fixture's two spans cross. ``_SECOND_PID`` is observed from
+        ``_TS_START - 2ms`` to ``_TS_START + 5ms``; ``DEFAULT_PID`` starts
+        1ms later and runs 4ms longer. So ``_SECOND_PID``'s end is
+        clipped back to just before ``DEFAULT_PID`` begins, collapsing a
+        7ms span to 1ms, and ``DEFAULT_PID`` keeps its full 10ms. Before
+        the clip, the trace processor reported ``DEFAULT_PID`` as
+        6_000_000ns long against a real span of 10_000_000ns.
+        """
         rows = list(
             trace_processor.query(
-                f"SELECT s.name, s.dur FROM slice s "
+                f"SELECT s.name, s.ts, s.dur FROM slice s "
                 f"JOIN track t ON s.track_id = t.id "
                 f"WHERE t.name = '{_PROCESS_LIFETIME_TRACK_NAME}' "
                 f"ORDER BY s.name"
@@ -832,6 +930,55 @@ class TestProcessesTrack:
         ], f"expected exactly one dur-bearing Process <pid> slice per pid, got {[(r.name, r.dur) for r in rows]}"
         for r in rows:
             assert r.dur > 0, f"slice {r.name!r} has dur={r.dur}, expected > 0"
+        spans = {r.name: (r.ts, r.ts + r.dur) for r in rows}
+        default_start = _TS_START - 1_000_000
+        assert spans == {
+            f"Process {DEFAULT_PID}": (default_start, _TS_START + 9_000_000),
+            f"Process {_SECOND_PID}": (_TS_START - 2_000_000, default_start - 1),
+        }
+
+    @pytest.mark.parametrize("fmt", ["perfetto"])
+    def test_every_slice_records_its_real_span(
+        self,
+        fmt: str,
+        trace_processor: TraceProcessor,
+    ) -> None:
+        """Both slices carry the span gcmon observed, whether or not the
+        drawing survived it. ``_SECOND_PID`` is the one clipped in this
+        fixture: its slice draws to ``default_start - 1`` but records the
+        real end 5ms later. ``DEFAULT_PID`` is untouched and records the
+        same span it draws -- read the same way, no branch needed."""
+        rows = list(
+            trace_processor.query(
+                f"SELECT s.name AS name, a.flat_key AS flat_key, a.int_value AS int_value "
+                f"FROM args a "
+                f"JOIN slice s ON s.arg_set_id = a.arg_set_id "
+                f"JOIN track t ON s.track_id = t.id "
+                f"WHERE t.name = '{_PROCESS_LIFETIME_TRACK_NAME}' "
+                f"AND a.flat_key IN ('debug.real_start_ts', 'debug.real_end_ts') "
+                f"ORDER BY s.name, a.flat_key"
+            )
+        )
+        assert {(r.name, r.flat_key): r.int_value for r in rows} == {
+            (f"Process {DEFAULT_PID}", "debug.real_start_ts"): _TS_START - 1_000_000,
+            (f"Process {DEFAULT_PID}", "debug.real_end_ts"): _TS_START + 9_000_000,
+            (f"Process {_SECOND_PID}", "debug.real_start_ts"): _TS_START - 2_000_000,
+            (f"Process {_SECOND_PID}", "debug.real_end_ts"): _TS_START + 5_000_000,
+        }
+
+    @pytest.mark.parametrize("fmt", ["perfetto"])
+    def test_no_misplaced_end_events(
+        self,
+        fmt: str,
+        trace_processor: TraceProcessor,
+    ) -> None:
+        """The trace processor discards nothing.
+
+        ``misplaced_end_event`` counts every ``TYPE_SLICE_END`` that had
+        no slice to close. It is the trace processor reporting data loss
+        directly, rather than us inferring it from the slice table.
+        """
+        assert _misplaced_end_events(trace_processor) == 0
 
     @pytest.mark.parametrize("fmt", ["perfetto"])
     def test_slice_name_format(
@@ -934,6 +1081,128 @@ class TestProcessesTrack:
             assert rows[0].string_value == _FAKE_CMDLINE_JOINED, (
                 f"debug.cmdline for pid {pid}: expected {_FAKE_CMDLINE_JOINED!r}, got {rows[0].string_value!r}"
             )
+
+
+class TestCrossingProcessSpans:
+    """Two pids whose observed spans cross rather than nest.
+
+    Slices on one Perfetto track are a stack, so a crossing pair cannot
+    be expressed: the trace processor closes both slices at the earlier
+    END and discards the later one. Before the encoder clipped these
+    spans, this trace produced ``misplaced_end_event: 1`` and handed
+    ``_SECOND_PID`` a duration ending at ``DEFAULT_PID``'s last event.
+    """
+
+    def test_no_misplaced_end_events(self, crossing_trace_processor: TraceProcessor) -> None:
+        assert _misplaced_end_events(crossing_trace_processor) == 0
+
+    def test_earlier_span_is_clipped_and_later_span_is_intact(
+        self,
+        crossing_trace_processor: TraceProcessor,
+    ) -> None:
+        rows = list(
+            crossing_trace_processor.query(
+                f"SELECT s.name, s.ts, s.dur FROM slice s "
+                f"JOIN track t ON s.track_id = t.id "
+                f"WHERE t.name = '{_PROCESS_LIFETIME_TRACK_NAME}' "
+                f"ORDER BY s.ts"
+            )
+        )
+        spans = {r.name: (r.ts, r.ts + r.dur) for r in rows}
+        assert spans == {
+            # Clipped to one nanosecond before the later pid begins.
+            f"Process {DEFAULT_PID}": (_CROSS_A_START, _CROSS_B_START - 1),
+            # Untouched: this is the span that used to be truncated.
+            f"Process {_SECOND_PID}": (_CROSS_B_START, _CROSS_B_STOP),
+        }
+
+    def test_every_slice_records_its_real_span(
+        self,
+        crossing_trace_processor: TraceProcessor,
+    ) -> None:
+        """Both slices carry ``real_start_ts`` / ``real_end_ts``, so the
+        drawn duration can always be told apart from the observed one --
+        including for the clipped slice, whose drawn end is 200ms short
+        of the truth."""
+        rows = list(
+            crossing_trace_processor.query(
+                f"SELECT s.name AS name, a.flat_key AS flat_key, a.int_value AS int_value "
+                f"FROM args a "
+                f"JOIN slice s ON s.arg_set_id = a.arg_set_id "
+                f"JOIN track t ON s.track_id = t.id "
+                f"WHERE t.name = '{_PROCESS_LIFETIME_TRACK_NAME}' "
+                f"AND a.flat_key IN ('debug.real_start_ts', 'debug.real_end_ts') "
+                f"ORDER BY s.name, a.flat_key"
+            )
+        )
+        assert {(r.name, r.flat_key): r.int_value for r in rows} == {
+            (f"Process {DEFAULT_PID}", "debug.real_start_ts"): _CROSS_A_START,
+            (f"Process {DEFAULT_PID}", "debug.real_end_ts"): _CROSS_A_STOP,
+            (f"Process {_SECOND_PID}", "debug.real_start_ts"): _CROSS_B_START,
+            (f"Process {_SECOND_PID}", "debug.real_end_ts"): _CROSS_B_STOP,
+        }
+
+
+class TestZeroDurationProcessSpans:
+    """A ``Processes`` slice that ends up zero-length is still drawn.
+
+    Two ways to get one: a pid observed at a single instant, and a pid
+    clipped down to nothing by a pid starting one nanosecond later. Both
+    are in this fixture. Dropping such a slice would leave the pid off
+    the track with nothing to indicate it was ever monitored, and a
+    reader has no way to notice an absence.
+    """
+
+    def test_no_misplaced_end_events(self, zero_duration_trace_processor: TraceProcessor) -> None:
+        """A zero-duration slice is a BEGIN and an END at the same ts.
+        The trace processor must pair them, not orphan the END."""
+        assert _misplaced_end_events(zero_duration_trace_processor) == 0
+
+    def test_every_pid_keeps_a_slice(
+        self,
+        zero_duration_trace_processor: TraceProcessor,
+    ) -> None:
+        """All three pids appear, two of them with ``dur = 0``."""
+        rows = list(
+            zero_duration_trace_processor.query(
+                f"SELECT s.name AS name, s.ts AS ts, s.dur AS dur FROM slice s "
+                f"JOIN track t ON s.track_id = t.id "
+                f"WHERE t.name = '{_PROCESS_LIFETIME_TRACK_NAME}' "
+                f"ORDER BY s.ts"
+            )
+        )
+        assert {r.name: (r.ts, r.dur) for r in rows} == {
+            f"Process {_THIRD_PID}": (_ZERO_INSTANT_TS, 0),
+            f"Process {DEFAULT_PID}": (_ZERO_CLIPPED_START, 0),
+            f"Process {_SECOND_PID}": (_ZERO_CROSSER_START, _ZERO_CROSSER_STOP - _ZERO_CROSSER_START),
+        }
+
+    def test_zero_duration_slices_still_record_their_real_span(
+        self,
+        zero_duration_trace_processor: TraceProcessor,
+    ) -> None:
+        """This is the whole point of drawing them: ``DEFAULT_PID`` draws
+        as ``dur = 0`` but was observed for 500ms, and that is readable
+        from the trace."""
+        rows = list(
+            zero_duration_trace_processor.query(
+                f"SELECT s.name AS name, a.flat_key AS flat_key, a.int_value AS int_value "
+                f"FROM args a "
+                f"JOIN slice s ON s.arg_set_id = a.arg_set_id "
+                f"JOIN track t ON s.track_id = t.id "
+                f"WHERE t.name = '{_PROCESS_LIFETIME_TRACK_NAME}' "
+                f"AND a.flat_key IN ('debug.real_start_ts', 'debug.real_end_ts') "
+                f"ORDER BY s.name, a.flat_key"
+            )
+        )
+        assert {(r.name, r.flat_key): r.int_value for r in rows} == {
+            (f"Process {DEFAULT_PID}", "debug.real_start_ts"): _ZERO_CLIPPED_START,
+            (f"Process {DEFAULT_PID}", "debug.real_end_ts"): _ZERO_CLIPPED_STOP,
+            (f"Process {_SECOND_PID}", "debug.real_start_ts"): _ZERO_CROSSER_START,
+            (f"Process {_SECOND_PID}", "debug.real_end_ts"): _ZERO_CROSSER_STOP,
+            (f"Process {_THIRD_PID}", "debug.real_start_ts"): _ZERO_INSTANT_TS,
+            (f"Process {_THIRD_PID}", "debug.real_end_ts"): _ZERO_INSTANT_TS,
+        }
 
 
 @pytest.mark.stress

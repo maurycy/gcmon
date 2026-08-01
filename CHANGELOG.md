@@ -2,6 +2,11 @@
 
 ## WIP
 
+### Bugfixes
+
+- Fix wrong durations on the Perfetto `Processes` track when process lifetimes overlap without nesting
+- Every `Processes` slice now records the span gcmon observed in `real_start_ts` / `real_end_ts` annotations
+
 ## Version 0.4.0 (2026-07-31)
 
 ### Breaking changes
