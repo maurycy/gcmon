@@ -81,7 +81,11 @@ atomic `_build_meta` guarantees that happens exactly once.
   empty.
 - **Collect cmdline in `monitor_loop.py` / `monitor.py` or the CLI.** Rejected: cmdline is
   trace metadata that only the Perfetto format needs. Keeping collection in the exporter
-  layer means the JSONL, Chrome and stdout paths carry no `psutil` cost.
+  layer means the JSONL, Chrome and stdout paths carry no `psutil` cost. Unchanged by
+  monitor-reported liveness ([ADR-0011](0011-process-lifetime-and-ordering.md)), which reports
+  observations from the loop but still asks the exporter for no metadata. It does mean a pid
+  seen only through liveness gets a slice with no cmdline, since the fetch hangs off the event
+  path.
 - **Make `psutil` a hard dependency.** Rejected: gcmon is installed next to the process it
   monitors, and graceful degradation costs one `try`/`except`.
 

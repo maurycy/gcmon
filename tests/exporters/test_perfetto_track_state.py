@@ -82,53 +82,68 @@ class TestProcessLifetimeState:
     def test_first_update_seeds_both_ends(self) -> None:
         state = PerfettoTrackState()
         assert not state.has_process_lifetime(100)
-        state.update_process_lifetime(100, 1_000, extends_end=True)
+        state.update_process_lifetime(100, 1_000)
         assert state.has_process_lifetime(100)
         assert state.get_process_lifetimes() == [(100, 1_000, 1_000)]
         assert not state.has_process_lifetime(200)
 
     def test_span_widens_in_both_directions(self) -> None:
         state = PerfettoTrackState()
-        state.update_process_lifetime(100, 2_000, extends_end=True)
-        state.update_process_lifetime(100, 5_000, extends_end=True)
-        state.update_process_lifetime(100, 1_000, extends_end=True)
-        state.update_process_lifetime(100, 3_000, extends_end=True)  # inside; no effect
+        state.update_process_lifetime(100, 2_000)
+        state.update_process_lifetime(100, 5_000)
+        state.update_process_lifetime(100, 1_000)
+        state.update_process_lifetime(100, 3_000)  # inside; no effect
         assert state.get_process_lifetimes() == [(100, 1_000, 5_000)]
 
-    def test_counter_moves_start_but_never_end(self) -> None:
+    def test_a_counter_widens_both_ends(self) -> None:
+        """The reverse of the old rule, where a counter moved the start
+        and never the end. An RSS sample at 9us is evidence the process
+        was alive at 9us exactly as a GC event would be, and the caller
+        no longer says which kind it is holding."""
         state = PerfettoTrackState()
-        state.update_process_lifetime(100, 2_000, extends_end=True)
-        state.update_process_lifetime(100, 4_000, extends_end=True)
-        # A counter before the span's start still pulls the start back...
-        state.update_process_lifetime(100, 1_000, extends_end=False)
-        # ...but one after its end leaves the end alone.
-        state.update_process_lifetime(100, 9_000, extends_end=False)
-        assert state.get_process_lifetimes() == [(100, 1_000, 4_000)]
+        state.update_process_lifetime(100, 2_000)
+        state.update_process_lifetime(100, 4_000)
+        # A counter before the span's start pulls the start back...
+        state.update_process_lifetime(100, 1_000)
+        # ...and one after its end pushes the end out.
+        state.update_process_lifetime(100, 9_000)
+        assert state.get_process_lifetimes() == [(100, 1_000, 9_000)]
 
-    def test_counter_only_pid_gets_no_span(self) -> None:
+    def test_counter_only_pid_gets_a_span(self) -> None:
+        """A pid seen only through counters used to get a start, and
+        therefore a rank, but no span and no slice. It now gets both."""
         state = PerfettoTrackState()
-        state.update_process_lifetime(100, 1_000, extends_end=False)
-        state.update_process_lifetime(100, 7_000, extends_end=False)
-        # A start, and therefore a rank, but nothing to draw a span over.
+        state.update_process_lifetime(100, 1_000)
+        state.update_process_lifetime(100, 7_000)
         assert state.has_process_lifetime(100)
         assert state.get_process_lifetime_start_ts(100) == 1_000
-        assert state.get_process_lifetimes() == []
+        assert state.get_process_lifetimes() == [(100, 1_000, 7_000)]
 
-    def test_leading_counter_does_not_seed_the_end(self) -> None:
-        """A counter cannot set the end even when it is the first event
-        folded for a pid.
+    def test_a_leading_counter_seeds_the_end(self) -> None:
+        """A counter sets the end like anything else, including when it
+        is the first event folded for a pid.
 
-        Events reach the encoder in buffer order, not timestamp order:
-        a poll returns GC events that already happened, while an RSS
-        sample is stamped when it is taken. So a counter can arrive
-        first for a pid and carry a later ts than every GC event in the
-        same batch.
+        Events reach the encoder in buffer order, not timestamp order: a
+        poll returns GC events that already happened, while an RSS sample
+        is stamped when taken, so a counter can arrive first and carry a
+        later ts than every GC event in the batch.
         """
         state = PerfettoTrackState()
-        state.update_process_lifetime(100, 1_000, extends_end=False)
-        state.update_process_lifetime(100, 500, extends_end=True)
-        state.update_process_lifetime(100, 600, extends_end=True)
-        assert state.get_process_lifetimes() == [(100, 500, 600)]
+        state.update_process_lifetime(100, 1_000)
+        state.update_process_lifetime(100, 500)
+        state.update_process_lifetime(100, 600)
+        assert state.get_process_lifetimes() == [(100, 500, 1_000)]
+
+    def test_both_ends_always_carry_the_same_pids(self) -> None:
+        """One call gives a pid both a start and an end, so no pid can
+        land in one dict and not the other -- which is what lets
+        ``get_process_lifetimes`` index the start dict while iterating
+        the end one."""
+        state = PerfettoTrackState()
+        for pid, ts in ((100, 1_000), (200, 2_000), (100, 3_000)):
+            state.update_process_lifetime(pid, ts)
+        assert state._process_lifetime_start.keys() == state._process_lifetime_end.keys()
+        assert sorted(state.get_process_lifetimes()) == [(100, 1_000, 3_000), (200, 2_000, 2_000)]
 
     def test_get_returns_every_span_regardless_of_order(self) -> None:
         """Order is not part of the contract -- ``_clip_spans_to_laminar``
@@ -141,8 +156,8 @@ class TestProcessLifetimeState:
             (300, 1_000, 4_000),
             (100, 1_000, 9_000),
         ):
-            state.update_process_lifetime(pid, start, extends_end=True)
-            state.update_process_lifetime(pid, end, extends_end=True)
+            state.update_process_lifetime(pid, start)
+            state.update_process_lifetime(pid, end)
         assert sorted(state.get_process_lifetimes()) == [
             (100, 1_000, 9_000),
             (200, 2_000, 3_000),
@@ -153,7 +168,7 @@ class TestProcessLifetimeState:
         """Reading spans has no side effect: the once-per-trace contract
         is ``finalize_perfetto_packets``' flag, not a drain here."""
         state = PerfettoTrackState()
-        state.update_process_lifetime(100, 1_000, extends_end=True)
+        state.update_process_lifetime(100, 1_000)
         assert state.get_process_lifetimes() == [(100, 1_000, 1_000)]
         assert state.get_process_lifetimes() == [(100, 1_000, 1_000)]
         assert state.has_process_lifetime(100)

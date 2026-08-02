@@ -132,10 +132,19 @@ before the later one begins. `s.dur` is what could be drawn; `real_start_ts` and
 the query is the same either way — and the difference can be total, since a span
 crossed by one starting a microsecond later is clipped to a microsecond.
 
-Every monitored process that did GC work gets exactly one slice, so you may join
-these to pids one-to-one. Some of them have `dur = 0`: a process observed at a
-single instant, or clipped down to nothing. They are drawn anyway, precisely so
-that the annotations below can be read off them.
+Every monitored process gets exactly one slice, so you may join these to pids
+one-to-one — including one gcmon polled but that never collected, which has no
+process track and no `cmdline` annotation, only the span. Some slices have
+`dur = 0`: a process observed at a single instant, or clipped down to nothing.
+They are drawn anyway, precisely so that the annotations below can be read off
+them.
+
+Two caveats. Processes still alive when monitoring stops share an end timestamp
+and so nest, and the trace processor closes at most **512** nested slices; past
+that they come back with `dur = -1` and no diagnostic, so filter on `s.dur >= 0`
+if a capture may have had more than 512 processes running at the end. And
+`gcmon combine` spans cover GC activity only, so spans are comparable across
+traces captured the same way.
 
 ```sql
 -- Processes whose drawn duration is shorter than what gcmon observed

@@ -12,7 +12,7 @@ Two implementations are provided:
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Sequence, Set
 from pathlib import Path
 from typing import Protocol
 
@@ -142,6 +142,20 @@ class ProtobufEventEncoder:
         self._path = path
         self._has_written = False
 
+    def record_process_liveness(self, pids: Set[int], ts_ns: int) -> None:
+        """Fold a whole tick's liveness observations into the
+        ``Processes``-track span accumulator: *pids* are the processes
+        gcmon read GC state out of at *ts_ns*.
+
+        Kept off the ``EventEncoder`` protocol, since a liveness
+        observation is neither a ``TraceEvent`` nor bytes. The caller is
+        ``PerfettoExporter``, which holds a typed handle to this class;
+        see ADR-0011. Writes nothing: the observations reach the file at
+        ``close()``.
+        """
+        for pid in pids:
+            self._track_state.update_process_lifetime(pid, ts_ns)
+
     def write_events(self, events: Sequence[TraceEvent]) -> None:
         if not events:
             return
@@ -166,11 +180,22 @@ class ProtobufEventEncoder:
             f.flush()
 
     def close(self) -> None:
-        if self._path is None or not self._has_written:
+        """Emit the ``Processes`` track and finish the file.
+
+        The guard is on having packets, not on having written earlier:
+        liveness reaches ``_track_state`` without going through
+        ``write_events``, so a run in which nothing ever collected has a
+        track to emit and no bytes on disk yet. A trace with nothing at
+        all still produces no file.
+        """
+        if self._path is None:
             return
         packets = finalize_perfetto_packets(self._track_state, self._sequence_id)
-        if packets:
-            with open(self._path, "ab") as f:
-                for entry in packets:
-                    f.write(encode_bytes_field(TraceField.PACKET, entry))
-                f.flush()
+        if not packets:
+            return
+        mode = "wb" if not self._has_written else "ab"
+        self._has_written = True
+        with open(self._path, mode) as f:
+            for entry in packets:
+                f.write(encode_bytes_field(TraceField.PACKET, entry))
+            f.flush()

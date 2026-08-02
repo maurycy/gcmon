@@ -1,6 +1,7 @@
 """Base exporter interface for GC monitoring data."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Set
 
 from ..protocol import TGCStatsInfo, TInstantMsg
 
@@ -24,3 +25,12 @@ class EventsExporter(ABC):
 
     def add_rss_sample(self, pid: int, rss_bytes: int, ts_ns: int) -> None:  # noqa: B027
         """Record an RSS sample for *pid*. No-op in the base class."""
+
+    def add_process_liveness(self, pids: Set[int], ts_ns: int) -> None:  # noqa: B027
+        """Record that gcmon read GC state out of every pid in *pids* at
+        *ts_ns*. No-op in the base class.
+
+        One call per monitor tick carries the whole live set. Only the
+        Perfetto path acts on it, widening each pid's ``Processes``-track
+        span; see ADR-0011.
+        """
