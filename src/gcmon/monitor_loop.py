@@ -46,7 +46,17 @@ class MonitorLoop:
                 now_ns = time.monotonic_ns()
                 now = now_ns / 1e9
                 wait: list[bool] = []
-                children: list[int] = [self._monitor.pid, *self._monitor.get_child_pids()]
+                child_pids = self._monitor.get_child_pids()
+                children: list[int] = [self._monitor.pid, *(child_pids or [])]
+
+                # A process that exits between two ticks is never polled
+                # again, so no policy gives up on it and the branch below
+                # never runs. None means the listing failed, so prune only
+                # when it worked.
+                if child_pids is not None:
+                    self._monitor.retain(set(children))
+                    for gone in pid_policies.keys() - set(children):
+                        del pid_policies[gone]
 
                 # Phase 1: GC poll — track which PIDs returned OK
                 live_pids: set[int] = set()
@@ -61,9 +71,15 @@ class MonitorLoop:
                         pid_policies[pid] = self._wait_policy_factory()
 
                     rc = self._monitor.poll(pid)
-                    wait.append(pid_policies[pid].wait(rc))
+                    keep_waiting = pid_policies[pid].wait(rc)
+                    wait.append(keep_waiting)
                     if rc == PollStatus.OK:
                         live_pids.add(pid)
+                    elif not keep_waiting:
+                        # The policy decides when a pid is finished. It stays
+                        # behind: a fresh one would answer True until its own
+                        # startup timeout expired, holding the loop open.
+                        self._monitor.forget(pid)
 
                 # Phase 2: liveness — report who answered, in one batched
                 # call. The only place that knows a process was still

@@ -1,6 +1,7 @@
+import itertools
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from unittest.mock import MagicMock, Mock, call, patch
 
 import pytest
@@ -9,7 +10,7 @@ from gcmon.monitor_loop import MonitorLoop
 from gcmon.poll_status import PollStatus
 from gcmon.rss_sampler import RssSampler
 from gcmon.run_policy import InfinityRunner, Runner
-from gcmon.wait_policy import WaitPolicy
+from gcmon.wait_policy import StartupTimeoutPolicy, WaitPolicy
 
 
 @pytest.fixture
@@ -191,6 +192,133 @@ class TestLivePidsTracking:
         second_live = rss_sampler.tick.call_args_list[1][0][1]
         assert first_live == {12345, 999}
         assert second_live == {12345, 888}
+
+
+class TestForgettingDeadPids:
+    """The wait policy decides when a PID is finished, and the loop drops the
+    cursors when it does. A cursor tracks a counter owned by one process and
+    means nothing for whatever the OS gives that PID to next."""
+
+    def _policy(self, *verdicts: bool) -> Mock:
+        return Mock(spec=WaitPolicy, **{"wait.side_effect": list(verdicts)})
+
+    def _run(self, monitor: MagicMock, factory: Mock, ticks: int) -> None:
+        runner = Mock(spec=Runner)
+        runner.run.return_value = iter([None] * ticks)
+        MonitorLoop(monitor, runner, factory, rate=0.01).run()
+
+    def test_forgets_a_pid_the_policy_gives_up_on(self, mock_monitor: MagicMock) -> None:
+        mock_monitor.get_child_pids.return_value = [999]
+        mock_monitor.poll.side_effect = [
+            PollStatus.OK,
+            PollStatus.OK,  # tick 1: both answer
+            PollStatus.OK,
+            PollStatus.INVALID_PROCESS,  # tick 2: the child is gone
+        ]
+        factory = Mock(side_effect=[self._policy(True, True), self._policy(True, False)])
+
+        self._run(mock_monitor, factory, ticks=2)
+
+        mock_monitor.forget.assert_called_once_with(999)
+
+    def test_keeps_state_while_the_policy_still_waits(self, mock_monitor: MagicMock) -> None:
+        """A failed poll from a process that has yet to initialise is one the
+        policy answers True to, and nothing is dropped on its account."""
+        mock_monitor.get_child_pids.return_value = [999]
+        mock_monitor.poll.side_effect = [
+            PollStatus.OK,
+            PollStatus.INVALID_PROCESS,
+            PollStatus.OK,
+            PollStatus.INVALID_PROCESS,
+        ]
+        factory = Mock(side_effect=[self._policy(True, True), self._policy(True, True)])
+
+        self._run(mock_monitor, factory, ticks=2)
+
+        mock_monitor.forget.assert_not_called()
+
+    def test_a_dead_pid_keeps_its_policy(self, mock_monitor: MagicMock) -> None:
+        """Only the cursors go. A replacement policy would not have seen the
+        pid alive, so it would answer True to every further invalid poll and
+        hold the loop open for a whole startup timeout."""
+        mock_monitor.get_child_pids.return_value = [999]
+        mock_monitor.poll.side_effect = [
+            PollStatus.OK,
+            PollStatus.OK,
+            PollStatus.OK,
+            PollStatus.INVALID_PROCESS,
+            PollStatus.OK,
+            PollStatus.INVALID_PROCESS,
+        ]
+        factory = Mock(side_effect=[self._policy(True, True, True), self._policy(True, False, False)])
+
+        self._run(mock_monitor, factory, ticks=3)
+
+        # One policy each for 12345 and 999, and none built to replace 999.
+        assert factory.call_count == 2
+        assert [c.args for c in mock_monitor.forget.call_args_list] == [(999,), (999,)]
+
+    def test_forgets_pids_that_leave_the_process_tree(self, mock_monitor: MagicMock) -> None:
+        """The path no wait policy can see: a child that exits between ticks
+        is never polled again, so its absence from the tree is all there is."""
+        mock_monitor.get_child_pids.side_effect = [[999], list[int]()]
+        factory = Mock(side_effect=[self._policy(True, True), self._policy(True)])
+
+        self._run(mock_monitor, factory, ticks=2)
+
+        assert mock_monitor.retain.call_args_list == [call({12345, 999}), call({12345})]
+
+    def test_a_failed_listing_prunes_nothing(self, mock_monitor: MagicMock) -> None:
+        """get_child_pids reports None when it could not ask the OS. Treating
+        that as an empty tree would drop the cursors of every live child and
+        re-export their whole ring on the next poll."""
+        mock_monitor.get_child_pids.side_effect = [[999], None]
+        factory = Mock(side_effect=[self._policy(True, True), self._policy(True)])
+
+        self._run(mock_monitor, factory, ticks=2)
+
+        assert mock_monitor.retain.call_args_list == [call({12345, 999})]
+
+    def test_a_returning_pid_gets_a_fresh_policy(self, mock_monitor: MagicMock) -> None:
+        """Once a pid has left the tree, whatever comes back under it is a
+        new process and starts its startup grace over."""
+        mock_monitor.get_child_pids.side_effect = [[999], list[int](), [999]]
+        factory = Mock(side_effect=[self._policy(True, True, True), self._policy(True), self._policy(True)])
+
+        self._run(mock_monitor, factory, ticks=3)
+
+        # 12345 once, then 999 twice: once on first sight, once on return.
+        assert factory.call_count == 3
+
+    def test_a_dead_target_does_not_extend_the_run(self) -> None:
+        """The regression the policy deletion caused, against the real policy:
+        a target that dies while a child is still alive used to keep the loop
+        polling until a fresh startup timeout expired."""
+        monitor = MagicMock()
+        monitor.pid = 12345
+        monitor.get_child_pids.return_value = [999]
+        ticks = itertools.count()
+        state = {"tick": 0}
+
+        def poll(pid: int) -> PollStatus:
+            if state["tick"] == 0:
+                return PollStatus.OK
+            if pid == 12345:
+                return PollStatus.INVALID_PROCESS
+            return PollStatus.OK if state["tick"] == 1 else PollStatus.INVALID_PROCESS
+
+        monitor.poll.side_effect = poll
+
+        class CountingRunner:
+            def run(self, stop: Callable[[], bool]) -> Generator[None]:
+                while not stop() and next(ticks) < 50:
+                    yield None
+                    state["tick"] += 1
+
+        loop = MonitorLoop(monitor, CountingRunner(), lambda: StartupTimeoutPolicy(2), rate=0.001)
+        loop.run()
+
+        assert state["tick"] == 2, "the loop kept polling a dead target"
 
 
 class TestRssSamplerInLoop:
