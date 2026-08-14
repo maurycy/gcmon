@@ -260,46 +260,99 @@ class TestExactTotals:
     def test_exact_is_sampled_plus_lost(self) -> None:
         stats = self._stats()
 
-        assert stats.exact_count(1, 0) == 10
-        assert stats.exact_pause_ns(1, 0) == 10_000
+        assert stats.pause_totals(1, 0).exact_count == 10
+        assert stats.pause_totals(1, 0).exact_pause_ns == 10_000
 
     def test_coverage_and_scale_agree_with_the_totals(self) -> None:
         stats = self._stats()
 
-        assert stats.coverage(1, 0) == pytest.approx(0.3)
-        assert stats.scale_factor(1, 0) == pytest.approx(10 / 3)
+        assert stats.pause_totals(1, 0).coverage == pytest.approx(0.3)
+        assert stats.pause_totals(1, 0).scale_factor == pytest.approx(10 / 3)
 
     def test_an_untouched_generation_is_neutral(self) -> None:
         """1.0 rather than a division by zero, so no call site has to guard."""
         stats = StreamingStats()
 
-        assert stats.coverage(1, 2) == 1.0
-        assert stats.scale_factor(1, 2) == 1.0
-        assert stats.exact_count(1, 2) == 0
+        assert stats.pause_totals(1, 2).coverage == 1.0
+        assert stats.pause_totals(1, 2).scale_factor == 1.0
+        assert stats.pause_totals(1, 2).exact_count == 0
 
     def test_a_lossless_run_reports_full_coverage(self) -> None:
         stats = StreamingStats()
         stats.update(1, create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000))
 
-        assert stats.coverage(1, 0) == 1.0
-        assert stats.exact_count(1, 0) == 1
+        assert stats.pause_totals(1, 0).coverage == 1.0
+        assert stats.pause_totals(1, 0).exact_count == 1
 
     def test_totals_span_every_pid(self) -> None:
         stats = self._stats()
         stats.update(2, create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000))
         stats.record_loss(2, 0, 1, 1_000)
 
-        assert stats.exact_count(None, 0) == 12
-        assert stats.exact_count(2, 0) == 2
+        assert stats.pause_totals_by_gen()[0].exact_count == 12
+        assert stats.pause_totals(2, 0).exact_count == 2
 
     def test_loss_survives_a_pid_the_monitor_forgets(self) -> None:
         """Recorded per poll rather than flushed at the end, so a child that
         exits mid-run still counts."""
         stats = self._stats()
-        before = stats.exact_count(None, 0)
+        before = stats.pause_totals_by_gen()[0].exact_count
 
-        assert before == stats.exact_count(None, 0)
-        assert stats.lost_count(1, 0) == 7
+        assert before == stats.pause_totals_by_gen()[0].exact_count
+        assert stats.pause_totals(1, 0).lost_count == 7
+
+
+class TestTotalsLeaveTheAccumulatorBehind:
+    """`StreamingStats` keeps its accumulators and answers from copies of
+    them, so a caller writing to what it got back changes nothing."""
+
+    def test_one_pid_gets_an_answer_rather_than_the_slot(self) -> None:
+        stats = StreamingStats()
+        stats.record_loss(1, 0, 7, 7_000)
+
+        totals = stats.pause_totals(1, 0)
+        with pytest.raises(AttributeError):
+            totals.lost_count = 99  # type: ignore[misc]
+
+        assert (totals.lost_count, totals.lost_pause_ns) == (7, 7_000)
+        assert stats.pause_totals(1, 0).lost_count == 7
+
+    def test_every_pid_gets_one_too(self) -> None:
+        stats = StreamingStats()
+        stats.record_loss(1, 0, 7, 7_000)
+        stats.record_loss(2, 0, 1, 1_000)
+
+        with pytest.raises(AttributeError):
+            stats.pause_totals_by_gen()[0].lost_count = 99  # type: ignore[misc]
+
+        assert stats.pause_totals_by_gen()[0].lost_count == 8
+
+    def test_an_untouched_key_answers_zero(self) -> None:
+        stats = StreamingStats()
+
+        assert stats.pause_totals(1, 0).lost_count == 0
+        assert stats.pause_totals_by_gen()[2].lost_pause_ns == 0
+
+    def test_polls_still_accumulate(self) -> None:
+        stats = StreamingStats()
+        stats.record_loss(1, 0, 3, 3_000)
+        stats.record_loss(1, 0, 4, 4_000)
+
+        assert stats.pause_totals(1, 0).lost_count == 7
+        assert stats.pause_totals(1, 0).lost_pause_ns == 7_000
+
+    def test_lifetime_reads_hand_back_scratch(self) -> None:
+        """`LifetimeTotals` is the accumulator a fold adds into, so this side
+        cannot be frozen the way the pause side is. The fold still sums into
+        a fresh one, which is what the write below lands on."""
+        stats = StreamingStats()
+        stats.record_lifetime(1, 0, 0, 40, 4.0)
+        stats.record_lifetime(1, 1, 0, 2, 0.5)
+
+        stats.lifetime_totals_by_gen()[0].add(99, 9.0)
+
+        assert stats.lifetime_totals_by_gen()[0].collections == 42
+        assert stats.lifetime_totals_by_gen()[0].pause_ns == 4_500_000_000
 
 
 def ring(gen: int, written: int, empty: int = 0, iid: int = 0) -> list[GCStatsInfo]:
@@ -319,7 +372,7 @@ class TestRingGeometry:
 
         stats.record_ring_geometry(ring(0, 11) + ring(1, 3) + ring(2, 3))
 
-        assert [stats.ring_size(gen) for gen in (0, 1, 2)] == [11, 3, 3]
+        assert [stats._ring_size_for(gen) for gen in (0, 1, 2)] == [11, 3, 3]
 
     def test_an_unwritten_slot_still_counts(self) -> None:
         """Counting written records would report 1 for a ring holding one
@@ -328,7 +381,7 @@ class TestRingGeometry:
 
         stats.record_ring_geometry(ring(2, written=1, empty=2))
 
-        assert stats.ring_size(2) == 3
+        assert stats._ring_size_for(2) == 3
 
     def test_only_the_main_interpreter_sets_the_size(self) -> None:
         """`all_interpreters=True` concatenates the rings, so a count that took
@@ -337,7 +390,7 @@ class TestRingGeometry:
 
         stats.record_ring_geometry(ring(0, 11) + ring(0, 20, iid=1))
 
-        assert stats.ring_size(0) == 11
+        assert stats._ring_size_for(0) == 11
 
     def test_the_first_poll_settles_it(self) -> None:
         """The build cannot change under a running monitor, so later polls do
@@ -347,7 +400,7 @@ class TestRingGeometry:
         stats.record_ring_geometry(ring(0, 11))
         stats.record_ring_geometry(ring(0, 20))
 
-        assert stats.ring_size(0) == 11
+        assert stats._ring_size_for(0) == 11
 
     def test_an_empty_poll_leaves_it_open(self) -> None:
         """A read returning nothing must not latch a geometry of zero."""
@@ -356,12 +409,12 @@ class TestRingGeometry:
         stats.record_ring_geometry([])
         stats.record_ring_geometry(ring(0, 11))
 
-        assert stats.ring_size(0) == 11
+        assert stats._ring_size_for(0) == 11
 
     def test_it_is_unknown_before_any_poll(self) -> None:
         stats = StreamingStats()
 
-        assert stats.ring_size(0) == 0
+        assert stats._ring_size_for(0) == 0
 
 
 class TestCoverageAdvisory:
@@ -394,7 +447,7 @@ class TestCoverageAdvisory:
         stats.record_loss(1, 0, 1, 1_000)
         stats.check_coverage_advisory(1)
 
-        assert stats.coverage(1, 0) > StreamingStats.COVERAGE_ADVISORY
+        assert stats.pause_totals(1, 0).coverage > StreamingStats.COVERAGE_ADVISORY
         assert self.ADVISORY not in caplog.text
 
     def test_it_fires_once_across_many_ticks(self, caplog: pytest.LogCaptureFixture) -> None:
@@ -438,7 +491,7 @@ class TestCoverageAdvisory:
         self._sampled(stats, 100)
         stats.check_coverage_advisory(1)
 
-        assert stats.coverage(1, 0) > StreamingStats.COVERAGE_ADVISORY
+        assert stats.pause_totals(1, 0).coverage > StreamingStats.COVERAGE_ADVISORY
         assert self.ADVISORY not in caplog.text
 
     def test_a_run_that_is_genuinely_blind_still_warns(self, caplog: pytest.LogCaptureFixture) -> None:
@@ -480,8 +533,8 @@ class TestLifetimeTotals:
         stats.record_lifetime(1, 0, 0, 500, 0.5)
         stats.record_lifetime(1, 1, 0, 300, 0.3)
 
-        assert stats.lifetime_count(1, 0) == 800
-        assert stats.lifetime_pause_ns(1, 0) == 800_000_000
+        assert stats.lifetime_totals_by_gen()[0].collections == 800
+        assert stats.lifetime_totals_by_gen()[0].pause_ns == 800_000_000
 
     def test_the_newest_value_replaces_the_last(self) -> None:
         """Cumulative in the target, so polls report a running total, not a
@@ -490,7 +543,7 @@ class TestLifetimeTotals:
         stats.record_lifetime(1, 0, 0, 500, 0.5)
         stats.record_lifetime(1, 0, 0, 900, 0.9)
 
-        assert stats.lifetime_count(1, 0) == 900
+        assert stats.lifetime_totals_by_gen()[0].collections == 900
 
     def test_it_can_exceed_the_observed_span(self) -> None:
         """The point of reporting it: what ran before gcmon attached is not
@@ -499,45 +552,6 @@ class TestLifetimeTotals:
         stats.update(1, create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000))
         stats.record_lifetime(1, 0, 0, 5_000, 5.0)
 
-        assert stats.lifetime_count(1, 0) == 5_000
-        assert stats.exact_count(1, 0) == 1
-        assert stats.coverage(1, 0) == 1.0
-
-
-class TestAggregateExactness:
-    def test_sums_and_counts_are_exact(self) -> None:
-        stats = StreamingStats()
-        stats.update(1, create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000_000))
-        stats.record_loss(1, 0, 9, 9_000_000)
-
-        result = stats.aggregate()
-
-        assert result["pause_gen_0_count"] == 10
-        assert result["pause_gen_0_sum"] == pytest.approx(10.0)
-        assert result["pause_count"] == 10
-
-    def test_coverage_is_reported(self) -> None:
-        stats = StreamingStats()
-        stats.update(1, create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000))
-        stats.record_loss(1, 0, 1, 1_000)
-
-        assert stats.aggregate()["pause_gen_0_coverage"] == pytest.approx(0.5)
-
-    def test_lifetime_metrics_appear_only_when_recorded(self) -> None:
-        stats = StreamingStats()
-        stats.update(1, create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000))
-
-        assert "pause_gen_0_lifetime_count" not in stats.aggregate()
-
-        stats.record_lifetime(1, 0, 0, 5_000, 5.0)
-
-        assert stats.aggregate()["pause_gen_0_lifetime_count"] == 5_000
-
-    def test_p99_stays_sampled(self) -> None:
-        """No scale factor corrects a quantile; see ADR-0015."""
-        stats = StreamingStats()
-        stats.update(1, create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000_000))
-        without = stats.aggregate()["pause_gen_0_p99"]
-        stats.record_loss(1, 0, 99, 99_000_000)
-
-        assert stats.aggregate()["pause_gen_0_p99"] == without
+        assert stats.lifetime_totals_by_gen()[0].collections == 5_000
+        assert stats.pause_totals(1, 0).exact_count == 1
+        assert stats.pause_totals(1, 0).coverage == 1.0

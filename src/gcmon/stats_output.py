@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Any
 
 from .data import dur_to_ms
-from .stats import METRICS, Stats, StreamingStats
+from .stats import METRICS, PauseTotals, Stats, StreamingStats
 
 _SEP_GROUP: Any = object()
 _SEP_PHASE: Any = object()
@@ -88,11 +88,14 @@ def _format_stats(s: Stats, count: str | None = None, total: str | None = None) 
 def _build_rows(
     gen_stats: dict[int, Stats],
     label: str,
-    stats: StreamingStats,
-    pid: int | None,
+    pause_totals: dict[int, PauseTotals],
     exact: bool,
 ) -> list[list[str]]:
     """One row per generation that recorded anything.
+
+    *pause_totals* covers whichever scope the block is for, read once by the
+    caller. All nine metrics lean on the same per-generation numbers, so
+    looking them up here would repeat the work per metric.
 
     *exact* separates the `GC Pause` rows, whose companion numbers come from
     the target's own counters, from the sub-phase rows, whose companions are
@@ -104,11 +107,12 @@ def _build_rows(
         if s.count() == 0:
             continue
 
-        coverage = stats.coverage(pid, gen)
-        factor = stats.scale_factor(pid, gen)
+        totals = pause_totals.get(gen, PauseTotals())
+        coverage = totals.coverage
+        factor = totals.scale_factor
         if exact:
-            count = str(stats.exact_count(pid, gen))
-            total = f"{dur_to_ms(stats.exact_pause_ns(pid, gen)):.3f}"
+            count = str(totals.exact_count)
+            total = f"{dur_to_ms(totals.exact_pause_ns):.3f}"
             marker = ""
         else:
             count = str(round(s.count() / coverage))
@@ -118,7 +122,7 @@ def _build_rows(
         cells = _format_stats(
             s, _dual(str(s.count()), count, marker), _dual(f"{dur_to_ms(s.sum()):.3f}", total, marker)
         )
-        lost = stats.lost_count(pid, gen)
+        lost = totals.lost_count
         rows.append([f"{label}({gen})", *cells, _coverage_cell(coverage, lost), _factor_cell(factor, lost)])
     return rows
 
@@ -142,10 +146,11 @@ def _factor_cell(factor: float, lost: int) -> str:
 def print_stats(stats: StreamingStats, table_format: TableFormat = TableFormat.PLAIN) -> None:
     all_rows: list[list[str] | Any] = []
 
+    totals = stats.pause_totals_by_gen()
     first = True
     has_rows = False
     for metric_key, metric in METRICS.items():
-        rows = _build_rows(stats.metrics[metric_key], metric.name, stats, None, metric_key == "pause")
+        rows = _build_rows(stats.metrics[metric_key], metric.name, totals, metric_key == "pause")
         if rows:
             if has_rows:
                 all_rows.append(_SEP_PHASE)
@@ -160,10 +165,11 @@ def print_stats(stats: StreamingStats, table_format: TableFormat = TableFormat.P
         if pid_data is None:
             continue
 
+        pid_totals = {gen: stats.pause_totals(pid, gen) for gen in stats.GENS}
         first = True
         has_rows = False
         for metric_key, metric in METRICS.items():
-            rows = _build_rows(pid_data.get(metric_key, {}), metric.name, stats, pid, metric_key == "pause")
+            rows = _build_rows(pid_data.get(metric_key, {}), metric.name, pid_totals, metric_key == "pause")
             if rows:
                 if has_rows:
                     all_rows.append(_SEP_PHASE)
@@ -195,19 +201,18 @@ def _print_footer(stats: StreamingStats) -> None:
     what separates two that wrap on a narrow terminal. A lone note still
     reads ``1.``.
     """
-    covered = [gen for gen in stats.GENS if stats.lost_count(None, gen)]
-    lifetime = [gen for gen in stats.GENS if stats.lifetime_count(None, gen)]
+    pauses = stats.pause_totals_by_gen()
+    lifetimes = stats.lifetime_totals_by_gen()
+    covered = [(gen, pauses[gen]) for gen in stats.GENS if pauses[gen].lost_count]
+    lifetime = [(gen, lifetimes[gen]) for gen in stats.GENS if gen in lifetimes and lifetimes[gen].collections]
 
     notes: list[str] = []
     if covered:
-        parts = ", ".join(
-            f"Gen{gen} {_coverage_cell(stats.coverage(None, gen), stats.lost_count(None, gen))}" for gen in covered
-        )
+        parts = ", ".join(f"Gen{gen} {_coverage_cell(t.coverage, t.lost_count)}" for gen, t in covered)
         notes.append(f"Coverage: {parts}. Count and Sum read sampled/exact; percentiles are sampled and read high.")
     if lifetime:
         parts = ", ".join(
-            f"Gen{gen} {stats.lifetime_count(None, gen)} in {dur_to_ms(stats.lifetime_pause_ns(None, gen)):.3f} ms"
-            for gen in lifetime
+            f"Gen{gen} {totals.collections} in {dur_to_ms(totals.pause_ns):.3f} ms" for gen, totals in lifetime
         )
         # "Since interpreter start" covers the monitored window rather than
         # excluding it, so the note must not read as a figure to add to
