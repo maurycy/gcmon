@@ -1,6 +1,9 @@
-from collections import OrderedDict, deque
+import logging
+from collections import Counter, OrderedDict, deque
 from collections.abc import Sequence
 from typing import Protocol
+
+import msgspec
 
 try:
     from ddsketch import DDSketch
@@ -9,7 +12,7 @@ try:
 except ImportError:
     HAS_DDSKETCH = False
 
-from .data import dur_to_ms
+from .data import dur_to_ms, secs_to_ns
 from .protocol import (
     TGCStatsInfo,
     has_clear_weakrefs,
@@ -22,6 +25,11 @@ from .protocol import (
     has_mark_alive,
     has_pause_ts,
 )
+
+logger = logging.getLogger("gcmon")
+
+# The interpreter CPython creates at startup, and the last one it tears down.
+MAIN_INTERPRETER = 0
 
 
 def get_quantile_value(buffer: Sequence[float], q: int) -> float:
@@ -221,9 +229,66 @@ METRICS: dict[str, Metric] = {
 
 TStatsData = dict[str, dict[int, Stats]]
 
+# (pid, gen). `record_loss` delivers increments, so two interpreters of one
+# pid add into the same slot.
+type LossKey = tuple[int, int]
+
+# (pid, iid, gen). Lifetime totals are cumulative and overwrite each other, so
+# every interpreter keeps a slot of its own and the summing waits for a read.
+type LifetimeKey = tuple[int, int, int]
+
+
+class LossTotals(msgspec.Struct):
+    """Records gcmon never read, and the pause time they held."""
+
+    count: int = 0
+    pause_ns: int = 0
+
+    def add(self, count: int, pause_ns: int) -> None:
+        self.count += count
+        self.pause_ns += pause_ns
+
+
+class LifetimeTotals(msgspec.Struct):
+    """One ring's own cumulative counters, as the target keeps them."""
+
+    collections: int = 0
+    duration_s: float = 0.0
+
+    def add(self, collections: int, duration_s: float) -> None:
+        self.collections += collections
+        self.duration_s += duration_s
+
+
+class _GenKeys(msgspec.Struct, frozen=True):
+    """The result keys one generation writes in `StreamingStats.aggregate`."""
+
+    p99: str
+    total: str
+    count: str
+    coverage: str
+    lifetime_count: str
+    lifetime_sum: str
+
+
+# A generation's keys never change, so they are formatted once here rather
+# than on every call: `aggregate` writes up to six per generation and does
+# little else besides three quantiles.
+_GEN_KEYS: dict[int, _GenKeys] = {
+    gen: _GenKeys(
+        f"pause_gen_{gen}_p99",
+        f"pause_gen_{gen}_sum",
+        f"pause_gen_{gen}_count",
+        f"pause_gen_{gen}_coverage",
+        f"pause_gen_{gen}_lifetime_count",
+        f"pause_gen_{gen}_lifetime_sum",
+    )
+    for gen in (0, 1, 2)
+}
+
 
 def _record(stats: TStatsData, item: TGCStatsInfo, metric_name: str) -> None:
-    """Record a phase duration in nanoseconds; conversion happens at display time."""
+    """Record a phase duration in nanoseconds, the unit every metric keeps."""
     metric = METRICS[metric_name]
     ts_start, ts_stop = metric.get_values(item)
     gen = item.gen
@@ -235,6 +300,9 @@ def _record(stats: TStatsData, item: TGCStatsInfo, metric_name: str) -> None:
 class StreamingStats:
     MAX_ACTIVE_PIDS = 64
     GENS = (0, 1, 2)
+    # Under this, the sampled percentiles cover too little of the run to leave
+    # a reader working it out from `Cov`, so gcmon says so once.
+    COVERAGE_ADVISORY = 0.9
 
     def __init__(self) -> None:
         self._count: int = 0
@@ -244,6 +312,14 @@ class StreamingStats:
         self._materialized_metrics: dict[int, TStatsData] = {}
         self._heap_size: dict[int, int] = {}
         self._read_time: Stats = Stats()
+        # `record_loss` hands over one poll's gap at a time, so these sum.
+        # Sampled plus lost is the exact total ADR-0015 defines, so the rings
+        # themselves stay in the monitor. Nothing prunes a dead pid.
+        self._loss: dict[LossKey, LossTotals] = {}
+        self._lifetime: dict[LifetimeKey, LifetimeTotals] = {}
+        # Slots per ring, keyed by generation.
+        self._ring_size: dict[int, int] = {}
+        self._coverage_warned = False
 
     def update(self, pid: int, item: TGCStatsInfo) -> None:
         self._count += 1
@@ -269,12 +345,158 @@ class StreamingStats:
         self._heap_size[pid] = max(self._heap_size.get(pid, 0), item.heap_size)
 
     def record_read_time(self, duration_ns: int) -> None:
-        """Record the time spent reading GC stats from a target process."""
         self._read_time.update(duration_ns)
+
+    def record_ring_geometry(self, events: Sequence[TGCStatsInfo]) -> None:
+        """Count the slots each generation's ring holds, once for the run.
+
+        A target runs the monitor's own Python build, so one answer covers
+        every interpreter of every pid. A poll that returned nothing leaves
+        the dict empty and the next one tries again.
+        """
+        if self._ring_size:
+            return
+
+        # The main interpreter answers for all of them, since it outlives every
+        # subinterpreter and shares their geometry.
+        self._ring_size = Counter(event.gen for event in events if event.iid == MAIN_INTERPRETER)
+
+    def ring_size(self, gen: int) -> int:
+        """Records the *gen* ring holds, or 0 before any poll reported it."""
+        return self._ring_size.get(gen, 0)
+
+    def record_loss(self, pid: int, gen: int, lost_count: int, lost_pause_ns: int) -> None:
+        """Record one interval's worth of records gcmon did not read."""
+        self._loss.setdefault((pid, gen), LossTotals()).add(lost_count, lost_pause_ns)
+
+    def check_coverage_advisory(self, pid: int) -> None:
+        """Warn once if *pid* is reading too little of its target to trust.
+
+        Call it after a poll folds both its loss and its records. `_ingest`
+        records loss for every key before it updates any of them, so the same
+        check inside `record_loss` would divide that poll's gap into the
+        sample as it stood before the poll: two polls of 2 then 100 records
+        with one lost warned "only 67%" of a run that ended at 99%.
+        """
+        if self._coverage_warned:
+            return
+
+        for gen in self.GENS:
+            if not self.lost_count(pid, gen) or self.coverage(pid, gen) >= self.COVERAGE_ADVISORY:
+                continue
+            self._coverage_warned = True
+            size = self.ring_size(gen)
+            logger.warning(
+                "PID %s generation %s: only %.0f%% of collections observed. The ring buffer CPython "
+                "exports holds %s record%s, so a target that runs collections more often than gcmon "
+                "polls overwrites records before they can be read. Counts and sums below are "
+                "reconstructed and exact; percentiles cover only what was sampled and read high.",
+                pid,
+                gen,
+                self.coverage(pid, gen) * 100,
+                size,
+                "" if size == 1 else "s",
+            )
+            return
+
+    def record_lifetime(self, pid: int, iid: int, gen: int, collections: int, duration_s: float) -> None:
+        """Record one ring's totals since its interpreter started.
+
+        The target counts both of them cumulatively, so the newest values
+        replace the previous ones.
+        """
+        self._lifetime[(pid, iid, gen)] = LifetimeTotals(collections, duration_s)
+
+    def _sampled(self, pid: int | None, gen: int) -> Stats:
+        """The pause durations gcmon sampled, for one pid or all of them."""
+        if pid is None:
+            return self.metrics["pause"][gen]
+        pid_data = self.get_pid_stats(pid)
+        if pid_data is None:
+            return Stats()
+        return pid_data["pause"][gen]
+
+    def _lost(self, pid: int | None, gen: int) -> LossTotals:
+        """One pid's generation, or that generation over every pid."""
+        if pid is not None:
+            return self._loss.get((pid, gen), LossTotals())
+
+        total = LossTotals()
+        for (_pid, key_gen), loss in self._loss.items():
+            if key_gen == gen:
+                total.add(loss.count, loss.pause_ns)
+        return total
+
+    def lost_count(self, pid: int | None, gen: int) -> int:
+        return self._lost(pid, gen).count
+
+    def lost_pause_ns(self, pid: int | None, gen: int) -> int:
+        return self._lost(pid, gen).pause_ns
+
+    def exact_count(self, pid: int | None, gen: int) -> int:
+        """Collections over the observed span, seen and unseen alike."""
+        return self._sampled(pid, gen).count() + self.lost_count(pid, gen)
+
+    def exact_pause_ns(self, pid: int | None, gen: int) -> float:
+        """Pause time over the same span: sampled plus lost, per ADR-0015."""
+        return self._sampled(pid, gen).sum() + self.lost_pause_ns(pid, gen)
+
+    def coverage(self, pid: int | None, gen: int) -> float:
+        """Observed share of the span, in ``[0, 1]``.
+
+        An empty span lost nothing, so it reports 1.0 and spares every call
+        site a division guard.
+        """
+        exact = self.exact_count(pid, gen)
+        if exact == 0:
+            return 1.0
+        return self._sampled(pid, gen).count() / exact
+
+    def scale_factor(self, pid: int | None, gen: int) -> float:
+        """Multiplier taking a sampled pause sum to the exact one.
+
+        Sub-phases have no exact counterpart but partition the pause, so
+        scaling a measured phase sum by this estimates it. It cannot correct
+        a percentile, see ADR-0015.
+        """
+        sampled = self._sampled(pid, gen).sum()
+        if sampled == 0:
+            return 1.0
+        return self.exact_pause_ns(pid, gen) / sampled
+
+    def _lost_by_gen(self) -> dict[int, LossTotals]:
+        """Fold every pid's totals into a per-gen one in a single pass."""
+        by_gen: dict[int, LossTotals] = {}
+        for (_pid, gen), loss in self._loss.items():
+            by_gen.setdefault(gen, LossTotals()).add(loss.count, loss.pause_ns)
+        return by_gen
+
+    def _lifetime_by_gen(self) -> dict[int, LifetimeTotals]:
+        """Fold every ring's lifetime totals into a per-gen one, single pass."""
+        by_gen: dict[int, LifetimeTotals] = {}
+        for (_pid, _iid, gen), totals in self._lifetime.items():
+            by_gen.setdefault(gen, LifetimeTotals()).add(totals.collections, totals.duration_s)
+        return by_gen
+
+    def _lifetime_totals(self, pid: int | None, gen: int) -> LifetimeTotals:
+        """Summed over the interpreters of *pid*, or of every pid."""
+        summed = LifetimeTotals()
+        for (key_pid, _iid, key_gen), totals in self._lifetime.items():
+            if key_gen == gen and (pid is None or key_pid == pid):
+                summed.add(totals.collections, totals.duration_s)
+        return summed
+
+    def lifetime_count(self, pid: int | None, gen: int) -> int:
+        """Collections since the interpreter started, not since gcmon attached."""
+        return self._lifetime_totals(pid, gen).collections
+
+    def lifetime_pause_ns(self, pid: int | None, gen: int) -> int:
+        """Pause time over that same whole history."""
+        return secs_to_ns(self._lifetime_totals(pid, gen).duration_s)
 
     @property
     def read_time(self) -> Stats:
-        """Read durations in nanoseconds, aggregated over all polled PIDs."""
+        """Read durations in nanoseconds, over every polled pid."""
         return self._read_time
 
     def get_pid_stats(self, pid: int) -> TStatsData | None:
@@ -287,16 +509,43 @@ class StreamingStats:
         return self._count
 
     def aggregate(self) -> dict[str, int | float]:
-        """Summarize pause metrics, with durations converted to milliseconds."""
+        """Summarize pause metrics, with durations converted to milliseconds.
+
+        Sums and counts are exact: what gcmon saw plus what the target's own
+        counters say it missed. ``p99`` stays sampled and reads high, since a
+        long run delays the next one, so its record survives in the ring more
+        often than a short one's. No scale factor corrects a quantile.
+
+        Both totals fold per generation once, up front. The per-pid accessors
+        would rescan each dict for every field and dominate a call that is
+        otherwise three quantiles. A run that lost nothing skips the fold
+        rather than folding an empty dict, and a generation with no entry
+        reads as zero rather than as a totals object built to be discarded.
+        """
         result: dict[str, int | float] = {}
+        pause = self.metrics["pause"]
+        lost: dict[int, LossTotals] = self._lost_by_gen() if self._loss else {}
+        lifetime: dict[int, LifetimeTotals] = self._lifetime_by_gen() if self._lifetime else {}
+        exact_total = 0
         for gen in self.GENS:
-            s = self.metrics["pause"][gen]
-            if s.count() > 0:
-                result[f"pause_gen_{gen}_p99"] = dur_to_ms(s.percentile(99))
-                result[f"pause_gen_{gen}_sum"] = dur_to_ms(s.sum())
-                result[f"pause_gen_{gen}_count"] = s.count()
+            s = pause[gen]
+            keys = _GEN_KEYS[gen]
+            gen_lost = lost.get(gen)
+            sampled_count = s.count()
+            exact_count = sampled_count + (gen_lost.count if gen_lost is not None else 0)
+            exact_total += exact_count
+            if sampled_count > 0:
+                lost_pause_ns = gen_lost.pause_ns if gen_lost is not None else 0
+                result[keys.p99] = dur_to_ms(s.percentile(99))
+                result[keys.total] = dur_to_ms(s.sum() + lost_pause_ns)
+                result[keys.count] = exact_count
+                result[keys.coverage] = sampled_count / exact_count
+            gen_lifetime = lifetime.get(gen)
+            if gen_lifetime is not None and gen_lifetime.collections > 0:
+                result[keys.lifetime_count] = gen_lifetime.collections
+                result[keys.lifetime_sum] = dur_to_ms(secs_to_ns(gen_lifetime.duration_s))
         if self._heap_size:
             sorted_heaps = sorted(self._heap_size.values())
             result["heap_size_p99"] = get_quantile_value(sorted_heaps, 99)
-        result["pause_count"] = self.count()
+        result["pause_count"] = exact_total
         return result

@@ -1,9 +1,7 @@
-"""Pyperf hook for GC monitoring via external process.
+"""Pyperf hook that runs gcmon against the benchmark process.
 
-This module provides a pyperf hook that spawns an external gcmon process
-to collect garbage collection statistics. Temporary files are written in JSONL
-format (one JSON object per line) during monitoring, and the final combined
-output is written in Chrome Trace format (JSON array) for visualization.
+The hook spawns a ``gcmon monitor`` subprocess writing JSONL, and folds
+the lines it wrote into pyperf's metadata once the benchmark ends.
 """
 
 import logging
@@ -13,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Mapping, Sequence
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -20,14 +19,13 @@ from typing import Any
 from ..control.control_client import ControlClient, connect_with_retry
 from ..control.control_server import _make_address
 from ..exporters.chrome_trace_io import read_jsonl
-from ..protocol import is_gc_stats
+from ..protocol import TGCStatsInfo, TItem, is_gc_stats, is_loss
 from ..stats import StreamingStats
 from ..utils.process_terminator import log_process_output, terminate_process
 
 GRACEFUL_TIMEOUT = 5.0
 FORCE_TIMEOUT = 2.0
 
-# Environment variable constants
 ENV_PYPERF_HOOK_OUTPUT = "GCMON_PYPERF_HOOK_OUTPUT"
 ENV_PYPERF_HOOK_TEMP_DIR = "GCMON_PYPERF_HOOK_TEMP_DIR"
 ENV_PYPERF_HOOK_VERBOSE = "GCMON_PYPERF_HOOK_VERBOSE"
@@ -37,13 +35,6 @@ logger = logging.getLogger("gcmon")
 
 
 def _get_env_pyperf_hook_verbose() -> bool:
-    """
-    Check if verbose mode is enabled via environment variable.
-
-    Returns:
-        True if GCMON_PYPERF_HOOK_VERBOSE is set to '1', 'yes', 'on', or 'true'
-        (case-insensitive), False otherwise.
-    """
     value = os.environ.get(ENV_PYPERF_HOOK_VERBOSE, "").lower()
     return value in ("1", "yes", "on", "true")
 
@@ -59,28 +50,15 @@ def _get_env_pyperf_hook_control_timeout() -> float:
 
 
 def _get_env_pyperf_hook_temp_dir() -> str | None:
-    """
-    Get the directory for temporary files.
-
-    Returns the value of GCMON_PYPERF_HOOK_TEMP_DIR if set,
-    or None to use the system default temp directory.
-    """
+    """Where the temp JSONL goes, or ``None`` for the system default."""
     return os.environ.get(ENV_PYPERF_HOOK_TEMP_DIR) or None
 
 
 def _get_env_pyperf_hook_output(bench_name: str, pid: int) -> Path:
-    """
-    Get the output path for the combined GC trace file.
+    """Where the combined JSONL goes.
 
-    Uses the environment variable GCMON_PYPERF_HOOK_OUTPUT if set,
-    otherwise returns the default path.
-
-    Args:
-        bench_name: Name of the benchmark (sanitized)
-        pid: Process ID
-
-    Returns:
-        Path to the output file
+    ``GCMON_PYPERF_HOOK_OUTPUT`` overrides the default and may carry
+    ``{bench_name}`` and ``{pid}`` placeholders.
     """
     env_path = os.environ.get(ENV_PYPERF_HOOK_OUTPUT)
     if env_path:
@@ -89,15 +67,54 @@ def _get_env_pyperf_hook_output(bench_name: str, pid: int) -> Path:
     return Path(f"gcmon_{bench_name}_combined_{pid}.jsonl")
 
 
-class GCMonitorHook:
-    """
-    Pyperf hook for GC monitoring via external gcmon process.
+def _replay(stats: StreamingStats, parsed: Mapping[int, Sequence[TItem]]) -> None:
+    """Rebuild a session's statistics from the records it wrote.
 
-    The hook spawns an external `gcmon` CLI process that reads the
-    benchmark process memory directly. Results are written to temp JSONL
-    files (one JSON object per line) in the current directory with masked
-    filenames, which the hook combines into a single JSONL file
-    and injects into pyperf metadata.
+    The monitor folds loss and lifetime as it polls, but the hook meets the
+    session only as a file, so both have to come back off it. Loss rides in
+    records of its own. Lifetime rides on every GC record, whose
+    ``collections`` and ``duration`` are the target's cumulative totals, so
+    the newest record of each ring carries what the monitor recorded live.
+
+    Loss goes in last, summed per ``(pid, gen)``, so the coverage advisory
+    sees the whole sample rather than however much of it preceded a loss
+    record in the file. One record covers a poll interval and names every
+    generation active in it, so the entries sum, not the records.
+
+    Order between the two guards does not matter, since no record answers to
+    both. Were they ever to overlap, a loss record would fold in here as a
+    collection and inflate the very numbers it carries to correct.
+    """
+    lost: dict[tuple[int, int], tuple[int, int]] = {}
+    newest: dict[tuple[int, int, int], TGCStatsInfo] = {}
+
+    for pid, items in parsed.items():
+        for item in items:
+            if is_gc_stats(item):
+                stats.update(pid, item)
+                ring = (pid, item.iid, item.gen)
+                if ring not in newest or item.collections > newest[ring].collections:
+                    newest[ring] = item
+            elif is_loss(item):
+                for entry in item.gens:
+                    seen_count, seen_pause = lost.get((pid, entry.gen), (0, 0))
+                    lost[(pid, entry.gen)] = (seen_count + entry.lost_count, seen_pause + entry.lost_pause_ns)
+
+    for (pid, iid, gen), record in newest.items():
+        stats.record_lifetime(pid, iid, gen, record.collections, record.duration)
+
+    for (pid, gen), (count, pause_ns) in lost.items():
+        if count or pause_ns:
+            stats.record_loss(pid, gen, count, pause_ns)
+
+
+class GCMonitorHook:
+    """Pyperf hook for GC monitoring via external gcmon process.
+
+    The hook spawns a `gcmon` CLI process that reads the benchmark
+    process's memory directly. That process writes one JSONL file per run
+    under a temp directory; the hook concatenates them and puts the
+    statistics it reads back into pyperf's metadata.
 
     Usage:
         # Entry point registration in pyproject.toml
@@ -176,26 +193,18 @@ class GCMonitorHook:
             self._process = None
 
     def __enter__(self) -> GCMonitorHook:
-        """
-        Called immediately before running benchmark code.
-
-        Spawns the external gcmon process as a background subprocess.
-        """
+        """Tell the monitor to start, immediately before the benchmark runs."""
         self._control_client.start_monitoring()
         return self
 
     def __exit__(self, *args: object) -> None:
-        """
-        Called immediately after running benchmark code.
-        """
+        """Tell it to stop, immediately after."""
         self._control_client.stop_monitoring()
 
     def teardown(self, metadata: dict[str, Any]) -> None:
-        """
-        Called when the hook is completed for a process.
+        """Combine the temp JSONL files and hand pyperf the statistics.
 
-        Combines all temp JSONL files into a single JSONL file,
-        aggregates statistics, and adds them to pyperf metadata.
+        Pyperf calls this once the hook is done with a process.
         """
         self._control_client.close()
         self._close_monitor()
@@ -207,7 +216,7 @@ class GCMonitorHook:
         output_path = _get_env_pyperf_hook_output(bench_name, self._pid)
 
         try:
-            # Combine all temp JSONL files into one via raw byte copy
+            # Bytes straight through, so nothing here parses a line.
             with open(output_path, "wb") as out:
                 for temp_file in self._temp_files:
                     if temp_file.exists():
@@ -215,15 +224,10 @@ class GCMonitorHook:
                             shutil.copyfileobj(f, out)
                         out.write(b"\n")
 
-            # Read combined file and aggregate statistics
             ss = StreamingStats()
             if output_path.exists():
                 try:
-                    parsed = read_jsonl(output_path)
-                    for pid, items in parsed.items():
-                        for item in items:
-                            if is_gc_stats(item):
-                                ss.update(pid, item)
+                    _replay(ss, read_jsonl(output_path))
                 except Exception as e:
                     logger.warning("Failed to read combined GC metrics: %s", e)
 
@@ -233,7 +237,8 @@ class GCMonitorHook:
                     metadata[f"gc_{key}"] = value
 
         except Exception as e:
-            # Log but don't fail - benchmark results are more important
+            # The benchmark's own numbers outrank ours, so this warns and the
+            # run stands.
             logger.warning("Failed to aggregate GC metrics: %s", e)
 
         finally:
@@ -267,7 +272,6 @@ class GCMonitorHook:
         ]
 
 
-# Entry point factory function
 def gcmon_hook(temp_dir: str | Path | None = None, pid: int | None = None) -> GCMonitorHook:
     _setup_logging()
     temp_dir_obj = tempfile.TemporaryDirectory(dir=temp_dir or _get_env_pyperf_hook_temp_dir())
@@ -281,11 +285,9 @@ def gcmon_hook(temp_dir: str | Path | None = None, pid: int | None = None) -> GC
 def _setup_logging() -> None:
     """Configure the `gcmon` logger for the pyperf hook entry point.
 
-    Attaches a stderr StreamHandler if none is present and sets the level
-    based on ``GCMON_PYPERF_HOOK_VERBOSE``. Intended to be called only when
-    used as an actual pyperf hook (not on every ``GCMonitorHook`` instantiation),
-    so importing/instantiating the hook in tests does not mutate global
-    logging state.
+    Attaches a stderr handler if the logger has none and takes its level
+    from ``GCMON_PYPERF_HOOK_VERBOSE``. Only the entry point calls this, so
+    a test that builds a ``GCMonitorHook`` leaves global logging alone.
     """
     level = logging.DEBUG if _get_env_pyperf_hook_verbose() else logging.WARNING
     logger.setLevel(level)

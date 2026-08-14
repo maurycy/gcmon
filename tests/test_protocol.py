@@ -1,13 +1,14 @@
 from collections.abc import Mapping
 from types import SimpleNamespace
 
-from gcmon.data import GCStatsInfo, InstantMsg
+import pytest
+
+from gcmon.data import GCStatsInfo, GenLoss, InstantMsg, LossMsg
 from gcmon.protocol import (
     has_clear_weakrefs,
     has_deduce_unreachable,
     has_delete_garbage,
     has_finalize_garbage,
-    has_gen,
     has_handle_resurrected,
     has_handle_weakrefs,
     has_incremental,
@@ -15,9 +16,23 @@ from gcmon.protocol import (
     has_pause_ts,
     is_gc_stats,
     is_instant,
+    is_loss,
     to_mapping,
 )
 from tests.helpers import create_mock_stats_item
+
+
+@pytest.fixture
+def loss_item() -> LossMsg:
+    return LossMsg(
+        iid=1,
+        ts_start=1_000,
+        ts_stop=2_000,
+        gens=[
+            GenLoss(gen=1, observed_count=4, lost_count=5, lost_pause_ns=8_100_000, lost_from=42),
+            GenLoss(gen=2, observed_count=1),
+        ],
+    )
 
 
 class TestIsGC:
@@ -208,12 +223,6 @@ class TestHasGuards:
 
     def test_has_delete_garbage_false(self) -> None:
         assert not has_delete_garbage(create_mock_stats_item())
-
-    def test_has_gen_true(self) -> None:
-        assert has_gen(create_mock_stats_item())
-
-    def test_has_gen_false(self) -> None:
-        assert not has_gen(SimpleNamespace(other=42))
 
 
 class TestToMappingPartial:
@@ -436,3 +445,60 @@ class TestToMapping:
 
         with pytest.raises(NotImplementedError, match="Unknown item type"):
             to_mapping("not a valid item")  # type: ignore[arg-type]
+
+    def test_loss_item(self, loss_item: LossMsg) -> None:
+        result = to_mapping(loss_item)
+
+        assert isinstance(result, Mapping)
+        assert result["iid"] == 1
+        assert result["ts_start"] == 1_000
+        assert result["ts_stop"] == 2_000
+
+    def test_a_loss_item_names_every_generation_in_the_interval(self, loss_item: LossMsg) -> None:
+        """One record per poll, so the counts are per generation and the
+        record says which is which rather than carrying three sets and naming
+        none of them."""
+        assert to_mapping(loss_item)["gens"] == [
+            {"gen": 1, "observed_count": 4, "lost_from": 42, "lost_count": 5, "lost_pause_ns": 8_100_000},
+            {"gen": 2, "observed_count": 1, "lost_from": 0, "lost_count": 0, "lost_pause_ns": 0},
+        ]
+
+    def test_a_loss_item_carries_no_collections(self, loss_item: LossMsg) -> None:
+        """What keeps ``is_gc_stats`` off it."""
+        assert "collections" not in to_mapping(loss_item)
+
+
+class TestIsLoss:
+    def test_loss_returns_true(self, loss_item: LossMsg) -> None:
+        assert is_loss(loss_item) is True
+
+    def test_gc_stats_returns_false(self, simple_item: GCStatsInfo) -> None:
+        assert is_loss(simple_item) is False
+
+    def test_instant_returns_false(self, instant_item: InstantMsg) -> None:
+        assert is_loss(instant_item) is False
+
+    def test_the_existing_guards_reject_it(self, loss_item: LossMsg) -> None:
+        """``to_mapping`` and the converters dispatch on these three, so a
+        record answering to two of them would take whichever branch came
+        first."""
+        assert is_gc_stats(loss_item) is False
+        assert is_instant(loss_item) is False
+
+
+class TestGuardsAreMutuallyExclusive:
+    def test_exactly_one_guard_claims_each_record_type(
+        self,
+        simple_item: GCStatsInfo,
+        incremental_item: GCStatsInfo,
+        instant_item: InstantMsg,
+        loss_item: LossMsg,
+    ) -> None:
+        """No two call sites dispatch in the same order — ``_replay`` asks
+        ``is_gc_stats`` first, the converters ask ``is_loss`` first — so a
+        record that two guards claim would take a different branch depending
+        on who asked, silently. Exactly one may hold, for every record type,
+        whatever fields those types grow later."""
+        for item in (simple_item, incremental_item, instant_item, loss_item):
+            claims = [is_gc_stats(item), is_instant(item), is_loss(item)]
+            assert claims.count(True) == 1, f"{type(item).__name__} matched {claims}"

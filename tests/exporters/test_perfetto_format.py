@@ -1,20 +1,25 @@
 """Tests for converting trace events into Perfetto packets."""
 
 from perfetto.protos.perfetto.trace.perfetto_trace_pb2 import (
+    DebugAnnotation,
     TracePacket,
+    TrackDescriptor,
     TrackEvent,
 )
 
-from gcmon.data import GCStatsInfo
+from gcmon.data import GCStatsInfo, LossMsg
 from gcmon.exporters.perfetto_format import convert_trace_events_to_perfetto
 from gcmon.exporters.perfetto_process_lifetime import finalize_perfetto_packets
 from gcmon.exporters.perfetto_proto import TrackEventType
 from gcmon.exporters.perfetto_track_state import PerfettoTrackState
+from gcmon.exporters.trace_converter import convert_loss_to_trace_format
 from gcmon.trace_event import TraceEvent, counter_event, instant_event, process_meta, thread_meta
 from tests.exporters.perfetto_helpers import (
     convert_item,
     lifetime_slices,
+    parse_track_descriptor,
 )
+from tests.helpers import create_mock_loss_item
 
 # Name of the synthetic marker emitted on the process track so the
 # cmdline description is always visible in the Perfetto UI. Must match
@@ -208,7 +213,7 @@ class TestConvertItemToPerfettoPackets:
             if (
                 packet.track_event.type == TrackEvent.Type.TYPE_SLICE_BEGIN
                 and packet.track_event.track_uuid != lifetime_uuid
-                and packet.track_event.name == "GC Pause (gen=0)"
+                and packet.track_event.name == "GC Pause(0)"
             ):
                 begin_packet = p
                 break
@@ -218,7 +223,7 @@ class TestConvertItemToPerfettoPackets:
         assert first_packet.timestamp == 1_000
         assert first_packet.HasField("track_event")
         assert first_packet.track_event.type == TrackEvent.Type.TYPE_SLICE_BEGIN
-        assert first_packet.track_event.name == "GC Pause (gen=0)"
+        assert first_packet.track_event.name == "GC Pause(0)"
 
     def test_basic_item_emits_counter_events(self) -> None:
         state = PerfettoTrackState()
@@ -346,15 +351,15 @@ class TestConvertItemToPerfettoPackets:
             packet.ParseFromString(p)
             if packet.HasField("track_event") and packet.track_event.type == TrackEvent.Type.TYPE_SLICE_BEGIN:
                 slice_begins.append(packet.track_event.name or None)
-        assert "GC Pause (gen=1)" in slice_begins
-        assert "Mark Alive (gen=1)" in slice_begins
-        assert "Fill increment (gen=1)" in slice_begins
-        assert "Deduce Unreachable (gen=1)" in slice_begins
-        assert "Handle Weakrefs Callbacks (gen=1)" in slice_begins
-        assert "Finalize Garbage (gen=1)" in slice_begins
-        assert "Handle Resurrected (gen=1)" in slice_begins
-        assert "Clear Weakrefs (gen=1)" in slice_begins
-        assert "Delete Garbage (gen=1)" in slice_begins
+        assert "GC Pause(1)" in slice_begins
+        assert "Mark Alive(1)" in slice_begins
+        assert "Fill increment(1)" in slice_begins
+        assert "Deduce Unreachable(1)" in slice_begins
+        assert "Handle Weakrefs Callbacks(1)" in slice_begins
+        assert "Finalize Garbage(1)" in slice_begins
+        assert "Handle Resurrected(1)" in slice_begins
+        assert "Clear Weakrefs(1)" in slice_begins
+        assert "Delete Garbage(1)" in slice_begins
 
     def test_uncollectable_counter_omitted_when_zero(self) -> None:
         state = PerfettoTrackState()
@@ -522,21 +527,21 @@ class TestConvertItemToPerfettoPackets:
     def test_finalize_garbage_substep_has_count_annotation(self) -> None:
         state = PerfettoTrackState()
         _, packets = convert_item(100, self._make_full_incremental_item(), state, sequence_id=1)
-        anns = self._annotations_for_slice(packets, "Finalize Garbage (gen=1)")
+        anns = self._annotations_for_slice(packets, "Finalize Garbage(1)")
         assert ("finalized_garbage_count", 42) in anns
         assert all(name not in ("deleted_garbage_count", "clear_weakrefs_count") for name, _ in anns)
 
     def test_clear_weakrefs_substep_has_count_annotation(self) -> None:
         state = PerfettoTrackState()
         _, packets = convert_item(100, self._make_full_incremental_item(), state, sequence_id=1)
-        anns = self._annotations_for_slice(packets, "Clear Weakrefs (gen=1)")
+        anns = self._annotations_for_slice(packets, "Clear Weakrefs(1)")
         assert ("clear_weakrefs_count", 7) in anns
         assert all(name not in ("finalized_garbage_count", "deleted_garbage_count") for name, _ in anns)
 
     def test_delete_garbage_substep_has_count_annotation(self) -> None:
         state = PerfettoTrackState()
         _, packets = convert_item(100, self._make_full_incremental_item(), state, sequence_id=1)
-        anns = self._annotations_for_slice(packets, "Delete Garbage (gen=1)")
+        anns = self._annotations_for_slice(packets, "Delete Garbage(1)")
         assert ("deleted_garbage_count", 13) in anns
         assert all(name not in ("finalized_garbage_count", "clear_weakrefs_count") for name, _ in anns)
 
@@ -544,7 +549,7 @@ class TestConvertItemToPerfettoPackets:
         state = PerfettoTrackState()
         item = self._make_full_incremental_item()
         _, packets = convert_item(100, item, state, sequence_id=1)
-        anns = self._annotations_for_slice(packets, "Deduce Unreachable (gen=1)")
+        anns = self._annotations_for_slice(packets, "Deduce Unreachable(1)")
         assert ("candidates", item.candidates) in anns
         assert ("generation", 1) in anns
 
@@ -575,8 +580,8 @@ class TestConvertItemToPerfettoPackets:
             packet.ParseFromString(p)
             if packet.HasField("track_event") and packet.track_event.type == TrackEvent.Type.TYPE_SLICE_BEGIN:
                 slice_names.append(packet.track_event.name or None)
-        assert "Mark Alive (gen=1)" not in slice_names
-        assert "Fill increment (gen=1)" in slice_names
+        assert "Mark Alive(1)" not in slice_names
+        assert "Fill increment(1)" in slice_names
 
     def test_multiple_threads(self) -> None:
         state = PerfettoTrackState()
@@ -638,7 +643,7 @@ class TestConvertItemToPerfettoPackets:
             if (
                 packet.track_event.type == TrackEvent.Type.TYPE_SLICE_BEGIN
                 and packet.track_event.track_uuid != lifetime_uuid
-                and packet.track_event.name == "GC Pause (gen=0)"
+                and packet.track_event.name == "GC Pause(0)"
             ):
                 begin_packet = packet
                 break
@@ -677,7 +682,7 @@ class TestConvertItemToPerfettoPackets:
             if (
                 packet.track_event.type == TrackEvent.Type.TYPE_SLICE_BEGIN
                 and packet.track_event.track_uuid != lifetime_uuid
-                and packet.track_event.name == "GC Pause (gen=0)"
+                and packet.track_event.name == "GC Pause(0)"
             ):
                 begin_packet = p
                 break
@@ -862,3 +867,178 @@ class TestConvertInstantToPerfettoPacket:
         convert_item(100, item_g1, state, sequence_id=1)
         uuid_after_g1 = state.get_or_create_counter_track_uuid(100, 0, "heap_size", "heap_size")
         assert uuid_after_g0 == uuid_after_g1
+
+
+class TestLossTrackDescriptor:
+    """No meta event describes the loss track.
+
+    Every other track gets its descriptor from a ``ProcessMeta`` or
+    ``ThreadMeta``, and the exporter emits neither for a negative tid — the
+    same guard that keeps the track from being drawn as a thread. So the
+    descriptor has to come off the slices themselves, or they land on a uuid
+    nothing ever named.
+    """
+
+    def _convert(self, msgs: list[LossMsg], state: PerfettoTrackState, pid: int = 100) -> list[bytes]:
+        events: list[TraceEvent] = [process_meta(pid, f"Process {pid}")]
+        for msg in msgs:
+            events.extend(convert_loss_to_trace_format(pid, msg))
+        descriptors, _ = convert_trace_events_to_perfetto(events, state, 1)
+        return descriptors
+
+    def _msg(self, iid: int = 0) -> LossMsg:
+        return create_mock_loss_item(iid=iid, gen=0, ts_start=1_000, ts_stop=2_000, lost_count=1, lost_pause_ns=200)
+
+    def _loss_descriptors(self, descriptors: list[bytes]) -> list[TrackDescriptor]:
+        parsed = [parse_track_descriptor(d) for d in descriptors]
+        return [td for td in parsed if td is not None and td.name.startswith("GC Loss")]
+
+    def test_the_track_is_described(self) -> None:
+        state = PerfettoTrackState()
+
+        found = self._loss_descriptors(self._convert([self._msg(iid=0)], state))
+
+        assert [td.name for td in found] == ["GC Loss 0"]
+
+    def test_it_is_named_for_its_interpreter(self) -> None:
+        state = PerfettoTrackState()
+
+        found = self._loss_descriptors(self._convert([self._msg(iid=0), self._msg(iid=1)], state))
+
+        assert [td.name for td in found] == ["GC Loss 0", "GC Loss 1"]
+
+    def test_it_hangs_off_the_process_track(self) -> None:
+        state = PerfettoTrackState()
+
+        found = self._loss_descriptors(self._convert([self._msg()], state))
+
+        assert found[0].parent_uuid == state.get_process_track_uuid(100)
+
+    def test_it_is_a_plain_custom_track(self) -> None:
+        """A ``thread`` sub-message would describe an OS thread that does not
+        exist, and Perfetto ignores ordering hints on OS-scoped tracks."""
+        state = PerfettoTrackState()
+
+        found = self._loss_descriptors(self._convert([self._msg()], state))
+
+        assert not found[0].HasField("thread")
+        assert not found[0].HasField("process")
+        assert found[0].sibling_order_rank == 1
+
+    def test_it_is_described_once(self) -> None:
+        state = PerfettoTrackState()
+
+        self._convert([self._msg()], state)
+        again = self._loss_descriptors(self._convert([self._msg()], state))
+
+        assert again == []
+
+    def test_a_gc_slice_does_not_trigger_it(self) -> None:
+        state = PerfettoTrackState()
+        item = GCStatsInfo(
+            gen=0,
+            iid=0,
+            ts_start=1_000,
+            ts_stop=2_000,
+            heap_size=1000,
+            collections=1,
+            collected=10,
+            uncollectable=0,
+            candidates=5,
+            duration=0.001,
+        )
+
+        descriptors, _ = convert_item(100, item, state)
+
+        assert self._loss_descriptors(descriptors) == []
+
+
+class TestTheMissingCollectionsAnnotation:
+    """A `GC Loss` slice's args, off the wire rather than out of the dict.
+
+    Two things nothing else can settle. ``missing_collections`` is a range and
+    has to arrive as ``string_value``: written into an integer field it comes
+    back as a number that is not one of the counters it names. And each
+    generation's counts are a *group*, which reaches the wire as
+    ``dict_entries`` on an annotation carrying no value of its own.
+    """
+
+    def _slice(self, msg: LossMsg) -> TrackEvent:
+        events: list[TraceEvent] = [process_meta(100, "Process 100"), *convert_loss_to_trace_format(100, msg)]
+        _, packets = convert_trace_events_to_perfetto(events, PerfettoTrackState(), 1)
+
+        for raw in packets:
+            packet = TracePacket()
+            packet.ParseFromString(raw)
+            if packet.HasField("track_event") and packet.track_event.name.startswith("GC Loss("):
+                return packet.track_event
+        raise AssertionError("no GC Loss slice in the packets")
+
+    def _value(self, annotation: DebugAnnotation) -> str | int:
+        if annotation.HasField("string_value"):
+            return str(annotation.string_value)
+        return int(annotation.int_value)
+
+    def _top(self, msg: LossMsg) -> dict[str, str | int]:
+        return {a.name: self._value(a) for a in self._slice(msg).debug_annotations if not a.dict_entries}
+
+    def _group(self, msg: LossMsg, gen: int) -> dict[str, str | int]:
+        for annotation in self._slice(msg).debug_annotations:
+            if annotation.name == f"gen{gen}":
+                return {entry.name: self._value(entry) for entry in annotation.dict_entries}
+        raise AssertionError(f"no gen{gen} group on the slice")
+
+    def _msg(self, lost_from: int, lost_count: int) -> LossMsg:
+        return create_mock_loss_item(
+            iid=0,
+            gen=1,
+            ts_start=1_000,
+            ts_stop=2_000,
+            observed_count=3,
+            lost_count=lost_count,
+            lost_pause_ns=200,
+            lost_from=lost_from,
+        )
+
+    def test_a_range_reaches_the_wire_as_a_string(self) -> None:
+        assert self._group(self._msg(lost_from=413, lost_count=19), 1)["missing_collections"] == "413..431"
+
+    def test_one_collection_reaches_it_as_its_own_number(self) -> None:
+        assert self._group(self._msg(lost_from=11, lost_count=1), 1)["missing_collections"] == "11"
+
+    def test_the_counts_beside_it_stay_integers(self) -> None:
+        group = self._group(self._msg(lost_from=11, lost_count=1), 1)
+
+        assert group["missing_count"] == 1
+        assert group["missing_pause_total_ns"] == 200
+
+    def test_the_pause_total_reaches_the_wire_both_ways(self) -> None:
+        """The nanoseconds are what SQL sums; the text beside them is what a
+        reader takes off the slice. Losing either one leaves the other doing a
+        job it is bad at."""
+        group = self._group(self._msg(lost_from=11, lost_count=1), 1)
+
+        assert group["missing_pause_total"] == "200ns"
+        assert group["missing_pause_total_ns"] == 200
+
+    def test_a_group_carries_entries_and_no_value_of_its_own(self) -> None:
+        """``dict_entries`` sits outside the proto's ``value`` oneof, so an
+        annotation that grouped *and* carried a value would be making two
+        claims in one field. The trace processor flattens the entries back out
+        under the group's name, which is what ``args.debug.gen1.missing_count``
+        resolves to in SQL."""
+        group = next(
+            a for a in self._slice(self._msg(lost_from=11, lost_count=1)).debug_annotations if a.name == "gen1"
+        )
+
+        assert not group.HasField("string_value")
+        assert not group.HasField("int_value")
+        assert {entry.name for entry in group.dict_entries} >= {"observed_count", "missing_count"}
+
+    def test_the_totals_stay_at_the_top_level(self) -> None:
+        """Ungrouped, so the figure a reader wants first is the one they see
+        first rather than one node down."""
+        top = self._top(self._msg(lost_from=11, lost_count=1))
+
+        assert top["missing_count"] == 1
+        assert top["seen"] == "75.0% (3 of 4)"

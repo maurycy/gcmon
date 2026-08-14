@@ -13,6 +13,7 @@ from perfetto.protos.perfetto.trace.perfetto_trace_pb2 import Trace, TracePacket
 from gcmon.trace_event import (
     BeginEvent,
     EndEvent,
+    EventArgs,
     TraceEvent,
     begin_event,
     end_event,
@@ -66,7 +67,7 @@ def make_event_pair(
     so the helper passes the value through as nanoseconds (multiplied by
     1000). In-memory assertions must use the ns value too.
     """
-    args = {
+    args: EventArgs = {
         "generation": 0,
         "iid": tid,
         "collections": 1,
@@ -621,7 +622,7 @@ class TestCliCombineJsonlToChrome:
         # 1 JSONL record → 1 GC Pause (B) + 1 G0 counter (C) + process_name + thread_name
         assert_is_process_meta(next(e for e in data if e["name"] == "process_name"), pid=123)
         assert_is_thread_meta(next(e for e in data if e["name"] == "thread_name"), pid=123, tid=1)
-        assert_is_begin(next(e for e in data if e["ph"] == "B"), name="GC Pause (gen=0)")
+        assert_is_begin(next(e for e in data if e["ph"] == "B"), name="GC Pause(0)")
         assert_is_counter(next(e for e in data if e["ph"] == "C"), name="G0")
 
     def test_multiple_files(

@@ -1,23 +1,28 @@
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Protocol, TypeGuard
 
 __all__ = [
+    "JsonlRecord",
     "TClearWeakrefsInfo",
     "TDeduceUnreachableInfo",
     "TDeleteGarbageInfo",
     "TFinalizeGarbageInfo",
     "TGCStatsInfo",
+    "TGenLoss",
     "THandleResurrectedInfo",
     "THandleWeakrefsInfo",
     "TIncrementalInfo",
     "TInstantMsg",
+    "TItem",
+    "TLossMsg",
     "TMapping",
     "TMarkAliveInfo",
+    "TScalar",
+    "TValue",
     "has_clear_weakrefs",
     "has_deduce_unreachable",
     "has_delete_garbage",
     "has_finalize_garbage",
-    "has_gen",
     "has_handle_resurrected",
     "has_handle_weakrefs",
     "has_incremental",
@@ -25,6 +30,7 @@ __all__ = [
     "has_pause_ts",
     "is_gc_stats",
     "is_instant",
+    "is_loss",
     "to_mapping",
 ]
 
@@ -94,7 +100,34 @@ class TInstantMsg(Protocol):
     ts: int
 
 
-TMapping = Mapping[str, str | int | float]
+class TGenLoss(Protocol):
+    gen: int
+    observed_count: int
+    lost_count: int
+    lost_pause_ns: int
+    lost_from: int
+
+
+class TLossMsg(Protocol):
+    iid: int
+    ts_start: int
+    ts_stop: int
+
+    @property
+    def gens(self) -> Sequence[TGenLoss]: ...
+
+
+# What one JSONL field decodes to. Only the loss record's `gens` holds more
+# than a scalar, and the nested arm is there for it.
+type TScalar = str | int | float
+type TValue = TScalar | Sequence[Mapping[str, TScalar]]
+
+# `TMapping` only reads; `JsonlRecord` is the dict a writer fills and owns.
+type TMapping = Mapping[str, TValue]
+type JsonlRecord = dict[str, TValue]
+
+# What a whole JSONL line decodes to, and what the converters accept.
+type TItem = TGCStatsInfo | TInstantMsg | TLossMsg
 
 
 def has_pause_ts(item: object) -> TypeGuard[TGCStatsInfo]:
@@ -133,19 +166,20 @@ def has_delete_garbage(item: object) -> TypeGuard[TDeleteGarbageInfo]:
     return getattr(item, "ts_delete_garbage_start", None) is not None
 
 
-def has_gen(item: object) -> TypeGuard[TGCStatsInfo]:
-    return hasattr(item, "gen")
-
-
 def is_gc_stats(item: object) -> TypeGuard[TGCStatsInfo]:
-    return hasattr(item, "gen")
+    """A GC record is the one record type built around ``collections``."""
+    return hasattr(item, "collections")
 
 
 def is_instant(item: object) -> TypeGuard[TInstantMsg]:
     return hasattr(item, "type")
 
 
-def to_mapping(item: TGCStatsInfo | TInstantMsg) -> TMapping:
+def is_loss(item: object) -> TypeGuard[TLossMsg]:
+    return hasattr(item, "gens")
+
+
+def to_mapping(item: TItem) -> JsonlRecord:
     if is_instant(item):
         return {
             "type": item.type,
@@ -153,8 +187,25 @@ def to_mapping(item: TGCStatsInfo | TInstantMsg) -> TMapping:
             "ts": item.ts,
         }
 
-    if has_gen(item):
-        m: dict[str, str | int | float] = {
+    if is_loss(item):
+        return {
+            "iid": item.iid,
+            "ts_start": item.ts_start,
+            "ts_stop": item.ts_stop,
+            "gens": [
+                {
+                    "gen": gen.gen,
+                    "observed_count": gen.observed_count,
+                    "lost_from": gen.lost_from,
+                    "lost_count": gen.lost_count,
+                    "lost_pause_ns": gen.lost_pause_ns,
+                }
+                for gen in item.gens
+            ],
+        }
+
+    if is_gc_stats(item):
+        m: JsonlRecord = {
             "gen": item.gen,
             "iid": item.iid,
             "ts_start": item.ts_start,

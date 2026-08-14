@@ -4,7 +4,7 @@
 - **Date:** 2026-06-27 (ordering added 2026-06-28; laminar clipping added 2026-07-31; emission
   simplified to unnested BEGIN/END pairs 2026-08-01; sort moved into the sweep and the
   once-per-trace guard made explicit 2026-08-02; monitor-reported liveness landed and the
-  counter carve-out was removed 2026-08-02)
+  counter carve-out was removed 2026-08-02; pointer to ADR-0015 added 2026-08-05)
 
 ## Context
 
@@ -142,6 +142,12 @@ every such child would draw a GC slice outside its own lifetime slice. Membershi
 `children` is **not** an observation: `get_child_pids` is the OS's claim about the process
 tree, and taking it as evidence reintroduces the `create_time()` approach rejected below.
 
+**A successful read is what makes the span mean anything.** `get_gc_stats` returns only once
+the runtime has finished initializing, so the first `OK` dates the process becoming ready
+rather than the OS creating it. A read that fails after earlier ones succeeded means the
+process has died or entered finalization, so the last `OK` dates the other end. That is the
+interval the slice draws, and it is why an unpolled or never-collecting process still has one.
+
 **The span means *liveness*, not *monitoring coverage*.** A pid the control server suppresses
 mid-run is not polled and so not observed, but if re-enabled it gets **one continuous span
 across the gap**, because the accumulator stores only a min and a max. Correct under
@@ -224,6 +230,9 @@ mid-`close()` can raise `RuntimeError: dictionary changed size during iteration`
   resolves track references across the whole trace rather than in file order.
 - Consumers enumerating slices must filter `track.name == 'Processes'`, as the equivalence
   test does, since these slices are Perfetto-only.
+- [ADR-0015](0015-gc-loss-spans-on-their-own-track.md) needs no sweep: its loss spans are one
+  per poll interval and meet without overlapping. Its `GC Loss` track is separate so a reader
+  can tell intervals gcmon recorded from intervals it lost.
 
 ## Alternatives considered
 

@@ -1,27 +1,34 @@
 """Tests for Chrome Trace Event format types and conversion utilities."""
 
+from collections.abc import Mapping
+
 import msgspec
+import pytest
 from msgspec import structs
 
-from gcmon.data import GCStatsInfo
+from gcmon.data import GCStatsInfo, GenLoss, LossMsg
 from gcmon.exporters.chrome_trace_format import (
     convert_item_to_trace_format,
     convert_to_trace_format,
 )
-from gcmon.protocol import TGCStatsInfo, TInstantMsg
+from gcmon.exporters.trace_converter import convert_loss_to_trace_format
+from gcmon.protocol import TGCStatsInfo, TInstantMsg, TItem
 from gcmon.trace_event import (
     BeginEvent,
     CounterEvent,
     EndEvent,
+    EventArgs,
+    ThreadMeta,
     begin_event,
     counter_event,
     end_event,
     instant_event,
+    loss_tid,
     process_meta,
     thread_meta,
 )
 from tests.data_helpers import create_instant_msg
-from tests.helpers import create_mock_stats_item
+from tests.helpers import create_mock_loss_item, create_mock_stats_item
 
 # =============================================================================
 # Factory function tests
@@ -53,7 +60,7 @@ class TestThreadMeta:
 
 class TestBeginEvent:
     def test_returns_begin_event(self) -> None:
-        args = {
+        args: EventArgs = {
             "generation": 0,
             "iid": 1,
             "collections": 10,
@@ -65,12 +72,12 @@ class TestBeginEvent:
         event = begin_event(
             pid=123,
             tid=1,
-            name="GC Pause (gen=0)",
+            name="GC Pause(0)",
             cat="gc.pause(gen=0)",
             ts_ns=1_000_000,
             args=args,
         )
-        assert event.name == "GC Pause (gen=0)"
+        assert event.name == "GC Pause(0)"
         assert event.cat == "gc.pause(gen=0)"
         assert event.ph == "B"
         assert event.ts == 1_000_000
@@ -84,11 +91,11 @@ class TestEndEvent:
         event = end_event(
             pid=123,
             tid=1,
-            name="GC Pause (gen=0)",
+            name="GC Pause(0)",
             cat="gc.pause(gen=0)",
             ts_ns=2_000_000,
         )
-        assert event.name == "GC Pause (gen=0)"
+        assert event.name == "GC Pause(0)"
         assert event.cat == "gc.pause(gen=0)"
         assert event.ph == "E"
         assert event.ts == 2_000_000
@@ -177,7 +184,7 @@ class TestConvertItemToTraceFormat:
         counters = [e for e in events if e.ph == "C"]
         assert len(begins) == 1
         assert len(counters) == 2
-        assert begins[0].name == "GC Pause (gen=0)"
+        assert begins[0].name == "GC Pause(0)"
         assert {c.name for c in counters} == {"G0", "heap_size"}
 
     def test_preserves_timestamps_in_nanoseconds(self) -> None:
@@ -192,15 +199,15 @@ class TestConvertItemToTraceFormat:
         item = _make_incremental_item(gen=0)
         events = convert_item_to_trace_format(pid=12345, item=item)
         names = {e.name for e in events if e.ph == "B"}
-        assert "GC Pause (gen=0)" in names
-        assert "Mark Alive (gen=0)" in names
-        assert "Fill increment (gen=0)" in names
-        assert "Deduce Unreachable (gen=0)" in names
-        assert "Handle Weakrefs Callbacks (gen=0)" in names
-        assert "Finalize Garbage (gen=0)" in names
-        assert "Handle Resurrected (gen=0)" in names
-        assert "Clear Weakrefs (gen=0)" in names
-        assert "Delete Garbage (gen=0)" in names
+        assert "GC Pause(0)" in names
+        assert "Mark Alive(0)" in names
+        assert "Fill increment(0)" in names
+        assert "Deduce Unreachable(0)" in names
+        assert "Handle Weakrefs Callbacks(0)" in names
+        assert "Finalize Garbage(0)" in names
+        assert "Handle Resurrected(0)" in names
+        assert "Clear Weakrefs(0)" in names
+        assert "Delete Garbage(0)" in names
 
     def test_incremental_gen0_pause_data_has_increment_size(self) -> None:
         item = _make_incremental_item(gen=0, increment_size=1000)
@@ -211,7 +218,7 @@ class TestConvertItemToTraceFormat:
     def test_deduce_unreachable_slice_args_has_candidates(self) -> None:
         item = _make_incremental_item(gen=0)
         events = convert_item_to_trace_format(pid=12345, item=item)
-        deduce = next(e for e in events if e.ph == "B" and e.name == "Deduce Unreachable (gen=0)")
+        deduce = next(e for e in events if e.ph == "B" and e.name == "Deduce Unreachable(0)")
         assert deduce.args["candidates"] == item.candidates
         assert deduce.args["generation"] == 0
 
@@ -282,14 +289,14 @@ class TestConvertItemToTraceFormat:
         )
         events = convert_item_to_trace_format(pid=12345, item=item)
         names = {e.name for e in events if e.ph == "B"}
-        assert "Mark Alive (gen=0)" not in names
-        assert "Fill increment (gen=0)" in names
-        assert "Deduce Unreachable (gen=0)" not in names
-        assert "Handle Weakrefs Callbacks (gen=0)" not in names
-        assert "Finalize Garbage (gen=0)" not in names
-        assert "Handle Resurrected (gen=0)" not in names
-        assert "Clear Weakrefs (gen=0)" not in names
-        assert "Delete Garbage (gen=0)" in names
+        assert "Mark Alive(0)" not in names
+        assert "Fill increment(0)" in names
+        assert "Deduce Unreachable(0)" not in names
+        assert "Handle Weakrefs Callbacks(0)" not in names
+        assert "Finalize Garbage(0)" not in names
+        assert "Handle Resurrected(0)" not in names
+        assert "Clear Weakrefs(0)" not in names
+        assert "Delete Garbage(0)" in names
 
     def test_pause_data_has_all_required_fields(self) -> None:
         item = create_mock_stats_item()
@@ -451,7 +458,7 @@ class TestConvertItemToTraceFormat:
             clear_weakrefs_count=7,
         )
         events = convert_item_to_trace_format(pid=12345, item=item)
-        begin = next(e for e in events if e.ph == "B" and e.name == "Finalize Garbage (gen=0)")
+        begin = next(e for e in events if e.ph == "B" and e.name == "Finalize Garbage(0)")
         assert begin.args["finalized_garbage_count"] == 42
         assert "deleted_garbage_count" not in begin.args
         assert "clear_weakrefs_count" not in begin.args
@@ -464,7 +471,7 @@ class TestConvertItemToTraceFormat:
             clear_weakrefs_count=7,
         )
         events = convert_item_to_trace_format(pid=12345, item=item)
-        begin = next(e for e in events if e.ph == "B" and e.name == "Clear Weakrefs (gen=0)")
+        begin = next(e for e in events if e.ph == "B" and e.name == "Clear Weakrefs(0)")
         assert begin.args["clear_weakrefs_count"] == 7
         assert "finalized_garbage_count" not in begin.args
         assert "deleted_garbage_count" not in begin.args
@@ -477,7 +484,7 @@ class TestConvertItemToTraceFormat:
             clear_weakrefs_count=7,
         )
         events = convert_item_to_trace_format(pid=12345, item=item)
-        begin = next(e for e in events if e.ph == "B" and e.name == "Delete Garbage (gen=0)")
+        begin = next(e for e in events if e.ph == "B" and e.name == "Delete Garbage(0)")
         assert begin.args["deleted_garbage_count"] == 13
         assert "finalized_garbage_count" not in begin.args
         assert "clear_weakrefs_count" not in begin.args
@@ -552,3 +559,172 @@ class TestConvertToTraceFormatWithInstant:
         assert instants[0].ts == 1_000_000_000
         assert instants[1].name == "stop GC monitor"
         assert instants[1].ts == 2_000_000_000
+
+
+class TestConvertLoss:
+    def _msg(self, **kw: int) -> LossMsg:
+        return create_mock_loss_item(**kw)
+
+    def _pair(self, msg: LossMsg, pid: int = 42) -> tuple[BeginEvent, EndEvent]:
+        begin, end = convert_loss_to_trace_format(pid, msg)
+        assert isinstance(begin, BeginEvent)
+        assert isinstance(end, EndEvent)
+        return begin, end
+
+    def _group(self, begin: BeginEvent, gen: int) -> Mapping[str, int | str]:
+        group = begin.args[f"gen{gen}"]
+        assert isinstance(group, dict)
+        return group
+
+    def test_the_bar_is_the_whole_interval(self) -> None:
+        """What is known is the interval between two reads, not where inside
+        it the records ran. A bar sized to the pause would put all of the
+        uncertainty at one edge."""
+        begin, end = self._pair(self._msg(lost_count=1, lost_pause_ns=200))
+
+        assert begin.ts == 1_000
+        assert end.ts == 2_000
+
+    def test_the_name_lists_the_generations_that_lost_records(self) -> None:
+        """Readable off the row, and a stable colour per combination —
+        Perfetto hashes the slice name."""
+        msg = LossMsg(
+            iid=0,
+            ts_start=1_000,
+            ts_stop=2_000,
+            gens=[
+                GenLoss(gen=0, observed_count=3, lost_count=2),
+                GenLoss(gen=1, observed_count=1),
+                GenLoss(gen=2, observed_count=0, lost_count=5),
+            ],
+        )
+
+        begin, end = self._pair(msg)
+
+        assert (begin.name, begin.cat) == ("GC Loss(0,2)", "gc.loss")
+        assert (end.name, end.cat) == ("GC Loss(0,2)", "gc.loss")
+
+    def test_it_lands_on_the_interpreters_loss_track(self) -> None:
+        begin, end = self._pair(self._msg(iid=2, lost_count=1, lost_pause_ns=200))
+
+        assert begin.tid == loss_tid(2)
+        assert end.tid == loss_tid(2)
+
+    def test_the_track_is_the_interpreters_alone(self) -> None:
+        """A flat sentinel would collapse every interpreter's loss onto one
+        row, where two interpreters' intervals can overlap."""
+        first, _ = self._pair(self._msg(iid=0, lost_count=1))
+        second, _ = self._pair(self._msg(iid=1, lost_count=1))
+
+        assert first.tid != second.tid
+
+    def test_the_totals_head_the_args(self) -> None:
+        """What the interval came to, before a reader opens a group."""
+        msg = LossMsg(
+            iid=7,
+            ts_start=1_000,
+            ts_stop=2_000,
+            gens=[GenLoss(gen=0, observed_count=38, lost_count=5, lost_pause_ns=81, lost_from=413)],
+        )
+
+        begin, _ = self._pair(msg)
+
+        assert {k: v for k, v in begin.args.items() if not k.startswith("gen")} == {
+            "iid": 7,
+            "observed_count": 38,
+            "missing_count": 5,
+            "seen": "88.4% (38 of 43)",
+            "missing_pause_total": "81ns",
+            "missing_pause_total_ns": 81,
+        }
+
+    def test_a_generation_group_describes_that_generation_alone(self) -> None:
+        begin, _ = self._pair(self._msg(gen=1, observed_count=4, lost_from=413, lost_count=76, lost_pause_ns=81))
+
+        assert self._group(begin, 1) == {
+            "observed_count": 4,
+            "missing_collections": "413..488",
+            "missing_count": 76,
+            "missing_pause_total": "81ns",
+            "missing_pause_total_ns": 81,
+        }
+
+    def test_a_generation_that_lost_nothing_carries_what_it_saw(self) -> None:
+        """It is in the denominator of the figure above, so leaving it out
+        would make the coverage look unchecked."""
+        msg = LossMsg(
+            iid=0,
+            ts_start=1_000,
+            ts_stop=2_000,
+            gens=[GenLoss(gen=0, observed_count=2, lost_count=1), GenLoss(gen=2, observed_count=6)],
+        )
+
+        begin, _ = self._pair(msg)
+
+        assert self._group(begin, 2) == {"observed_count": 6, "missing_count": 0}
+
+    def test_the_groups_add_up_to_the_totals(self) -> None:
+        msg = LossMsg(
+            iid=0,
+            ts_start=1_000,
+            ts_stop=2_000,
+            gens=[
+                GenLoss(gen=0, observed_count=38, lost_count=5, lost_pause_ns=412_033_000, lost_from=413),
+                GenLoss(gen=1, observed_count=6),
+                GenLoss(gen=2, observed_count=3, lost_count=2, lost_pause_ns=2_904_425_100, lost_from=11),
+            ],
+        )
+
+        begin, _ = self._pair(msg)
+
+        assert begin.args["observed_count"] == 38 + 6 + 3
+        assert begin.args["missing_count"] == 5 + 2
+        assert begin.args["missing_pause_total_ns"] == 412_033_000 + 2_904_425_100
+        assert begin.args["seen"] == "87.0% (47 of 54)"
+
+    def test_the_args_name_the_missing_collections(self) -> None:
+        """Both ends, so the bar says *which* collections gcmon missed.
+        The far one is derived from the count rather than carried, which is
+        what keeps the range and the count from ever disagreeing."""
+        begin, _ = self._pair(self._msg(lost_from=413, lost_count=19))
+
+        assert self._group(begin, 0)["missing_collections"] == "413..431"
+
+    def test_a_single_missing_collection_reads_as_one_number(self) -> None:
+        """Two ends met at one counter and read as a range of nothing. The
+        loss is real and one collection wide, and the arg says so."""
+        begin, _ = self._pair(self._msg(lost_from=11, lost_count=1))
+
+        assert self._group(begin, 0)["missing_collections"] == "11"
+
+    @pytest.mark.parametrize(("lost_from", "lost_count"), [(1, 1), (413, 19), (2, 76), (99, 2)])
+    def test_the_range_holds_exactly_the_collections_the_group_counts(self, lost_from: int, lost_count: int) -> None:
+        """A reader takes the count off one arg and the identities off the
+        other. An off-by-one at either fence makes a bar that contradicts
+        itself, and both ends are inclusive, so the width is one more than the
+        difference."""
+        begin, _ = self._pair(self._msg(lost_from=lost_from, lost_count=lost_count))
+        group = self._group(begin, 0)
+
+        first, _, last = str(group["missing_collections"]).partition("..")
+        assert int(last or first) - int(first) + 1 == group["missing_count"]
+        assert int(first) == lost_from
+
+    def test_a_batch_routes_loss_through_the_same_converter(self) -> None:
+        """ADR-0007: Chrome, Perfetto and JSONL all read this one output, so
+        `combine` reproduces loss spans from a JSONL capture."""
+        items: dict[int, list[TItem]] = {42: [create_mock_stats_item(iid=0), self._msg(lost_count=76)]}
+
+        events = convert_to_trace_format(items)
+
+        assert any(isinstance(e, BeginEvent) and e.name == "GC Loss(0)" for e in events)
+
+    def test_loss_declares_no_thread(self) -> None:
+        """A `ThreadMeta` at the loss tid would have Perfetto draw the track as
+        `Thread -5`, an OS thread that does not exist. Its descriptor comes
+        off the slices instead."""
+        items: dict[int, list[TItem]] = {42: [self._msg(iid=3, lost_count=76)]}
+
+        events = convert_to_trace_format(items)
+
+        assert not any(isinstance(e, ThreadMeta) for e in events)

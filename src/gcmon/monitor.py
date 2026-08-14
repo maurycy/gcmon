@@ -1,12 +1,21 @@
-"""Core GC monitoring functionality."""
+"""Polling a process for GC records and passing them to the stats and the
+exporters."""
 
 import logging
 import time
 from _remote_debugging import get_child_pids, get_gc_stats
 from collections.abc import Sequence, Set
+from itertools import groupby
 from typing import Self
 
+import msgspec
+
+from .data import GenLoss, LossMsg
 from .exporters import EventsExporter
+from .loss import (
+    RingAccumulator,
+    RingKey,
+)
 from .poll_status import PollStatus
 from .protocol import TGCStatsInfo
 from .stats import StreamingStats
@@ -16,15 +25,20 @@ logger = logging.getLogger("gcmon")
 
 __all__ = ["EventsMonitor", "create_monitor"]
 
-# (iid, gen): one ring buffer per interpreter and generation, each with its
-# own `collections` counter.
-type CursorKey = tuple[int, int]
-
 
 def _is_complete(event: TGCStatsInfo) -> bool:
-    """False for a slot holding no finished collection: never written, or
+    """False for a slot holding no finished record: never written, or
     mid-write with ``ts_start`` published and ``ts_stop`` not yet."""
     return event.ts_start < event.ts_stop
+
+
+class PidState(msgspec.Struct):
+    """What gcmon carries from one poll of a process to the next."""
+
+    rings: dict[RingKey, RingAccumulator] = msgspec.field(default_factory=dict)
+    # None before the first read. Two polls bound a loss record, so one poll
+    # bounds nothing.
+    ts_last_poll: int | None = None
 
 
 class EventsMonitor:
@@ -38,13 +52,14 @@ class EventsMonitor:
         self._process = process
         self._exporter = exporter
         self._enabled = True
-        self._cursors: dict[int, dict[CursorKey, int]] = {}
+        self._pids: dict[int, PidState] = {}
         self._stats = stats
 
     def get_child_pids(self) -> list[int] | None:
-        """Every descendant of the target, or ``None`` when the tree could
-        not be read. ``None`` is not an empty tree: a caller that prunes
-        state for missing pids has to skip that tick.
+        """Every descendant of the target, or ``None`` when the read failed.
+
+        An empty list means no children. ``None`` means no answer, so a caller
+        pruning state for missing pids skips that tick.
         """
         try:
             return get_child_pids(self._process.pid, recursive=True)
@@ -68,7 +83,8 @@ class EventsMonitor:
             events = get_gc_stats(pid, all_interpreters=True)
             ts_read_stop = time.monotonic_ns()
             self._stats.record_read_time(ts_read_stop - ts_read_start)
-            self._ingest(pid, events)
+            self._stats.record_ring_geometry(events)
+            self._ingest(pid, events, ts_read_start)
 
             return PollStatus.OK
         except RuntimeError as exc:
@@ -82,61 +98,84 @@ class EventsMonitor:
             return PollStatus.FAIL
 
     def forget(self, pid: int) -> None:
-        """Drop every cursor held for *pid*, so a reused pid inherits no
-        counter."""
-        self._cursors.pop(pid, None)
+        """Drop everything held for *pid*, so a reused pid inherits no counter
+        and no poll instant from the process before it."""
+        self._pids.pop(pid, None)
 
     def retain(self, pids: Set[int]) -> None:
-        """Drop the cursors of every pid outside *pids*.
+        """Drop the state of every pid outside *pids*.
 
         A process that exits between two ticks is never polled again, so no
         wait policy gives up on it and ``forget`` never runs.
         """
-        for pid in self._cursors.keys() - pids:
-            del self._cursors[pid]
+        for pid in self._pids.keys() - pids:
+            del self._pids[pid]
 
-    def _ingest(self, pid: int, events: Sequence[TGCStatsInfo]) -> None:
+    def _ingest(self, pid: int, events: Sequence[TGCStatsInfo], ts_poll: int) -> None:
         """Emit the records in *events* not seen yet.
 
         Every poll returns the whole ring buffer, so ``collections`` is what
         identifies a record.
+
+        *ts_poll* is when this read began. It closes the interval the previous
+        poll opened, see ADR-0015.
         """
-        cursors = self._cursors.setdefault(pid, {})
+        state = self._pids.setdefault(pid, PidState())
+        ts_prev_poll = state.ts_last_poll
+        state.ts_last_poll = ts_poll
 
-        fresh: dict[tuple[int, int, int], TGCStatsInfo] = {}
-        for event in events:
-            if not _is_complete(event):
-                continue
-            if event.collections <= cursors.get((event.iid, event.gen), 0):
-                continue
-            # Two slots with the same counter are one collection: the target
-            # copies a record forward before overwriting it.
-            fresh.setdefault((event.iid, event.gen, event.collections), event)
+        # Ring buffer records arrive wrapped, with the generations
+        # concatenated, so restore each ring's counter order.
+        ordered = sorted(
+            (event for event in events if _is_complete(event)),
+            key=lambda event: (event.iid, event.gen, event.collections),
+        )
 
-        # Slot order is not time order: the batch arrives rotated around the
-        # ring's write position, with the generations concatenated.
-        for event in sorted(fresh.values(), key=lambda event: event.ts_start):
+        fresh: list[TGCStatsInfo] = []
+        gens_by_iid: dict[int, list[GenLoss]] = {}
+        for (iid, gen), group in groupby(ordered, key=lambda event: (event.iid, event.gen)):
+            accumulator = state.rings.setdefault((iid, gen), RingAccumulator())
+            unseen = accumulator.unseen(group)
+            if not unseen:
+                continue
+
+            gen_loss = accumulator.ingest(unseen)
+            gens_by_iid.setdefault(iid, []).append(gen_loss)
+            self._stats.record_lifetime(pid, iid, gen, accumulator.last_collections, accumulator.last_duration)
+            if gen_loss.lost_count:
+                self._stats.record_loss(pid, gen, gen_loss.lost_count, gen_loss.lost_pause_ns)
+            fresh.extend(unseen)
+
+        for iid, gens in gens_by_iid.items():
+            if all(gen_loss.no_loss for gen_loss in gens):
+                continue
+
+            # A first poll seeds every ring it touches, and seeding opens no
+            # gap, so no interval reaches here on one.
+            assert ts_prev_poll is not None
+            self._exporter.add_loss_event(pid, LossMsg(iid=iid, ts_start=ts_prev_poll, ts_stop=ts_poll, gens=gens))
+
+        # We want to keep exported events in the time order
+        for event in sorted(fresh, key=lambda event: (event.iid, event.ts_start)):
             self._exporter.add_event(pid, event)
             self._stats.update(pid, event)
-            key = (event.iid, event.gen)
-            cursors[key] = max(cursors.get(key, 0), event.collections)
+
+        self._stats.check_coverage_advisory(pid)
 
     def stop(self) -> None:
-        """Stop monitoring and close the handler and exporter.
+        """Close the exporter and stop accepting polls.
 
-        Safe to call multiple times.
+        Safe to call more than once.
         """
         self._exporter.close()
         self._enabled = False
 
     @property
     def is_enabled(self) -> bool:
-        """Check if monitor is currently enabled."""
         return self._enabled
 
     @property
     def pid(self) -> int:
-        """Return the process ID being monitored."""
         return self._process.pid
 
     @property
@@ -155,13 +194,5 @@ def create_monitor(
     exporter: EventsExporter,
     stats: StreamingStats,
 ) -> EventsMonitor:
-    """Create a GCMonitor for the given process.
-
-    Args:
-        process: Target process to monitor.
-        exporter: Events exporter.
-
-    Returns:
-        A GCMonitor instance ready to be polled.
-    """
+    """An :class:`EventsMonitor` for *process*, ready to be polled."""
     return EventsMonitor(process, exporter, stats)

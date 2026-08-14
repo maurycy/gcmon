@@ -113,6 +113,17 @@ class TestPerfettoProtoConstants:
         assert f["bool_value"].number == DebugAnnotationField.BOOL_VALUE
         assert f["int_value"].number == DebugAnnotationField.INT_VALUE
         assert f["string_value"].number == DebugAnnotationField.STRING_VALUE
+        assert f["dict_entries"].number == DebugAnnotationField.DICT_ENTRIES
+
+    def test_dict_entries_sits_outside_the_value_oneof(self) -> None:
+        """Protobuf keeps the scalar values one-at-a-time and stops there. An
+        annotation setting both a group and a value encodes without complaint,
+        so leaving the value fields unset is gcmon's job."""
+        desc = DebugAnnotation.DESCRIPTOR
+        assert desc is not None
+        f = desc.fields_by_name
+        assert f["string_value"].containing_oneof is not None
+        assert f["dict_entries"].containing_oneof is None
 
     def test_type_constants(self) -> None:
         assert int(TrackEvent.Type.TYPE_SLICE_BEGIN) == int(TrackEventType.SLICE_BEGIN)

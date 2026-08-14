@@ -113,6 +113,8 @@ eBPF sensors such as Groundcover's watch kernel events, not CPython's GC phases.
 gcmon runs **outside** the target process. It reads GC statistics directly
 from the process's memory using platform-specific memory access APIs
 (available in CPython 3.15+).
+[How gcmon reads a process](https://github.com/sergey-miryanov/gcmon/blob/main/docs/monitoring.md)
+covers the polling loop, what it misses, and what it recovers.
 
 For the pyperf hook integration, gcmon uses an **external process model**:
 
@@ -148,12 +150,27 @@ and counter data only. See
 [Output formats](https://github.com/sergey-miryanov/gcmon/blob/main/docs/formats.md)
 for which fields need which build.
 
+### Not every GC run is read
+
+CPython writes one record per finished GC run into a small fixed ring buffer, so a
+target whose collector runs more often than gcmon polls loses records before any poll
+reads them. A GC-heavy workload at default settings can sit there for most of a run.
+
+gcmon reconstructs what it missed from CPython's cumulative counters, so **`Count`
+and `Sum` in the `--stats` table cover every run**, read or not, and the `Cov`
+column reports what share gcmon read. **Percentiles are not corrected and read
+high.** The trace draws each blind interval on a `GC Loss` track. See
+[How gcmon reads a process](https://github.com/sergey-miryanov/gcmon/blob/main/docs/monitoring.md)
+for the mechanism and
+[Statistics](https://github.com/sergey-miryanov/gcmon/blob/main/docs/statistics.md)
+for how to read a low-coverage table.
+
 ### No call-stack attribution
 
-gcmon reports when each collection ran, how long it took, and how large the heap
+gcmon reports when each GC run happened, how long it took, and how large the heap
 was, plus a per-phase breakdown on a custom CPython build with enhanced GC
 instrumentation (see [above](#sub-step-breakdown-requires-a-custom-build)). It cannot
-tell you which code triggered the collection, because the GC records carry no
+tell you which code triggered the run, because the GC records carry no
 stack information. A sampler answers that question, so the two pair well: see
 [Alternatives Comparison](#alternatives-comparison).
 
