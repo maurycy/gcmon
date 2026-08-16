@@ -170,7 +170,7 @@ def summary_lines(stats: StreamingStats, trace_path: Path | None, show_stats: bo
     return lines
 
 
-def _ring_label(pid: int, iid: int, index: int) -> str:
+def _ring_label(pid: int, iid: int, pid_epoch: int) -> str:
     """The block's heading.
 
     A pid the operating system handed out twice carries two blocks, so the
@@ -178,7 +178,7 @@ def _ring_label(pid: int, iid: int, index: int) -> str:
     is the second to hold that pid. The first stays plain, which is every
     block of an ordinary run.
     """
-    return f"{pid}:{iid}" if index == 1 else f"{pid}:{iid}#{index}"
+    return f"{pid}:{iid}" if pid_epoch == 1 else f"{pid}:{iid}#{pid_epoch}"
 
 
 def print_stats(stats: StreamingStats, table_format: TableFormat = TableFormat.PLAIN) -> None:
@@ -203,13 +203,13 @@ def print_stats(stats: StreamingStats, table_format: TableFormat = TableFormat.P
                 first = False
             has_rows = True
 
-    for pid, iid, index in stats.rings():
+    for pid, iid, pid_epoch in stats.rings():
         all_rows.append(_SEP_GROUP)
-        ring_data = stats.get_ring_stats(pid, iid, index)
+        ring_data = stats.get_ring_stats(pid, iid, pid_epoch)
         if ring_data is None:
             continue
 
-        ring_totals = {gen: stats.pause_totals(pid, iid, gen, index) for gen in stats.GENS}
+        ring_totals = {gen: stats.pause_totals(pid, iid, gen, pid_epoch) for gen in stats.GENS}
         first = True
         has_rows = False
         for metric_key, metric in METRICS.items():
@@ -221,7 +221,7 @@ def print_stats(stats: StreamingStats, table_format: TableFormat = TableFormat.P
                     # Both parts on every row, `12345:0` on a
                     # single-interpreter run too: dropping the `:0` would
                     # leave a header naming two fields over cells holding one.
-                    all_rows.append([_ring_label(pid, iid, index) if first else "", *row])
+                    all_rows.append([_ring_label(pid, iid, pid_epoch) if first else "", *row])
                     first = False
                 has_rows = True
 

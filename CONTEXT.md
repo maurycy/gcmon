@@ -26,7 +26,9 @@ _Avoid_: lifetime (unqualified; see below), duration, extent
 
 **Ring**:
 One CPython ring buffer, identified by `(pid, iid, gen)`. It carries its own
-`collections` counter, and it is the unit statistics are reported for.
+`collections` counter, and it is the unit statistics are reported for. A pid
+outlives the process holding it, so what a run keeps to the end carries the
+**pid epoch** as well.
 _Avoid_: buffer, per-generation stats, slot array
 
 **Interpreter**:
@@ -39,6 +41,14 @@ _Avoid_: subinterpreter (an iid of 0 is an interpreter too), thread, isolate
 One of the collector's three age tiers, `0`, `1` or `2`, spelled **gen** in
 code and `Gen0`–`Gen2` in output.
 _Avoid_: tier, level, cohort
+
+**Pid epoch**:
+Which process held a pid, counting from 1 and advancing when gcmon sees one
+exit. Spelled `pid_epoch`, and part of every key a run keeps to the end, so a
+successor on a recycled pid never writes into its predecessor's figures.
+_Avoid_: index (that is CPython's write cursor into a ring buffer, and nothing
+else), generation (the collector owns it), epoch (bare, reads as a point in
+time)
 
 **Loss window**:
 An interval whose records were overwritten before any poll read them, bounded

@@ -813,14 +813,14 @@ class TestAReusedPid:
 
         assert (totals.sampled_count, totals.sampled_pause_ns) == (16, 80_000)
 
-    def test_no_index_reads_the_one_running(self) -> None:
-        """What every caller that names no index means, and what it meant
+    def test_no_epoch_reads_the_one_running(self) -> None:
+        """What every caller that names no epoch means, and what it meant
         before a pid could carry two blocks."""
         totals = self._reused().pause_totals(1, 0, 0)
 
         assert totals.sampled_pause_ns == 72_000
 
-    def test_no_index_reads_the_last_one_after_it_exits(self) -> None:
+    def test_no_epoch_reads_the_last_one_after_it_exits(self) -> None:
         stats = self._reused()
         stats.materialize(1)
 

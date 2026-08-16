@@ -57,10 +57,11 @@ arrives on a pid gcmon called dead is a new process, the same one or not. The st
 infer liveness a second time from the target's counters, so the two sides cannot disagree about
 which process a figure describes.
 
-**Everything a run keeps carries an index naming which process held the pid.** It counts from 1
+**Everything a run keeps carries an epoch naming which process held the pid.** It counts from 1
 and advances on each of those deaths, so whatever claims the pid next starts clean: its own
-entry, its own loss, its own lifetime counters. The index belongs to the pid rather than the
-ring, so an interpreter a successor creates late counts as the successor's. The table prints the
+entry, its own loss, its own lifetime counters. The epoch belongs to the pid rather than the
+ring — `pid_epoch` in the code, since a ring's own index is CPython's write cursor into it — so
+an interpreter a successor creates late counts as the successor's. The table prints the
 first block plain and marks the ones after it, `12345:0#2` for the second process to hold the
 pid.
 
@@ -90,7 +91,7 @@ of the tree, stating the interpreter and process counts it summed over:
 
 **Process-wide quantities stay keyed per process.** `heap_size` has no generation and no thread
 affinity ([ADR-0004](0004-toplevel-shared-counters.md)), so its high-water mark is taken per
-process, pid and index. The end-of-run summary and the coverage footnote stay run-wide, the
+process, pid and epoch. The end-of-run summary and the coverage footnote stay run-wide, the
 scope `Total` reports.
 
 ## Consequences
@@ -120,7 +121,7 @@ scope `Total` reports.
   counters write a slot of their own, so the fold adds the two histories instead of losing the
   longer one to the shorter one that follows. The footnote's process count stops understating a
   target that recycles pids.
-- **The index depends on gcmon seeing the exit.** A pid recycled between two ticks, with the
+- **The epoch depends on gcmon seeing the exit.** A pid recycled between two ticks, with the
   listing never showing it gone, reads as one process throughout. ADR-0015 accepted the related
   hazard on the monitor side, and the cursor there has the same blind spot.
 - **A death called wrongly costs.** Where gcmon gives up on a pid whose process is still
@@ -163,14 +164,14 @@ scope `Total` reports.
 - **Give the successor of a reused pid no block at all**, counting its records in `Total` and
   naming it in the footer. Tried between the two, and it keeps every block honest for a line of
   code. Rejected: a live process gets no row so that a dead one can keep its heading, and on a
-  target that recycles pids the table thins as the run goes on. The index costs one integer per
+  target that recycles pids the table thins as the run goes on. The epoch costs one integer per
   pid and gives both processes what they earned.
 
 ## Implementation
 
 - `src/gcmon/stats.py` keys sampled metrics, loss and lifetime totals on the ring, bounds the
   active set, and answers both a ring's totals and a fold over them. One entry holds all three,
-  so a ring's numbers settle together, and the index appears in one key rather than three.
+  so a ring's numbers settle together, and the epoch appears in one key rather than three.
 - `src/gcmon/stats_output.py` builds the table's two levels and the footer notes, and owns the
   `PID:IID` spelling.
 - `src/gcmon/monitor.py` passes the iid it has in hand when recording loss, holds the advisory's
