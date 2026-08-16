@@ -145,7 +145,7 @@ class TestTheCombinedRowIsTheLiveRow:
         combine_files([_capture(tmp_path)], out, input_format="jsonl", output_format="chrome")
 
         assert [
-            {gen: (args[f"gen{gen}"]["missing_count"], args[f"gen{gen}"]["missing_collections"]) for gen in (0, 1, 2)}
+            {gen: (args[f"gen{gen}"]["lost_count"], args[f"gen{gen}"]["lost_collections"]) for gen in (0, 1, 2)}
             for args in _chrome_loss_args(out)
         ] == [
             {0: (2, "11..12"), 1: (2, "21..22"), 2: (2, "31..32")},
@@ -156,9 +156,7 @@ class TestTheCombinedRowIsTheLiveRow:
         out = tmp_path / "combined.json"
         combine_files([_capture(tmp_path)], out, input_format="jsonl", output_format="chrome")
 
-        assert [
-            (a["observed_count"], a["missing_count"], a["missing_pause_total_ns"]) for a in _chrome_loss_args(out)
-        ] == [
+        assert [(a["observed_count"], a["lost_count"], a["lost_pause_ns"]) for a in _chrome_loss_args(out)] == [
             (3, 6, 600_000),
             (3, 6, 600_000),
         ]
@@ -338,6 +336,6 @@ class TestTheTraceProcessorAgrees:
             text: Any = row.string_value
             found[row.flat_key] = text if text is not None else row.int_value
 
-        assert found["debug.gen1.missing_collections"] == "21..22"
-        assert found["debug.gen1.missing_count"] == 2
-        assert found["debug.missing_count"] == 6
+        assert found["debug.gen1.lost_collections"] == "21..22"
+        assert found["debug.gen1.lost_count"] == 2
+        assert found["debug.lost_count"] == 6

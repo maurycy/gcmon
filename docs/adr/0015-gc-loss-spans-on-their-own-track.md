@@ -55,19 +55,18 @@ one span's END on the same timestamp as the next one's BEGIN, which makes their 
 load-bearing.
 
 **The args are the interval's totals, then one group per generation.** `observed_count`,
-`missing_count`, `seen`, `missing_pause_total` and `missing_pause_total_ns` sit at the top
-level. Each generation that collected or lost something gets a `gen0` / `gen1` / `gen2` group
-under them. A generation that came through whole still gets its group, which makes `seen`
-checkable, since the groups add up to the totals. A generation that neither collected nor lost
-anything is left out.
+`lost_count`, `seen`, `lost_pause` and `lost_pause_ns` sit at the top level. Each generation
+that collected or lost something gets a `gen0` / `gen1` / `gen2` group under them. A generation
+that came through whole still gets its group, which makes `seen` checkable, since the groups
+add up to the totals. A generation that neither collected nor lost anything is left out.
 
-`missing_pause_total_ns` sums what the lost records cost rather than measuring the bar, which
-is why it says `total`. It appears twice, as a number for SQL and as text for reading, and
-`seen` carries its counts for the same reason. A group reaches Perfetto as a `DebugAnnotation`
-holding `dict_entries` and no value of its own, which the trace processor flattens back under
-the group's name.
+`lost_pause_ns` sums what the lost records cost rather than measuring the bar, which is the
+whole reason it is an arg and not the slice's width. It appears twice, as a number for SQL and
+as `lost_pause` in text for reading, and `seen` carries its counts for the same reason. A group
+reaches Perfetto as a `DebugAnnotation` holding `dict_entries` and no value of its own, which
+the trace processor flattens back under the group's name.
 
-**A span names the records it is missing**, as `missing_collections` in each group, both ends
+**A span names the records it is missing**, as `lost_collections` in each group, both ends
 included and written as one field. A ring that loses a single record puts a pair of numbers on
 the same counter, and a range of nothing reads as a mistake to anyone who does not already know
 the ends are inclusive. Only `lost_from` is stored; the far end follows from it and
@@ -111,7 +110,10 @@ returns one poll's records with a hole in them. Store reordering returns a recor
 previous run's `ts_start` against this one's `ts_stop` under a fresh counter, which both
 filters pass and which reports a pause too long by the interval between the two runs.
 [Spec 0024](../../specs/0024-cpython-report-remote-readable-gc-stats.md) catalogues both for an
-upstream report, and a follow-up takes on the reader's side.
+upstream report, and
+[spec 0044](../../specs/0044-torn-reads-and-reordered-publishes.md) settles the reader's side:
+gcmon waits for the target to synchronize rather than guessing, since one of the two leaves no
+signature a reader can trust and the other is invisible from Python entirely.
 
 Lifetime totals rest on none of this. `collections` and `duration` run cumulative from
 interpreter start, and `gc_get_prev_stats` reads the immediate predecessor rather than the slot

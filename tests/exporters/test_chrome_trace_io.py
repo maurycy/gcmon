@@ -749,7 +749,7 @@ class TestJsonlLossRoundTrip:
 
         args = [e.args for e in convert_jsonl_to_trace_format(path) if e.ph == "B"]
 
-        assert [a["gen0"]["missing_collections"] for a in args] == ["413..431"]  # type: ignore[index]
+        assert [a["gen0"]["lost_collections"] for a in args] == ["413..431"]  # type: ignore[index]
 
     def test_written_on_the_loss_track(self, tmp_path: Path) -> None:
         path = tmp_path / "loss.jsonl"

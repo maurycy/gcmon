@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping, Sequence
 
-from ..data import duration_text, missing_collections, seen_text
+from ..data import duration_text, lost_collections, seen_text
 from ..protocol import (
     TGCStatsInfo,
     TGenLoss,
@@ -306,18 +306,18 @@ def _gen_loss_args(gen: TGenLoss) -> ArgGroup:
 
     A generation that lost nothing gets ``observed_count`` and a zero, so the
     groups still add up to the slice's totals. One that lost something also
-    gets ``missing_collections``, naming them on that generation's own counter
+    gets ``lost_collections``, naming them on that generation's own counter
     with both ends included, and the pause they came to.
     """
     args: ArgGroup = {"observed_count": gen.observed_count}
     if not gen.lost_count:
-        args["missing_count"] = 0
+        args["lost_count"] = 0
         return args
 
-    args["missing_collections"] = missing_collections(gen.lost_from, gen.lost_count)
-    args["missing_count"] = gen.lost_count
-    args["missing_pause_total"] = duration_text(gen.lost_pause_ns)
-    args["missing_pause_total_ns"] = gen.lost_pause_ns
+    args["lost_collections"] = lost_collections(gen.lost_from, gen.lost_count)
+    args["lost_count"] = gen.lost_count
+    args["lost_pause"] = duration_text(gen.lost_pause_ns)
+    args["lost_pause_ns"] = gen.lost_pause_ns
     return args
 
 
@@ -330,9 +330,9 @@ def convert_loss_to_trace_format(pid: int, item: TLossMsg) -> list[TraceEvent]:
     Perfetto hashes the slice name.
 
     The args carry the interval's totals and then one group per generation.
-    ``missing_pause_total_ns`` sums the lost collections and is not the slice's
+    ``lost_pause_ns`` sums the lost collections and is not the slice's
     duration: a 29 s bar can carry 3 s of it. It goes out twice, in nanoseconds
-    for SQL and as ``missing_pause_total`` for reading.
+    for SQL and as ``lost_pause`` for reading.
 
     See ADR-0015 for the width, the track and the grouping.
     """
@@ -342,16 +342,16 @@ def convert_loss_to_trace_format(pid: int, item: TLossMsg) -> list[TraceEvent]:
     category = "gc.loss"
 
     observed_count = sum(gen.observed_count for gen in item.gens)
-    missing_count = sum(gen.lost_count for gen in item.gens)
-    missing_pause_ns = sum(gen.lost_pause_ns for gen in item.gens)
+    lost_count = sum(gen.lost_count for gen in item.gens)
+    lost_pause_ns = sum(gen.lost_pause_ns for gen in item.gens)
 
     args: EventArgs = {
         "iid": item.iid,
         "observed_count": observed_count,
-        "missing_count": missing_count,
-        "seen": seen_text(observed_count, missing_count),
-        "missing_pause_total": duration_text(missing_pause_ns),
-        "missing_pause_total_ns": missing_pause_ns,
+        "lost_count": lost_count,
+        "seen": seen_text(observed_count, lost_count),
+        "lost_pause": duration_text(lost_pause_ns),
+        "lost_pause_ns": lost_pause_ns,
     }
     for gen in item.gens:
         args[f"gen{gen.gen}"] = _gen_loss_args(gen)

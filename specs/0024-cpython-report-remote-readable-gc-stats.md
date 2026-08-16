@@ -177,11 +177,11 @@ lives in `gcmon.loss` and `EventsMonitor._ingest`.
 | 3.4 duplicate slot | Deduplicates on `collections`. |
 | 3.5 straddled read | Not handled. gcmon assumes one poll's records for a ring are contiguous and folds only the two ends, so a hole leaves its counts right and its pause unattributed. |
 
-Rows 3.3 and 3.5 are open rather than settled. An earlier reading held that no sound client-side
-check exists for either, since a reordering leaves a different fingerprint each time and a
-heuristic that fires on a real record widens a gap instead of closing one. A follow-up revisits
-that from the reader's side. Whichever way it lands, a reader can only ever detect these; the
-fix in §3.3's suggestion removes them.
+Rows 3.3 and 3.5 stay unhandled by decision rather than by omission.
+[Spec 0044](0044-torn-reads-and-reordered-publishes.md) took them from the reader's side and
+concluded that gcmon waits: 3.3 leaves no fingerprint a genuine record cannot also leave, and
+3.5's seam is inside this module's own cross-process copy, so it is not observable from Python
+at all. A reader could only ever detect these; §3.3's suggested fix removes them.
 
 The reconstruction in the first row is only possible because `collections` and `duration` are both
 cumulative and monotonic. That is a genuinely good property of this API and worth preserving in any

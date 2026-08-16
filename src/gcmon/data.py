@@ -150,8 +150,8 @@ def seen_text(observed_count: int, lost_count: int) -> str:
     return f"{100.0 * observed_count / total:.1f}% ({observed_count} of {total})"
 
 
-def missing_collections(lost_from: int, lost_count: int) -> str:
-    """The records an interval is missing, as one string.
+def lost_collections(lost_from: int, lost_count: int) -> str:
+    """The records an interval lost, as one string.
 
     ``"11"`` for a single record, ``"2..383"`` for a range, both ends
     included either way.

@@ -436,14 +436,14 @@ class TestGCMonitorStreamsLoss:
 
         args = self.losses(data)[0]["args"]
         assert isinstance(args, dict)
-        assert args["missing_count"] == 3
-        assert args["missing_pause_total_ns"] == 15_000_000
+        assert args["lost_count"] == 3
+        assert args["lost_pause_ns"] == 15_000_000
         assert args["gen0"] == {
             "observed_count": 1,
-            "missing_collections": "11..13",
-            "missing_count": 3,
-            "missing_pause_total": "15ms",
-            "missing_pause_total_ns": 15_000_000,
+            "lost_collections": "11..13",
+            "lost_count": 3,
+            "lost_pause": "15ms",
+            "lost_pause_ns": 15_000_000,
         }
 
     def test_it_lands_on_the_loss_track(

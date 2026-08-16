@@ -59,7 +59,7 @@ the test layout that already exists.
 |---|---|---|
 | the record model | `GCStatsInfo`, `InstantMsg`, `GenLoss`, `LossMsg`, `from_mapping`, `instant_msg` | monitor, loss, control server, the JSONL reader |
 | the unit conversions | `ts_to_us`, `dur_to_ms`, `secs_to_ns` | the JSON encoder, stats, stats output, loss |
-| the slice text | `duration_text`, `seen_text`, `missing_collections` | `trace_converter`, and only `trace_converter` |
+| the slice text | `duration_text`, `seen_text`, `lost_collections` | `trace_converter`, and only `trace_converter` |
 
 The slice text is presentation for a `GC Loss` slice's args and has exactly one caller. It goes
 beside that caller rather than into a module of its own — `duration_text`'s docstring already

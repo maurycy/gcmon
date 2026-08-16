@@ -632,10 +632,10 @@ class TestConvertLoss:
         assert {k: v for k, v in begin.args.items() if not k.startswith("gen")} == {
             "iid": 7,
             "observed_count": 38,
-            "missing_count": 5,
+            "lost_count": 5,
             "seen": "88.4% (38 of 43)",
-            "missing_pause_total": "81ns",
-            "missing_pause_total_ns": 81,
+            "lost_pause": "81ns",
+            "lost_pause_ns": 81,
         }
 
     def test_a_generation_group_describes_that_generation_alone(self) -> None:
@@ -643,10 +643,10 @@ class TestConvertLoss:
 
         assert self._group(begin, 1) == {
             "observed_count": 4,
-            "missing_collections": "413..488",
-            "missing_count": 76,
-            "missing_pause_total": "81ns",
-            "missing_pause_total_ns": 81,
+            "lost_collections": "413..488",
+            "lost_count": 76,
+            "lost_pause": "81ns",
+            "lost_pause_ns": 81,
         }
 
     def test_a_generation_that_lost_nothing_carries_what_it_saw(self) -> None:
@@ -661,7 +661,7 @@ class TestConvertLoss:
 
         begin, _ = self._pair(msg)
 
-        assert self._group(begin, 2) == {"observed_count": 6, "missing_count": 0}
+        assert self._group(begin, 2) == {"observed_count": 6, "lost_count": 0}
 
     def test_the_groups_add_up_to_the_totals(self) -> None:
         msg = LossMsg(
@@ -678,24 +678,24 @@ class TestConvertLoss:
         begin, _ = self._pair(msg)
 
         assert begin.args["observed_count"] == 38 + 6 + 3
-        assert begin.args["missing_count"] == 5 + 2
-        assert begin.args["missing_pause_total_ns"] == 412_033_000 + 2_904_425_100
+        assert begin.args["lost_count"] == 5 + 2
+        assert begin.args["lost_pause_ns"] == 412_033_000 + 2_904_425_100
         assert begin.args["seen"] == "87.0% (47 of 54)"
 
-    def test_the_args_name_the_missing_collections(self) -> None:
+    def test_the_args_name_the_lost_collections(self) -> None:
         """Both ends, so the bar says *which* collections gcmon missed.
         The far one is derived from the count rather than carried, which is
         what keeps the range and the count from ever disagreeing."""
         begin, _ = self._pair(self._msg(lost_from=413, lost_count=19))
 
-        assert self._group(begin, 0)["missing_collections"] == "413..431"
+        assert self._group(begin, 0)["lost_collections"] == "413..431"
 
-    def test_a_single_missing_collection_reads_as_one_number(self) -> None:
+    def test_a_single_lost_collection_reads_as_one_number(self) -> None:
         """Two ends met at one counter and read as a range of nothing. The
         loss is real and one collection wide, and the arg says so."""
         begin, _ = self._pair(self._msg(lost_from=11, lost_count=1))
 
-        assert self._group(begin, 0)["missing_collections"] == "11"
+        assert self._group(begin, 0)["lost_collections"] == "11"
 
     @pytest.mark.parametrize(("lost_from", "lost_count"), [(1, 1), (413, 19), (2, 76), (99, 2)])
     def test_the_range_holds_exactly_the_collections_the_group_counts(self, lost_from: int, lost_count: int) -> None:
@@ -706,8 +706,8 @@ class TestConvertLoss:
         begin, _ = self._pair(self._msg(lost_from=lost_from, lost_count=lost_count))
         group = self._group(begin, 0)
 
-        first, _, last = str(group["missing_collections"]).partition("..")
-        assert int(last or first) - int(first) + 1 == group["missing_count"]
+        first, _, last = str(group["lost_collections"]).partition("..")
+        assert int(last or first) - int(first) + 1 == group["lost_count"]
         assert int(first) == lost_from
 
     def test_a_batch_routes_loss_through_the_same_converter(self) -> None:

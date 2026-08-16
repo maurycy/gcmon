@@ -32,12 +32,15 @@ spec here contradicts an ADR, one of the two is wrong and it is usually the spec
 | [0041](0041-give-the-package-explicit-layers.md) | Feature — cleanup | L | The package's five layers are invisible and unchecked; the dependency direction is clean today and nothing keeps it that way |
 | [0042](0042-name-the-process-session-for-its-role.md) | Feature — cleanup | S | The monitored-process seam is named for a role it does not fill, and its two adapters do not have the same shape |
 | [0043](0043-report-one-version-from-one-source.md) | Bug — reporting | XS | `gcmon.__version__` says `0.1.0` against a `0.5.0` distribution; nothing reads it, nothing checks it, and there is no `--version` to ask |
+| [0044](0044-torn-reads-and-reordered-publishes.md) | Bug — correctness | S | **Blocked on upstream.** A pause slice can read one inter-collection interval too long, and a hole inside one poll's records reaches no loss window; both are races in the target that every filter gcmon has passes |
 
 **Suggested order:** 0025 (the only outage, and it is one word) → 0026 (smallest user-visible
 wrongness) → 0043 (XS, and everything below it makes a release more likely, which is when a
 wrong version gets believed) → 0028 (XS, and it shrinks 0036) → 0027 (needs a trace-processor
 answer before it can be settled either way) → 0031 → 0030 → 0035 → 0037 → 0036 → 0039 → 0040 →
-0038 → 0042 → 0020 → 0041. 0024 is the owner's to file and depends on nothing here.
+0038 → 0042 → 0020 → 0041. 0024 is the owner's to file and depends on nothing here. 0044 is
+not in the run at all: it waits on CPython synchronizing the ring, and §4 states the one
+measurement that would put it back in play sooner.
 
 Four ordering constraints inside that run, and only four: 0026 before 0037, which assumes its
 shared naming helper; 0028 before 0036, which it shrinks; 0035 before 0039, which would
@@ -63,6 +66,11 @@ into a private attribute (0028), the JSONL buffering duplication (0029), and the
 `combine` format validation (0030 §4.5). 0043 came from installing the package into a clean
 3.15 environment the next day, which is the first thing in five releases to put the built
 distribution's version next to the package's own.
+
+0044 came out of the same session as ADR-0015 and was carried as a working note until the
+answer settled, which is that gcmon waits for the target to be fixed rather than guessing from
+the reader's side. It is here rather than in a working set because the wait is open-ended and
+the analysis has to survive it.
 
 ## Templates
 

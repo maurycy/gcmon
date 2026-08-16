@@ -71,10 +71,10 @@ Each slice carries these totals for the whole interval:
 |---|---|
 | `iid` | Interpreter the records were lost from |
 | `observed_count` | Records gcmon read in this interval, across every generation |
-| `missing_count` | Records it missed in the same interval |
+| `lost_count` | Records it missed in the same interval |
 | `seen` | The share that survived, as `87.0% (47 of 54)`. One interval wide, unlike the `--stats` table's `Cov` |
-| `missing_pause_total` | Pause time the runs behind those records took, as `3s 316ms 458µs 100ns`. The bar above it can be 29 s wide |
-| `missing_pause_total_ns` | The same total in nanoseconds, from the target's own counter. Sum this one in SQL |
+| `lost_pause` | Pause time the runs behind those records took, as `3s 316ms 458µs 100ns`. The bar above it can be 29 s wide |
+| `lost_pause_ns` | The same total in nanoseconds, from the target's own counter. Sum this one in SQL |
 
 Then one group per generation that collected or lost anything, named `gen0`,
 `gen1`, `gen2`:
@@ -82,17 +82,17 @@ Then one group per generation that collected or lost anything, named `gen0`,
 | Arg | Meaning |
 |---|---|
 | `observed_count` | Records of that generation gcmon read in this interval |
-| `missing_count` | Records of it gcmon missed |
-| `missing_collections` | Which ones, on that generation's `collections` counter: `413..431` for a range, `11` for a single one, both ends included |
-| `missing_pause_total` / `_ns` | What those cost, as text and as nanoseconds |
+| `lost_count` | Records of it gcmon missed |
+| `lost_collections` | Which ones, on that generation's `collections` counter: `413..431` for a range, `11` for a single one, both ends included |
+| `lost_pause` / `_ns` | What those cost, as text and as nanoseconds |
 
 A generation that came through whole still gets a group with what it observed,
 so the groups add up to the totals above them. In SQL the trace processor
 flattens a group by joining the names with a dot, so `gen1`'s count is
-`args.debug.gen1.missing_count`. A JSONL capture carries the same numbers under
-`lost_*` names; see [Loss records](#loss-records).
+`args.debug.gen1.lost_count`. A JSONL capture carries the same numbers under the
+same names; see [Loss records](#loss-records).
 
-**The counts are exact**, so a group reading `missing_count = 19` also reads
+**The counts are exact**, so a group reading `lost_count = 19` also reads
 `413..431`. Between the first and last record gcmon read on a generation's
 counter, every run is either drawn as a `GC Pause` slice or inside exactly one
 span's range. None twice, none missing.
@@ -181,15 +181,15 @@ and in each `gens` entry:
 | `lost_pause_ns` | Pause time the runs behind those records took, in nanoseconds |
 
 An entry and the `gen{N}` group on the slice drawn from it hold the same numbers
-under different names:
+under the same names. `observed_count`, `lost_count` and `lost_pause_ns` carry
+across unchanged; three things are written differently on the slice, because a
+slice is read by eye:
 
 | `gens` entry | `gen{N}` group |
 |---|---|
 | `gen` | the group's own name, `gen0`, `gen1`, `gen2` |
-| `observed_count` | `observed_count` |
-| `lost_count` | `missing_count` |
-| `lost_from` with `lost_count` | `missing_collections`, both ends included |
-| `lost_pause_ns` | `missing_pause_total_ns`, with `missing_pause_total` beside it as text |
+| `lost_from` with `lost_count` | `lost_collections`, one field, both ends included |
+| `lost_pause_ns` | `lost_pause` beside it, the same total as text |
 
 Tell the record types apart by field presence: a GC record has `collections`, a
 loss record has `gens`, an instant event has `type`. Line order carries no

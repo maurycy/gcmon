@@ -171,8 +171,8 @@ def _build_debug_annotation_dict(name: str, entries: Mapping[str, int | str]) ->
     """A named group of annotations, rendered as one expandable node.
 
     The trace processor flattens it back out for SQL, joining the names with a
-    dot: a ``missing_count`` under ``gen0`` is queried as
-    ``args.debug.gen0.missing_count``.
+    dot: a ``lost_count`` under ``gen0`` is queried as
+    ``args.debug.gen0.lost_count``.
     """
     result = encode_string_field(DebugAnnotationField.NAME, name)
     for key, value in entries.items():

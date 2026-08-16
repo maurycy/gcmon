@@ -5,8 +5,8 @@ PerfettoSQL is SQLite with extensions.
 
 [Output formats](formats.md#chrome-trace-and-perfetto-output) lists what each
 capture holds; a query over something Perfetto-only returns nothing from a
-Chrome trace. Slice args differ too: `debug.gen0.missing_count` in a `.pftrace`,
-`args.gen0.missing_count` in a Chrome trace.
+Chrome trace. Slice args differ too: `debug.gen0.lost_count` in a `.pftrace`,
+`args.gen0.lost_count` in a Chrome trace.
 
 ## Accessing the SQL Interface
 

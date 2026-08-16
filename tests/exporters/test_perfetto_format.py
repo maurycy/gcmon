@@ -956,7 +956,7 @@ class TestLossTrackDescriptor:
 class TestTheMissingCollectionsAnnotation:
     """A `GC Loss` slice's args, off the wire rather than out of the dict.
 
-    Two things nothing else can settle. ``missing_collections`` is a range and
+    Two things nothing else can settle. ``lost_collections`` is a range and
     has to arrive as ``string_value``: written into an integer field it comes
     back as a number that is not one of the counters it names. And each
     generation's counts are a *group*, which reaches the wire as
@@ -1001,16 +1001,16 @@ class TestTheMissingCollectionsAnnotation:
         )
 
     def test_a_range_reaches_the_wire_as_a_string(self) -> None:
-        assert self._group(self._msg(lost_from=413, lost_count=19), 1)["missing_collections"] == "413..431"
+        assert self._group(self._msg(lost_from=413, lost_count=19), 1)["lost_collections"] == "413..431"
 
     def test_one_collection_reaches_it_as_its_own_number(self) -> None:
-        assert self._group(self._msg(lost_from=11, lost_count=1), 1)["missing_collections"] == "11"
+        assert self._group(self._msg(lost_from=11, lost_count=1), 1)["lost_collections"] == "11"
 
     def test_the_counts_beside_it_stay_integers(self) -> None:
         group = self._group(self._msg(lost_from=11, lost_count=1), 1)
 
-        assert group["missing_count"] == 1
-        assert group["missing_pause_total_ns"] == 200
+        assert group["lost_count"] == 1
+        assert group["lost_pause_ns"] == 200
 
     def test_the_pause_total_reaches_the_wire_both_ways(self) -> None:
         """The nanoseconds are what SQL sums; the text beside them is what a
@@ -1018,14 +1018,14 @@ class TestTheMissingCollectionsAnnotation:
         job it is bad at."""
         group = self._group(self._msg(lost_from=11, lost_count=1), 1)
 
-        assert group["missing_pause_total"] == "200ns"
-        assert group["missing_pause_total_ns"] == 200
+        assert group["lost_pause"] == "200ns"
+        assert group["lost_pause_ns"] == 200
 
     def test_a_group_carries_entries_and_no_value_of_its_own(self) -> None:
         """``dict_entries`` sits outside the proto's ``value`` oneof, so an
         annotation that grouped *and* carried a value would be making two
         claims in one field. The trace processor flattens the entries back out
-        under the group's name, which is what ``args.debug.gen1.missing_count``
+        under the group's name, which is what ``args.debug.gen1.lost_count``
         resolves to in SQL."""
         group = next(
             a for a in self._slice(self._msg(lost_from=11, lost_count=1)).debug_annotations if a.name == "gen1"
@@ -1033,12 +1033,12 @@ class TestTheMissingCollectionsAnnotation:
 
         assert not group.HasField("string_value")
         assert not group.HasField("int_value")
-        assert {entry.name for entry in group.dict_entries} >= {"observed_count", "missing_count"}
+        assert {entry.name for entry in group.dict_entries} >= {"observed_count", "lost_count"}
 
     def test_the_totals_stay_at_the_top_level(self) -> None:
         """Ungrouped, so the figure a reader wants first is the one they see
         first rather than one node down."""
         top = self._top(self._msg(lost_from=11, lost_count=1))
 
-        assert top["missing_count"] == 1
+        assert top["lost_count"] == 1
         assert top["seen"] == "75.0% (3 of 4)"

@@ -4,6 +4,7 @@
 
 ### Breaking changes
 
+- `GC Loss` slice args drop the `missing_` prefix for the `lost_` one
 - The `--stats` table reports one block per interpreter, not one per process: `PID:IID` heads every row, `12345:0` included. `Total` is the only blended row
 - The low-coverage advisory measures each interpreter on its own and names the least covered. It fires where a busy interpreter used to lift the whole PID over the 90% floor
 

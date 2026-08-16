@@ -52,9 +52,12 @@ time)
 
 **Loss window**:
 An interval whose records were overwritten before any poll read them, bounded
-by the two poll instants either side of it.
+by the two poll instants either side of it. In a name, **loss** is the window
+itself and **lost** is what was in it: `loss_tid` names the track it is drawn
+on, `lost_count` the records it swallowed. The window has a width of its own,
+so a `loss_duration` and a `lost_pause_ns` are different numbers.
 _Avoid_: missing data, dropped events, gap (in output; fine in prose about the
-arithmetic)
+arithmetic), `loss_count` for a count of records
 
 ### The three intervals a number can describe
 
