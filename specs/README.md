@@ -139,6 +139,21 @@ just goes.
 
 Numbers are assigned in order and **never reused or renumbered**, the same rule the ADRs follow,
 so a reference to spec 0026 keeps meaning one thing. Gaps are normal and mean a spec landed.
+Take the next number from the highest ever assigned, which git history holds, not from the
+highest file present — the whole point of the rule is that landed specs leave their numbers
+behind.
+
+**Two numbers were used twice before that was written down**, both reclaimed by the batch in
+`4731e50` from specs that had landed days earlier. A reference from before 2026-08-15 resolves
+against the first column:
+
+| Number | First held by | Reused for |
+|---|---|---|
+| 0035 | `end-of-run-summary-says-what-the-capture-is-worth`, deleted in `8431858` | `derive-every-gc-sub-phase-from-one-table` |
+| 0036 | `statistics-report-the-ring-not-the-process`, deleted in `7f87d32` | `one-exporter-method-per-record-kind` |
+
+They stay as they are. Renumbering nine files to repair two would break the other half of the
+same rule, and every reference outside this folder was checked: there are none.
 
 A spec whose current behavior is locked by a characterization test is marked **Pinned** in its
 status line and names the test — fixing it means updating that test in the same change,
