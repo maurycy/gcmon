@@ -4,22 +4,22 @@
 
 ### Breaking changes
 
-- The `--stats` table reports one block per interpreter instead of one per process: `PID:IID` on every row, `12345:0` included. `Total` is unchanged, and is now the only blended row
-- The low-coverage advisory measures each interpreter on its own and names the least covered. It fires on captures a busy interpreter used to lift over the 90% floor
+- The `--stats` table reports one block per interpreter, not one per process: `PID:IID` heads every row, `12345:0` included. `Total` is the only blended row
+- The low-coverage advisory measures each interpreter on its own and names the least covered. It fires where a busy interpreter used to lift the whole PID over the 90% floor
 
 ### Features
 
-- Minor tweaks to summary and warning messages when events are lost
-- The lifetime note under the `--stats` table names the fold it prints: `summed over 3 interpreters in 2 processes`
-
-- An interpreter's statistics settle when its process exits, so its percentiles cover its whole life and its slot goes back. A target that spawns and exits keeps a row per process it ran
-- Each process that held a reused PID gets a `--stats` block of its own, the second reading `12345:0#2`
-- Warn, and note under the table, when an interpreter gets no row of its own because 256 were already running. Those records still count in `Total`
+- The low-coverage warning drops the ring-buffer explanation and suggests a smaller `--rate`
+- The end-of-run summary counts the events gcmon reconstructed and the share it observed: `Total events: 1234 (+8566 reconstructed, 12.6% observed)`
+- The lifetime note under the `--stats` table names the fold: `summed over 3 interpreters in 2 processes`
+- An interpreter's statistics settle when its process exits: its percentiles cover its whole life, and its sample buffers go to the next interpreter
+- Each process that held a reused PID gets its own `--stats` block, the second headed `12345:0#2`
+- Warn when an interpreter gets no row because 256 were already running, and count the ones left out in a footer note. Their records still reach `Total`
 
 ### Bugfixes
 
-- Stop a reused PID inheriting the `--stats` row of the process before it, which used to add two processes' records together under one heading
-- Stop a reused PID's lifetime totals overwriting its predecessor's, which could make the note under the table fall mid-run
+- Stop a reused PID inheriting its predecessor's `--stats` row, which put two processes' records under one heading
+- Stop a reused PID's lifetime totals overwriting its predecessor's, which made the note under the table drop mid-run
 
 ## Version 0.5.0 (2026-08-14)
 
