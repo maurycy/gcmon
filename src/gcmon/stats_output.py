@@ -20,7 +20,7 @@ def _print_table(rows: list[list[str] | Any], table_format: TableFormat = TableF
     if not rows:
         return
 
-    headers = ["PID", "Metric", "Count", "Sum", "Avg", "P50", "P90", "P95", "P99", "Cov", "F"]
+    headers = ["PID:IID", "Metric", "Count", "Sum", "Avg", "P50", "P90", "P95", "P99", "Cov", "F"]
     data = [r for r in rows if r is not _SEP_GROUP and r is not _SEP_PHASE]
     w_type = max(len(h) for h in [headers[0]] + [r[0] for r in data])
     w_metric = max(len(h) for h in [headers[1]] + [r[1] for r in data])
@@ -128,6 +128,13 @@ def _build_rows(
     return rows
 
 
+def _plural(count: int, noun: str, plural: str | None = None) -> str:
+    """``1 interpreter``, ``3 interpreters``."""
+    if count == 1:
+        return f"{count} {noun}"
+    return f"{count} {plural or noun + 's'}"
+
+
 def _coverage_cell(coverage: float, lost: int) -> str:
     """``Cov`` must never round to a figure the cells beside it contradict.
 
@@ -163,7 +170,24 @@ def summary_lines(stats: StreamingStats, trace_path: Path | None, show_stats: bo
     return lines
 
 
+def _ring_label(pid: int, iid: int, index: int) -> str:
+    """The block's heading.
+
+    A pid the operating system handed out twice carries two blocks, so the
+    second one and any after it say which process they belong to: `12345:0#2`
+    is the second to hold that pid. The first stays plain, which is every
+    block of an ordinary run.
+    """
+    return f"{pid}:{iid}" if index == 1 else f"{pid}:{iid}#{index}"
+
+
 def print_stats(stats: StreamingStats, table_format: TableFormat = TableFormat.PLAIN) -> None:
+    """Two levels: the run, then one block per ring.
+
+    Rings sort by `(pid, iid)`, so a process's interpreters stay adjacent and
+    in order. `Read Time` is monitor-side and belongs to no ring, so its first
+    cell stays empty.
+    """
     all_rows: list[list[str] | Any] = []
 
     totals = stats.pause_totals_by_gen()
@@ -179,22 +203,25 @@ def print_stats(stats: StreamingStats, table_format: TableFormat = TableFormat.P
                 first = False
             has_rows = True
 
-    for pid in sorted(stats.pids()):
+    for pid, iid, index in stats.rings():
         all_rows.append(_SEP_GROUP)
-        pid_data = stats.get_pid_stats(pid)
-        if pid_data is None:
+        ring_data = stats.get_ring_stats(pid, iid, index)
+        if ring_data is None:
             continue
 
-        pid_totals = {gen: stats.pause_totals(pid, gen) for gen in stats.GENS}
+        ring_totals = {gen: stats.pause_totals(pid, iid, gen, index) for gen in stats.GENS}
         first = True
         has_rows = False
         for metric_key, metric in METRICS.items():
-            rows = _build_rows(pid_data.get(metric_key, {}), metric.name, pid_totals, metric_key == "pause")
+            rows = _build_rows(ring_data.get(metric_key, {}), metric.name, ring_totals, metric_key == "pause")
             if rows:
                 if has_rows:
                     all_rows.append(_SEP_PHASE)
                 for row in rows:
-                    all_rows.append([str(pid) if first else "", *row])
+                    # Both parts on every row, `12345:0` on a
+                    # single-interpreter run too: dropping the `:0` would
+                    # leave a header naming two fields over cells holding one.
+                    all_rows.append([_ring_label(pid, iid, index) if first else "", *row])
                     first = False
                 has_rows = True
 
@@ -234,10 +261,27 @@ def _print_footer(stats: StreamingStats) -> None:
         parts = ", ".join(
             f"Gen{gen} {totals.collections} in {dur_to_ms(totals.pause_ns):.3f} ms" for gen, totals in lifetime
         )
-        # "Since interpreter start" covers the monitored window rather than
+        interpreters, processes = stats.lifetime_scope()
+        # One line per generation whatever the size of the tree. The counts
+        # say what it summed over: interpreters start at different moments,
+        # and a reused pid folds two processes into one figure.
+        #
+        # "monitored window included" covers that window rather than
         # excluding it, so the note must not read as a figure to add to
         # `Count`. `lifetime_count` is the target's own cumulative counter.
-        notes.append(f"Since interpreter start, monitored window included: {parts}.")
+        notes.append(
+            f"Since each interpreter started, monitored window included, summed over "
+            f"{_plural(interpreters, 'interpreter')} in {_plural(processes, 'process', 'processes')}: {parts}."
+        )
+
+    untracked = stats.untracked_rings()
+    if untracked:
+        # The rows are short of the run and a reader adding them up would find
+        # it, so say the count here rather than leave the gap unexplained.
+        notes.append(
+            f"{_plural(untracked, 'ring')} got no row: gcmon was already tracking "
+            f"{StreamingStats.MAX_ACTIVE_RINGS} interpreters at once. Those records are counted in Total."
+        )
 
     if not notes:
         return

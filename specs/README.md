@@ -46,12 +46,14 @@ otherwise move nine classes 0035 deletes; and 0039 before 0041, or the same file
 appetite for them. 0041 is last on purpose — see its §7, which argues against doing it between
 two changes that actually move code.
 
-0033 came out of the work that landed as ADR-0015 and blocks nothing; it wants a real capture in
-front of you before it can be judged worth a fourth row. 0034 came from the same session and is
-superseded: ADR-0015's rewrite took the span's left edge from the poll clock, which is later than
-the bound 0034 set out to restore. Its §4 still carries the argument for why a temporal bound
-differs from the clipping ADR-0015 rejected, worth reading before anyone proposes narrowing a
-span. 0029 is superseded by 0036 for the same reason and on the same terms: its §4 is still the
+0033 and 0035 came out of the work that landed as ADR-0015, and neither blocks the other.
+0035 is the cheapest and stands alone. 0033 wants a real capture in front of you before it can
+be judged worth a fourth row. 0034 came from the same session and is superseded: ADR-0015's
+rewrite took the span's left edge from the poll clock, which is later than the bound 0034 set
+out to restore. Its §4 still carries the argument for why a temporal bound differs from the
+clipping ADR-0015 rejected, which is worth reading before anyone proposes narrowing a span.
+
+0029 is superseded by 0036 for the same reason and on the same terms: its §4 is still the
 fullest statement of why the JSONL schema is load-bearing, and 0036 summarizes rather than
 replaces it.
 

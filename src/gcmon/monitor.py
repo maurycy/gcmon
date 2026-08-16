@@ -99,8 +99,10 @@ class EventsMonitor:
 
     def forget(self, pid: int) -> None:
         """Drop everything held for *pid*, so a reused pid inherits no counter
-        and no poll instant from the process before it."""
+        and no poll instant from the process before it.
+        """
         self._pids.pop(pid, None)
+        self._stats.materialize(pid)
 
     def retain(self, pids: Set[int]) -> None:
         """Drop the state of every pid outside *pids*.
@@ -110,6 +112,7 @@ class EventsMonitor:
         """
         for pid in self._pids.keys() - pids:
             del self._pids[pid]
+        self._stats.retain(pids)
 
     def _ingest(self, pid: int, events: Sequence[TGCStatsInfo], ts_poll: int) -> None:
         """Emit the records in *events* not seen yet.
@@ -143,7 +146,7 @@ class EventsMonitor:
             gens_by_iid.setdefault(iid, []).append(gen_loss)
             self._stats.record_lifetime(pid, iid, gen, accumulator.last_collections, accumulator.last_duration)
             if gen_loss.lost_count:
-                self._stats.record_loss(pid, gen, gen_loss.lost_count, gen_loss.lost_pause_ns)
+                self._stats.record_loss(pid, iid, gen, gen_loss.lost_count, gen_loss.lost_pause_ns)
             fresh.extend(unseen)
 
         for iid, gens in gens_by_iid.items():
@@ -171,14 +174,15 @@ class EventsMonitor:
         if low is None:
             return
 
-        gen, coverage = low
+        iid, gen, coverage = low
         self._coverage_warned = True
         logger.warning(
-            "PID %s generation %s: only %s%% of collections observed so far. Counts and sums are "
-            "reconstructed and exact; percentiles cover only what was sampled and read high. "
-            "Polling more often (a smaller --rate) may observe more, unless the target collects "
-            "faster than gcmon can poll.",
+            "PID %s interpreter %s generation %s: only %s%% of collections observed so far. Counts "
+            "and sums are reconstructed and exact; percentiles cover only what was sampled and read "
+            "high. Polling more often (a smaller --rate) may observe more, unless the target "
+            "collects faster than gcmon can poll.",
             pid,
+            iid,
             gen,
             # Truncated: 89.6% would read as "90%", the floor this fires
             # below. The inner round absorbs float error, which takes an exact

@@ -68,7 +68,7 @@ class TestMetricsAreExact:
     def test_sums_and_counts_are_exact(self) -> None:
         stats = StreamingStats()
         stats.update(1, create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000_000))
-        stats.record_loss(1, 0, 9, 9_000_000)
+        stats.record_loss(1, 0, 0, 9, 9_000_000)
 
         result = to_metrics(stats)
 
@@ -79,9 +79,24 @@ class TestMetricsAreExact:
     def test_coverage_is_reported(self) -> None:
         stats = StreamingStats()
         stats.update(1, create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000))
-        stats.record_loss(1, 0, 1, 1_000)
+        stats.record_loss(1, 0, 0, 1, 1_000)
 
         assert to_metrics(stats)["pause_gen_0_coverage"] == pytest.approx(0.5)
+
+    def test_they_fold_every_ring_of_the_run(self) -> None:
+        """Run-wide by design, which is the scope these key names were
+        released with: a per-ring key would embed a pid that differs every
+        run, and no two runs would share one."""
+        stats = StreamingStats()
+        stats.update(1, create_mock_stats_item(iid=0, gen=0, ts_start=0, ts_stop=1_000_000))
+        stats.update(1, create_mock_stats_item(iid=1, gen=0, ts_start=0, ts_stop=1_000_000))
+        stats.record_loss(1, 1, 0, 2, 2_000_000)
+
+        result = to_metrics(stats)
+
+        assert result["pause_gen_0_count"] == 4
+        assert result["pause_gen_0_sum"] == pytest.approx(4.0)
+        assert result["pause_gen_0_coverage"] == pytest.approx(0.5)
 
     def test_lifetime_metrics_appear_only_when_recorded(self) -> None:
         stats = StreamingStats()
@@ -98,6 +113,6 @@ class TestMetricsAreExact:
         stats = StreamingStats()
         stats.update(1, create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000_000))
         without = to_metrics(stats)["pause_gen_0_p99"]
-        stats.record_loss(1, 0, 99, 99_000_000)
+        stats.record_loss(1, 0, 0, 99, 99_000_000)
 
         assert to_metrics(stats)["pause_gen_0_p99"] == without

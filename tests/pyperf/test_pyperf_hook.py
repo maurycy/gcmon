@@ -142,7 +142,7 @@ class _RecordingStats(StreamingStats):
     def __init__(self) -> None:
         super().__init__()
         self.updated: list[TGCStatsInfo] = []
-        self.losses: list[tuple[int, int, int, int]] = []
+        self.losses: list[tuple[int, int, int, int, int]] = []
 
     @override
     def update(self, pid: int, item: TGCStatsInfo) -> None:
@@ -156,9 +156,9 @@ class _RecordingStats(StreamingStats):
         super().update(pid, item)
 
     @override
-    def record_loss(self, pid: int, gen: int, lost_count: int, lost_pause_ns: int) -> None:
-        self.losses.append((pid, gen, lost_count, lost_pause_ns))
-        super().record_loss(pid, gen, lost_count, lost_pause_ns)
+    def record_loss(self, pid: int, iid: int, gen: int, lost_count: int, lost_pause_ns: int) -> None:
+        self.losses.append((pid, iid, gen, lost_count, lost_pause_ns))
+        super().record_loss(pid, iid, gen, lost_count, lost_pause_ns)
 
 
 def _replay_asking_is_loss_first(stats: StreamingStats, parsed: Mapping[int, Sequence[TItem]]) -> None:
@@ -565,7 +565,7 @@ class TestLossIsNeverReplayedAsACollection:
 
         assert [item for item in stats.updated if is_loss(item)] == []
         assert len(stats.updated) == 2
-        assert stats.losses == [(12345, 0, 2, 7_000_000)]
+        assert stats.losses == [(12345, 0, 0, 2, 7_000_000)]
 
     def test_the_guard_order_does_not_change_what_gets_folded(self, tmp_path: Path) -> None:
         """Same capture, both branch orders, same statistics."""
@@ -588,7 +588,7 @@ class TestLossIsNeverReplayedAsACollection:
 
         assert stats.updated == []
         assert stats.count() == 0
-        assert stats.pause_totals(12345, 0).lost_count == 2
+        assert stats.pause_totals(12345, 0, 0).lost_count == 2
         assert stats.pause_totals_by_gen()[0].exact_count == 2
         assert stats.pause_totals_by_gen()[0].coverage == 0.0
         assert to_metrics(stats)["pause_count"] == 2
@@ -617,6 +617,46 @@ class TestLossIsNeverReplayedAsACollection:
         assert before == after
         assert after["gc_pause_gen_0_coverage"] == pytest.approx(0.5)
         assert after["gc_pause_gen_0_sum"] == pytest.approx(17.0)
+
+
+class TestReplayKeepsTheInterpretersApart:
+    """A loss record names the interpreter it belongs to, so `_replay` keys on
+    it. A capture read back from JSONL has to report what the live run
+    reported, and the live run reports per ring.
+    """
+
+    def capture(self) -> list[dict[str, Any]]:
+        """Interpreter 0 read everything it ran; interpreter 1 read one of
+        ten."""
+        return [
+            _make_jsonl_event(iid=0, collections=5),
+            _make_jsonl_event(iid=1, collections=10, ts_start=1_030_000_000, ts_stop=1_031_000_000),
+            _make_jsonl_loss(iid=1, lost_count=9, lost_pause_ns=9_000_000),
+        ]
+
+    def _replayed(self, tmp_path: Path) -> StreamingStats:
+        stats = StreamingStats()
+        _replay(stats, _parse_jsonl(tmp_path, *self.capture()))
+        return stats
+
+    def test_the_loss_lands_on_the_interpreter_that_lost_it(self, tmp_path: Path) -> None:
+        stats = self._replayed(tmp_path)
+
+        assert stats.pause_totals(12345, 0, 0).lost_count == 0
+        assert stats.pause_totals(12345, 1, 0).lost_count == 9
+
+    def test_each_interpreter_reports_its_own_coverage(self, tmp_path: Path) -> None:
+        stats = self._replayed(tmp_path)
+
+        assert stats.pause_totals(12345, 0, 0).coverage == 1.0
+        assert stats.pause_totals(12345, 1, 0).coverage == pytest.approx(0.1)
+
+    def test_the_run_still_folds_to_one_answer(self, tmp_path: Path) -> None:
+        """`Total` and the benchmark metrics stay run-wide, which is the scope
+        they were released with."""
+        totals = self._replayed(tmp_path).pause_totals_by_gen()[0]
+
+        assert (totals.sampled_count, totals.lost_count) == (2, 9)
 
 
 class TestAggregateGcStats:

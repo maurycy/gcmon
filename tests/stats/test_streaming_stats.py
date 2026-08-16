@@ -127,7 +127,7 @@ class TestStreamingStatsUpdate:
         item2 = gc_stats_item_factory(heap_size=5_000_000)
         streaming_stats.update(12345, item1)
         streaming_stats.update(12345, item2)
-        assert streaming_stats._heap_size[12345] == 5_000_000
+        assert streaming_stats._heap_size[(12345, 1)] == 5_000_000
 
     def test_update_heap_size_is_max_per_pid(
         self,
@@ -138,104 +138,115 @@ class TestStreamingStatsUpdate:
         item_large = gc_stats_item_factory(heap_size=500)
         streaming_stats.update(12345, item_large)
         streaming_stats.update(12345, item_small)
-        assert streaming_stats._heap_size[12345] == 500
+        assert streaming_stats._heap_size[(12345, 1)] == 500
 
 
-class TestStreamingStatsPidTracking:
-    """Tests for StreamingStats PID tracking."""
+class TestStreamingStatsRingTracking:
+    """Tests for StreamingStats ring tracking."""
 
-    def test_pids_returns_all_tracked_pids(self, streaming_stats_with_pids: StreamingStats) -> None:
-        pids = streaming_stats_with_pids.pids()
-        assert pids == {11111, 22222, 33333}
+    def test_rings_returns_all_tracked_rings(self, streaming_stats_with_pids: StreamingStats) -> None:
+        rings = streaming_stats_with_pids.rings()
+        assert rings == [(11111, 0, 1), (22222, 0, 1), (33333, 0, 1)]
 
-    def test_get_pid_stats_returns_active(self, streaming_stats_with_pids: StreamingStats) -> None:
-        pid_stats = streaming_stats_with_pids.get_pid_stats(11111)
-        assert pid_stats is not None
-        assert "pause" in pid_stats
+    def test_get_ring_stats_returns_active(self, streaming_stats_with_pids: StreamingStats) -> None:
+        ring_stats = streaming_stats_with_pids.get_ring_stats(11111, 0)
+        assert ring_stats is not None
+        assert "pause" in ring_stats
 
-    def test_get_pid_stats_returns_materialized(
+    def test_get_ring_stats_returns_settled(
         self,
         streaming_stats: StreamingStats,
         gc_stats_item_factory: Callable[..., GCStatsInfo],
     ) -> None:
-        for pid in range(StreamingStats.MAX_ACTIVE_PIDS + 1):
-            streaming_stats.update(pid, gc_stats_item_factory())
+        streaming_stats.update(12345, gc_stats_item_factory())
+        streaming_stats.materialize(12345)
 
-        old_pid = 0
-        pid_stats = streaming_stats.get_pid_stats(old_pid)
-        assert pid_stats is not None
+        ring_stats = streaming_stats.get_ring_stats(12345, 0)
+        assert ring_stats is not None
 
-    def test_get_pid_stats_missing_returns_none(self, streaming_stats: StreamingStats) -> None:
-        assert streaming_stats.get_pid_stats(99999) is None
+    def test_get_ring_stats_missing_returns_none(self, streaming_stats: StreamingStats) -> None:
+        assert streaming_stats.get_ring_stats(99999, 0) is None
 
-    def test_per_pid_pause_recorded_once(
+    def test_an_interpreter_of_a_known_pid_is_its_own_ring(
         self,
         streaming_stats: StreamingStats,
         gc_stats_item_factory: Callable[..., GCStatsInfo],
     ) -> None:
-        """The per-PID 'pause' metric is recorded once per event, matching the
+        streaming_stats.update(12345, gc_stats_item_factory(iid=0))
+
+        assert streaming_stats.get_ring_stats(12345, 1) is None
+
+    def test_per_ring_pause_recorded_once(
+        self,
+        streaming_stats: StreamingStats,
+        gc_stats_item_factory: Callable[..., GCStatsInfo],
+    ) -> None:
+        """The per-ring 'pause' metric is recorded once per event, matching the
         global total. It used to be recorded twice, doubling Count/Sum/Avg in
-        the per-PID rows of the --stats table."""
+        the per-ring rows of the --stats table."""
         streaming_stats.update(12345, gc_stats_item_factory(ts_start=1_000, ts_stop=6_000))
 
-        pid_stats = streaming_stats.get_pid_stats(12345)
-        assert pid_stats is not None
-        assert pid_stats["pause"][0].count() == 1
-        assert pid_stats["pause"][0].sum() == 5_000
-        assert pid_stats["pause"][0].count() == streaming_stats.metrics["pause"][0].count()
-        assert pid_stats["pause"][0].sum() == streaming_stats.metrics["pause"][0].sum()
+        ring_stats = streaming_stats.get_ring_stats(12345, 0)
+        assert ring_stats is not None
+        assert ring_stats["pause"][0].count() == 1
+        assert ring_stats["pause"][0].sum() == 5_000
+        assert ring_stats["pause"][0].count() == streaming_stats.metrics["pause"][0].count()
+        assert ring_stats["pause"][0].sum() == streaming_stats.metrics["pause"][0].sum()
 
-    def test_per_pid_metrics_match_totals_for_single_pid(
+    def test_per_ring_metrics_match_totals_for_a_single_ring(
         self,
         streaming_stats: StreamingStats,
         incremental_gc_stats_item: GCStatsInfo,
     ) -> None:
-        """With a single PID, every per-PID metric equals the global total."""
+        """With one interpreter of one PID, every per-ring metric equals the
+        global total."""
         streaming_stats.update(12345, incremental_gc_stats_item)
 
-        pid_stats = streaming_stats.get_pid_stats(12345)
-        assert pid_stats is not None
+        ring_stats = streaming_stats.get_ring_stats(12345, 0)
+        assert ring_stats is not None
         for metric_key, gen_stats in streaming_stats.metrics.items():
             for gen, total in gen_stats.items():
-                assert pid_stats[metric_key][gen].count() == total.count(), metric_key
-                assert pid_stats[metric_key][gen].sum() == total.sum(), metric_key
+                assert ring_stats[metric_key][gen].count() == total.count(), metric_key
+                assert ring_stats[metric_key][gen].sum() == total.sum(), metric_key
+
+    def test_every_metric_splits_between_two_interpreters(
+        self,
+        streaming_stats: StreamingStats,
+        incremental_gc_stats_item_factory: Callable[..., GCStatsInfo],
+    ) -> None:
+        """The sub-phase metrics ride the same key as `pause`, and nothing
+        else reads them per ring. Two interpreters, so each ring holds one
+        record and the pair adds up to the run."""
+        streaming_stats.update(12345, incremental_gc_stats_item_factory(iid=0))
+        streaming_stats.update(12345, incremental_gc_stats_item_factory(iid=1))
+
+        first = streaming_stats.get_ring_stats(12345, 0)
+        second = streaming_stats.get_ring_stats(12345, 1)
+        assert first is not None and second is not None
+        for metric_key, gen_stats in streaming_stats.metrics.items():
+            for gen, total in gen_stats.items():
+                one, other = first[metric_key][gen], second[metric_key][gen]
+                assert one.count() + other.count() == total.count(), metric_key
+                assert one.sum() + other.sum() == total.sum(), metric_key
+                if total.count():
+                    assert one.count() == 1, f"{metric_key} folded both interpreters"
 
 
-class TestStreamingStatsPidEviction:
-    """Tests for StreamingStats PID eviction."""
+class TestStreamingStatsRingBound:
+    """Tests for the bound on rings gcmon holds detailed statistics for."""
 
-    def test_eviction_materializes_old_pid(
+    def test_the_bound_counts_interpreters_rather_than_processes(
         self,
         streaming_stats: StreamingStats,
         gc_stats_item_factory: Callable[..., GCStatsInfo],
     ) -> None:
-        for pid in range(StreamingStats.MAX_ACTIVE_PIDS + 1):
-            streaming_stats.update(pid, gc_stats_item_factory())
+        """One process running many interpreters fills the bound the way many
+        processes do."""
+        for iid in range(StreamingStats.MAX_ACTIVE_RINGS + 1):
+            streaming_stats.update(12345, gc_stats_item_factory(iid=iid))
 
-        old_pid = 0
-        assert old_pid not in streaming_stats._metrics_per_pid
-        assert old_pid in streaming_stats._materialized_metrics
-
-    def test_eviction_respects_max_active_pids(
-        self,
-        streaming_stats: StreamingStats,
-        gc_stats_item_factory: Callable[..., GCStatsInfo],
-    ) -> None:
-        for pid in range(StreamingStats.MAX_ACTIVE_PIDS + 10):
-            streaming_stats.update(pid, gc_stats_item_factory())
-
-        assert len(streaming_stats._metrics_per_pid) == StreamingStats.MAX_ACTIVE_PIDS
-
-    def test_eviction_fifo_order(
-        self,
-        streaming_stats: StreamingStats,
-        gc_stats_item_factory: Callable[..., GCStatsInfo],
-    ) -> None:
-        for pid in range(StreamingStats.MAX_ACTIVE_PIDS + 1):
-            streaming_stats.update(pid, gc_stats_item_factory())
-
-        assert 0 not in streaming_stats._metrics_per_pid
-        assert StreamingStats.MAX_ACTIVE_PIDS in streaming_stats._metrics_per_pid
+        assert len(streaming_stats.rings()) == StreamingStats.MAX_ACTIVE_RINGS
+        assert streaming_stats.untracked_rings() == 1
 
 
 class TestStreamingStatsReadTime:
