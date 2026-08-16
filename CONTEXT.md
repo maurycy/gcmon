@@ -42,6 +42,14 @@ One of the collector's three age tiers, `0`, `1` or `2`, spelled **gen** in
 code and `Gen0`–`Gen2` in output.
 _Avoid_: tier, level, cohort
 
+**Block**:
+One heading in the statistics table and the rows under it: either the run-wide
+`Total` or one ring's. The unit `--stats` selects — `total` prints the first
+alone, `full` prints both kinds.
+_Avoid_: section, group, table (the whole thing is the table), totals (the
+per-ring `PauseTotals` and `LossTotals` are companion figures on a row, and
+lifetime totals are an interval; neither is a block)
+
 **Pid epoch**:
 Which process held a pid, counting from 1 and advancing when gcmon sees one
 exit. Spelled `pid_epoch`, and part of every key a run keeps to the end, so a
