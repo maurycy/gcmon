@@ -34,8 +34,8 @@ This file holds the open set and the order to take it in. The other two:
 | [0041](0041-give-the-package-explicit-layers.md) | Feature — cleanup | L | The package's five layers are invisible and unchecked; the dependency direction is clean today and nothing keeps it that way |
 | [0042](0042-name-the-process-session-for-its-role.md) | Feature — cleanup | S | The monitored-process seam carries the name of a role it does not fill, and its two adapters do not have the same shape |
 | [0044](0044-torn-reads-and-reordered-publishes.md) | Bug — correctness | S | **Blocked on upstream.** A pause slice can read one inter-collection interval too long, and a hole inside one poll's records reaches no loss window; both are races in the target that every filter gcmon has passes |
-| [0045](0045-print-the-statistics-table-at-two-widths.md) | Feature — ergonomics | S | `--stats` prints one table with no way to ask for less; on a single-interpreter run half of it is a copy of the other half |
 | [0046](0046-settle-a-departed-fan-out-in-one-pass.md) | Bug — performance | S | Settling a departed pid rescans every running ring, so a fan-out that exits together costs a tick tens of milliseconds and may draw loss on its surviving siblings |
+| [0047](0047-the-no-subcommand-form-has-never-worked.md) | Bug — reporting | XS | `gcmon 12345`, the form the README opens with, exits 2; the branch in `main` that would dispatch it is unreachable |
 | [0048](0048-attach-once-per-pid.md) | Feature — efficiency | M | gcmon re-derives where a process keeps its GC state on every poll and throws it away again; 470 µs of each 473 µs read is that, per process, per tick |
 | [0049](0049-poll-on-the-requested-schedule.md) | Bug — correctness | S | `--rate 0.1` polls every 0.1 s *plus* however long a tick took, so the target sets the interval; a tree costing 30 ms a tick polls at 7.1 Hz and nothing says so |
 | [0050](0050-name-the-poll-interval-for-what-it-is.md) | Feature — ergonomics | S | `--rate` is a duration in seconds under a name that means a frequency, and gcmon echoes `Rate: 0.1s` back |
@@ -49,11 +49,13 @@ Every row here has a file. A missing number either retired or never became one;
 |---|------|----------|
 | 1 | 0025 | The only outage, and the fix is one word |
 | 2 | 0026 | Smallest user-visible wrongness |
+| 3 | 0043 | XS, and a release is when someone believes the wrong version |
+| 4 | 0028 | XS, and it shrinks 0036 |
+| 5 | 0027 | Needs an answer from trace-processor before anyone can settle it either way |
+| 6 | 0031 | |
+| 7 | 0047 | XS, and the command that fails is the one the README opens with |
 | 3 | 0049 | The only wrongness every run is subject to, and the advisory currently misdirects the operator who notices |
 | 4 | 0050 | Constrained: after 0049, and immediately after, so the help text and the advisory are edited once |
-| 5 | 0028 | XS, and it shrinks 0036 |
-| 6 | 0027 | Needs an answer from trace-processor before anyone can settle it either way |
-| 7 | 0031 | |
 | 8 | 0030 | |
 | 9 | 0035 | Constrained: before 0039 |
 | 10 | 0037 | Constrained: after 0026 |
@@ -62,10 +64,9 @@ Every row here has a file. A missing number either retired or never became one;
 | 13 | 0039 | Constrained: after 0035 and 0046, before 0041 |
 | 14 | 0040 | Constrained: after 0050. Rewrites the option declarations 0045 edits |
 | 15 | 0042 | |
-| 16 | 0045 | Breaks `--stats`, so it wants the same release as ADR-0016's reshaping of that table |
-| 17 | 0020 | |
-| 18 | 0048 | Constrained: before 0041, which would otherwise have to place the module it adds |
-| 19 | 0041 | Last on purpose: its §7 argues against doing it between two changes that move code |
+| 16 | 0020 | |
+| 17 | 0048 | Constrained: before 0041, which would otherwise have to place the module it adds |
+| 18 | 0041 | Last on purpose: its §7 argues against doing it between two changes that move code |
 
 "Constrained" means the list below forces the position. A blank cell means no recorded reason, so
 that row can move.
