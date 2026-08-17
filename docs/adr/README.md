@@ -78,4 +78,4 @@ working directory. Those specs were forward-looking plans with step-by-step inst
 part worth keeping, meaning the decisions and their rationale, is here under version control,
 and the original specs were removed once extracted. What remained of that folder was
 re-verified and rewritten on 2026-08-05, and `specs/` is now tracked — see
-[its README](../../specs/README.md#provenance).*
+[its retired-spec record](../../specs/RETIRED.md#provenance).*

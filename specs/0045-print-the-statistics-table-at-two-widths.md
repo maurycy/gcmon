@@ -6,7 +6,7 @@
 - **Origin:** operator request, 2026-08-17: "we need to be able print full stats table and the
   shorter one"
 - **Respects:** [ADR-0016](../docs/adr/0016-the-ring-is-the-statistics-unit.md),
-  [ADR-0018](../docs/adr/0018-the-stats-flag-requires-a-view.md)
+  [ADR-0018](../docs/adr/0018-stats-requires-a-view-and-keeps-no-bare-alias.md)
 
 ## 1. Problem statement
 
@@ -42,7 +42,7 @@ carried the cost.
 `GCMON_STATS` takes the same two words.
 
 Bare `--stats` is gone. It becomes a parse error naming the two values, and so does any other
-value, including `all` — see [ADR-0018](../docs/adr/0018-the-stats-flag-requires-a-view.md) for
+value, including `all` — see [ADR-0018](../docs/adr/0018-stats-requires-a-view-and-keeps-no-bare-alias.md) for
 why no alias is kept.
 
 ## 3. User stories
@@ -175,7 +175,7 @@ read identically in both views.
   than a choice of blocks. It is a plausible future `--stats-metrics`, it is orthogonal to this
   one, and folding both into one flag would make a value named for a block also mean a set of
   metrics.
-- **A deprecation window for bare `--stats`.** [ADR-0018](../docs/adr/0018-the-stats-flag-requires-a-view.md).
+- **A deprecation window for bare `--stats`.** [ADR-0018](../docs/adr/0018-stats-requires-a-view-and-keeps-no-bare-alias.md).
 - **The eleven other environment variables that swallow an unreadable value.** Making them all
   fail loudly is one change with twelve call sites and its own compatibility question. It wants
   its own spec.

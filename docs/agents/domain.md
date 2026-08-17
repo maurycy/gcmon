@@ -27,7 +27,7 @@ directory.
 not yet built, one file per open item, deleted when it lands. Read
 `specs/README.md` when you need to know what is already planned in the area
 you're about to work in — proposing something that is already spec'd is the most
-common way to duplicate work here. Its `## Conventions` section also carries
+common way to duplicate work here. Its neighbour `specs/CONVENTIONS.md` carries
 this repo's vocabulary rules, which the next section depends on.
 
 ## File structure
@@ -65,7 +65,7 @@ When your output names a domain concept (in an issue title, a refactor proposal,
 a hypothesis, a test name), use the term as defined in `CONTEXT.md`. Don't drift
 to synonyms the glossary explicitly avoids.
 
-Until `CONTEXT.md` exists, `specs/README.md#conventions` holds the vocabulary
+Until `CONTEXT.md` exists, `specs/CONVENTIONS.md` holds the vocabulary
 rules: one entry read out of the target's ring is a **record**, one thing
 written into a trace is an **event**, an interpreter is identified by its
 **iid**, an interval whose records never reached gcmon is a **loss window**, and

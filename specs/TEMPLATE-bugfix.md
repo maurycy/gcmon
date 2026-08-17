@@ -1,8 +1,8 @@
 # NNNN — <imperative title: what will be true once this lands>
 
 > Copy this file to `specs/NNNN-kebab-title.md` and delete every `>` guidance line as you
-> fill it in. See [README §Conventions](README.md#conventions) for the rules these sections
-> exist to enforce.
+> fill it in. See [CONVENTIONS.md](CONVENTIONS.md) for the rules these sections exist to
+> enforce.
 
 - **Status:** Not started | In progress | Blocked (`<on what>`) | **Pinned** (`<test that locks current behavior>`)
 - **Kind:** bug — correctness | availability | safety | regression | reporting | cosmetic

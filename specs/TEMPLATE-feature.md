@@ -1,8 +1,8 @@
 # NNNN — <imperative title: the capability this adds>
 
 > Copy this file to `specs/NNNN-kebab-title.md` and delete every `>` guidance line as you
-> fill it in. See [README §Conventions](README.md#conventions) for the rules these sections
-> exist to enforce.
+> fill it in. See [CONVENTIONS.md](CONVENTIONS.md) for the rules these sections exist to
+> enforce.
 >
 > Use this template for enhancements, ergonomics and cleanups — anything where the change is
 > *wanted* rather than *broken*. For a defect, use [TEMPLATE-bugfix.md](TEMPLATE-bugfix.md).

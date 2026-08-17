@@ -13,19 +13,22 @@ stays authoritative:
   Numbers are assigned in order and never reused or renumbered; a gap in the
   folder means a spec retired.
 - `specs/README.md` holds the index table (spec, kind, effort, summary) and the
-  suggested order. A new spec adds a row. A retired spec, landed or declined or
-  superseded, **keeps its row** and loses its file: the row records the outcome
-  in the Kind column and drops the link, so the number still resolves.
+  suggested order. A new spec adds a row there.
+- `specs/RETIRED.md` holds the numbers that no longer have a file. A retired
+  spec, landed or declined or superseded, **keeps its row** and loses its file:
+  the row moves to that table, records the outcome in the Kind column and drops
+  the link, so the number still resolves.
 - Start from `specs/TEMPLATE-bugfix.md` or `specs/TEMPLATE-feature.md` — pick by
   whether the change fixes something or adds something, not by size.
 - A spec states the problem, the evidence for it, the proposed change, and the
   seam it will be tested through. It does not record a decision.
-- When the work lands, delete the spec file and keep its row. If it settled
-  something durable, write an ADR under `docs/adr/`. See `docs/adr/README.md`.
+- When the work lands, delete the spec file, cut its row from `README.md` and
+  paste it into `RETIRED.md` with the outcome. If it settled something durable,
+  write an ADR under `docs/adr/` first. See `docs/adr/README.md`.
 
-`specs/README.md#conventions` carries the rules a spec is held to — anchor on
-symbols rather than line numbers, sketch the seam before the solution, state the
-problem from the operator's perspective. Read it before writing one.
+`specs/CONVENTIONS.md` carries the rules a spec is held to — anchor on symbols
+rather than line numbers, sketch the seam before the solution, state the problem
+from the operator's perspective. Read it before writing one.
 
 "Write a spec" therefore means `specs/NNNN-kebab-title.md`, tracked in git.
 "Publish an issue" means a file under `.scratch/`, which is not.
