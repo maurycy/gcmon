@@ -384,7 +384,7 @@ def monitor_with_exporter(trace_exporter: ExporterFactory) -> tuple[EventsMonito
 
 @pytest.fixture
 def mock_gc_stats(mock_read_events: Callable[..., list[GCStatsInfo]]) -> Generator[None]:
-    with patch("gcmon.monitor.get_gc_stats", side_effect=mock_read_events):
+    with patch("gcmon.monitor.EventsMonitor._read", side_effect=mock_read_events):
         yield
 
 
@@ -421,7 +421,7 @@ class TestGCMonitorStreamsLoss:
         mock_lossy_read_events: Callable[..., list[GCStatsInfo]],
         monitor_with_exporter: tuple[EventsMonitor, Path],
     ) -> None:
-        with patch("gcmon.monitor.get_gc_stats", side_effect=mock_lossy_read_events):
+        with patch("gcmon.monitor.EventsMonitor._read", side_effect=mock_lossy_read_events):
             data = self.trace(monitor_with_exporter)
 
         # The first poll seeds the cursor; the two after it each find a gap.
@@ -432,7 +432,7 @@ class TestGCMonitorStreamsLoss:
         mock_lossy_read_events: Callable[..., list[GCStatsInfo]],
         monitor_with_exporter: tuple[EventsMonitor, Path],
     ) -> None:
-        with patch("gcmon.monitor.get_gc_stats", side_effect=mock_lossy_read_events):
+        with patch("gcmon.monitor.EventsMonitor._read", side_effect=mock_lossy_read_events):
             data = self.trace(monitor_with_exporter)
 
         args = self.losses(data)[0]["args"]
@@ -452,7 +452,7 @@ class TestGCMonitorStreamsLoss:
         mock_lossy_read_events: Callable[..., list[GCStatsInfo]],
         monitor_with_exporter: tuple[EventsMonitor, Path],
     ) -> None:
-        with patch("gcmon.monitor.get_gc_stats", side_effect=mock_lossy_read_events):
+        with patch("gcmon.monitor.EventsMonitor._read", side_effect=mock_lossy_read_events):
             data = self.trace(monitor_with_exporter)
 
         assert {e["tid"] for e in self.losses(data)} == {loss_tid(0)}
@@ -464,7 +464,7 @@ class TestGCMonitorStreamsLoss:
     ) -> None:
         """The edges come off the monitor's clock, not off the records, so the
         one thing a test can name here is that consecutive spans meet."""
-        with patch("gcmon.monitor.get_gc_stats", side_effect=mock_lossy_read_events):
+        with patch("gcmon.monitor.EventsMonitor._read", side_effect=mock_lossy_read_events):
             data = self.trace(monitor_with_exporter)
 
         begins = [_ts(e) for e in self.losses(data)]
@@ -550,7 +550,7 @@ class TestGCMonitorStreaming:
                 return [item]
             raise RuntimeError("Connection broken")
 
-        with patch("gcmon.monitor.get_gc_stats", side_effect=side_effect):
+        with patch("gcmon.monitor.EventsMonitor._read", side_effect=side_effect):
             from gcmon.poll_status import PollStatus
 
             assert monitor.poll(12345) == PollStatus.OK

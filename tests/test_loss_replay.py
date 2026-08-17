@@ -248,7 +248,7 @@ def replay(interval_ms: float, sizes: dict[int, int] = RING_SIZES, skew_ms: floa
     ticks = clock()
 
     with (
-        patch("gcmon.monitor.get_gc_stats", side_effect=one_read),
+        patch("gcmon.monitor.EventsMonitor._read", side_effect=one_read),
         patch("gcmon.monitor.time.monotonic_ns", side_effect=lambda: next(ticks)),
     ):
         for _ in batches:

@@ -272,7 +272,7 @@ def run_monitored(output: Path) -> MonitoredRun:
 
     with (
         patch("gcmon.monitor.get_child_pids", side_effect=one_listing),
-        patch("gcmon.monitor.get_gc_stats", side_effect=one_read),
+        patch("gcmon.monitor.EventsMonitor._read", side_effect=one_read),
         # On the `time` module itself, not on either importer's namespace:
         # `monitor_loop` and `monitor` both reach it through `import time`, so
         # this one patch is what makes the tick instant and the read instants

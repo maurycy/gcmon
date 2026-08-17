@@ -314,7 +314,7 @@ class TestPollIntegration:
     ) -> None:
         """Two polls of the same target, through ``poll`` rather than
         ``_ingest``, so the read path is covered too."""
-        with patch("gcmon.monitor.get_gc_stats", side_effect=[poll_0, poll_1]):
+        with patch("gcmon.monitor.EventsMonitor._read", side_effect=[poll_0, poll_1]):
             assert monitor.poll(PID) == PollStatus.OK
             assert len(exporter.events) == 15
 

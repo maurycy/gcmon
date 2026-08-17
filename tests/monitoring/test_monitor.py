@@ -16,7 +16,7 @@ from tests.helpers import MockExporter, create_mock_stats_item
 @pytest.fixture
 def mock_gc_stats() -> Generator[GCStatsInfo]:
     item = create_mock_stats_item(ts_start=1_000_000_000, ts_stop=1_005_000_000)
-    with patch("gcmon.monitor.get_gc_stats", return_value=[item]):
+    with patch("gcmon.monitor.EventsMonitor._read", return_value=[item]):
         yield item
 
 
@@ -60,7 +60,7 @@ class TestEventsMonitorExtra:
     def test_poll_skips_invalid_timestamp_event(self, monitor: EventsMonitor, exporter: MockExporter) -> None:
         item = create_mock_stats_item(ts_start=2_000, ts_stop=1_000)
 
-        with patch("gcmon.monitor.get_gc_stats", return_value=[item]):
+        with patch("gcmon.monitor.EventsMonitor._read", return_value=[item]):
             monitor.poll(12345)
 
         assert exporter.events == []
@@ -68,7 +68,7 @@ class TestEventsMonitorExtra:
     def test_poll_skips_equal_timestamp_event(self, monitor: EventsMonitor, exporter: MockExporter) -> None:
         item = create_mock_stats_item(ts_start=1_000, ts_stop=1_000)
 
-        with patch("gcmon.monitor.get_gc_stats", return_value=[item]):
+        with patch("gcmon.monitor.EventsMonitor._read", return_value=[item]):
             monitor.poll(12345)
 
         assert exporter.events == []
@@ -85,7 +85,7 @@ class TestEventsMonitorExtra:
             ],
         }
 
-        with patch("gcmon.monitor.get_gc_stats", side_effect=lambda pid, **_: per_pid[pid]):
+        with patch("gcmon.monitor.EventsMonitor._read", side_effect=lambda pid, **_: per_pid[pid]):
             monitor.poll(12345)
             monitor.poll(999)
 
@@ -96,7 +96,7 @@ class TestEventsMonitorExtra:
     ) -> None:
         item = create_mock_stats_item(ts_start=5_000, ts_stop=5_100)
 
-        with patch("gcmon.monitor.get_gc_stats", return_value=[item]):
+        with patch("gcmon.monitor.EventsMonitor._read", return_value=[item]):
             monitor.poll(12345)
             monitor.poll(12345)
 
@@ -204,7 +204,7 @@ def _drive(
     reports: list[PollReport] = []
     with (
         patch("gcmon.monitor.get_child_pids", side_effect=list(listings)),
-        patch("gcmon.monitor.get_gc_stats", side_effect=read),
+        patch("gcmon.monitor.EventsMonitor._read", side_effect=read),
     ):
         for tick, _ in enumerate(listings, start=1):
             now_ns = tick * TICK_NS

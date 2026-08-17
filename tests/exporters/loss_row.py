@@ -86,7 +86,7 @@ def ingest(*batches: Sequence[GCStatsInfo]) -> list[TItem]:
     ticks = clock()
 
     with (
-        patch("gcmon.monitor.get_gc_stats", side_effect=one_read),
+        patch("gcmon.monitor.EventsMonitor._read", side_effect=one_read),
         patch("gcmon.monitor.time.monotonic_ns", side_effect=lambda: next(ticks)),
     ):
         for _ in batches:

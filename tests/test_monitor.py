@@ -20,7 +20,7 @@ NO_EVENTS: list[TGCStatsInfo] = []
 
 @pytest.fixture
 def mock_gc_stats() -> Generator[MagicMock]:
-    with patch("gcmon.monitor.get_gc_stats") as mock:
+    with patch("gcmon.monitor.EventsMonitor._read") as mock:
         yield mock
 
 
@@ -40,6 +40,27 @@ class TestGCMonitor:
     def test_init(self, monitor: EventsMonitor) -> None:
         assert monitor.is_enabled
         assert monitor.pid == 12345
+
+    def test_reuses_one_remote_monitor_per_pid(self, monitor: EventsMonitor) -> None:
+        remote = MagicMock(**{"get_gc_stats.return_value": []})
+        with patch("gcmon.monitor.GCMonitor", return_value=remote) as attach:
+            assert monitor.poll(12345) == PollStatus.OK
+            assert monitor.poll(12345) == PollStatus.OK
+            attach.assert_called_once_with(12345, debug=True)
+
+            monitor._forget(12345)
+            assert monitor.poll(12345) == PollStatus.OK
+
+        assert attach.call_count == 2
+
+    def test_failed_read_reattaches_on_the_next_poll(self, monitor: EventsMonitor) -> None:
+        failed = MagicMock(**{"get_gc_stats.side_effect": RuntimeError("gone")})
+        recovered = MagicMock(**{"get_gc_stats.return_value": []})
+        with patch("gcmon.monitor.GCMonitor", side_effect=[failed, recovered]) as attach:
+            assert monitor.poll(12345) == PollStatus.INVALID_PROCESS
+            assert monitor.poll(12345) == PollStatus.OK
+
+        assert attach.call_count == 2
 
     def test_poll(self, exporter: MockExporter, monitor: EventsMonitor, mock_gc_stats: MagicMock) -> None:
         item = create_mock_stats_item(ts_start=1_000_000_000, ts_stop=1_005_000_000)

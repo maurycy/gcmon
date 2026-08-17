@@ -3,7 +3,7 @@ exporters."""
 
 import logging
 import time
-from _remote_debugging import get_child_pids, get_gc_stats
+from _remote_debugging import GCMonitor, get_child_pids
 from collections.abc import Callable, Sequence, Set
 from itertools import groupby
 from typing import Self
@@ -82,6 +82,7 @@ class EventsMonitor:
         self._wait_policy_factory = wait_policy_factory
         self._is_pid_enabled = is_pid_enabled
         self._stats = stats
+        self._gc_monitors: dict[int, GCMonitor] = {}
         self._coverage_warned = False
 
     def tick(self, now_ns: int, stop: Callable[[], bool]) -> PollReport:
@@ -162,21 +163,30 @@ class EventsMonitor:
 
         try:
             ts_read_start = time.monotonic_ns()
-            events = get_gc_stats(pid, all_interpreters=True)
+            events = self._read(pid)
             ts_read_stop = time.monotonic_ns()
             self._stats.record_read_time(ts_read_stop - ts_read_start)
             self._ingest(pid, events, ts_read_start)
 
             return PollStatus.OK
         except RuntimeError as exc:
+            self._gc_monitors.pop(pid, None)
             logger.debug("Error while polling PID %s (child PID=%s): %s", self._process.pid, pid, exc)
             return PollStatus.INVALID_PROCESS
         except PermissionError as exc:
+            self._gc_monitors.pop(pid, None)
             logger.debug("Error while polling PID %s (child PID=%s): %s", self._process.pid, pid, exc)
             return PollStatus.INVALID_PROCESS
         except Exception as exc:
+            self._gc_monitors.pop(pid, None)
             logger.warning("Monitor for PID %s (child PID=%s) encountered error", self._process.pid, pid, exc_info=exc)
             return PollStatus.FAIL
+
+    def _read(self, pid: int) -> Sequence[TGCStatsInfo]:
+        remote = self._gc_monitors.get(pid)
+        if remote is None:
+            remote = self._gc_monitors[pid] = GCMonitor(pid, debug=True)
+        return remote.get_gc_stats(all_interpreters=True)
 
     def _forget(self, pid: int) -> None:
         """Drop the cursors held for *pid*, so a reused pid inherits no counter
@@ -184,6 +194,7 @@ class EventsMonitor:
         :meth:`tick`.
         """
         self._pids.pop(pid, None)
+        self._gc_monitors.pop(pid, None)
         self._stats.materialize(pid)
 
     def _retain(self, pids: Set[int]) -> None:
@@ -197,6 +208,8 @@ class EventsMonitor:
             del self._pids[pid]
         for pid in self._policies.keys() - pids:
             del self._policies[pid]
+        for pid in self._gc_monitors.keys() - pids:
+            del self._gc_monitors[pid]
         self._stats.retain(pids)
 
     def _ingest(self, pid: int, events: Sequence[TGCStatsInfo], ts_poll: int) -> None:
@@ -280,6 +293,7 @@ class EventsMonitor:
 
         Safe to call more than once.
         """
+        self._gc_monitors.clear()
         self._exporter.close()
         self._enabled = False
 
