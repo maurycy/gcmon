@@ -1,7 +1,8 @@
 # ADR-0013: Sample RSS in a standalone `RssSampler`, on a `tid = -1` sentinel track
 
 - **Status:** Accepted
-- **Date:** 2026-07-13 (caller note added 2026-08-02)
+- **Date:** 2026-07-13 (caller note added 2026-08-02; `tick` moved to nanoseconds and the
+  per-sample clock read removed 2026-08-17)
 
 ## Context
 
@@ -29,14 +30,23 @@ soft-optional dependency across the core.
 
 **Sampling lives in its own class**, `RssSampler` in `src/gcmon/rss_sampler.py`. It holds
 the exporter, the interval, and the last-sample time. Its only public method is
-`tick(now, live_pids)`, and the timer check is internal. `MonitorLoop` gains one optional
+`tick(now_ns, live_pids)`, and the timer check is internal. `MonitorLoop` gains one optional
 constructor argument and one line in the loop body. It knows nothing about `psutil`,
 timers, or how a sample turns into an event.
 
-`tick`'s signature survives monitor-reported liveness
-([ADR-0011](0011-process-lifetime-and-ordering.md)); its caller changes. The loop now takes one
-`time.monotonic_ns()` per tick, passing the nanoseconds to `add_process_liveness` and
-`now_ns / 1e9` here.
+`tick` takes the caller's instant in **nanoseconds**, which both paces the round and stamps every
+sample in it. The loop takes one `time.monotonic_ns()` per tick and passes it unconverted, here and
+to the monitor
+([ADR-0011](0011-process-lifetime-and-ordering.md), [ADR-0017](0017-monitor-owns-the-pid-lifecycle.md)),
+so nanoseconds reach the encoder without a detour through seconds
+([ADR-0009](0009-nanoseconds-canonical-time-unit.md)). `--rss-interval` stays seconds, because an
+operator types it; the sampler converts it once at construction.
+
+**The sampler reads no clock.** It used to stamp each sample with its own
+`time.monotonic_ns()`, spreading a round across however long `psutil` took. That spread carried no
+information: the round walks a `set`, so hash order picked which pid got the earliest timestamp,
+and on the Perfetto side which sibling's lifetime span got clipped. Spans sharing a start nest, so
+one instant per round removes the effect.
 
 **The sampler callback is injectable**, the same pattern as the cmdline provider in
 `ProtobufEventEncoder`. Tests pass a mock and never touch `psutil`. The constructor checks
@@ -63,6 +73,13 @@ the 0.1 s GC poll rate.
 
 - The default 1 Hz sampling costs an order of magnitude less than sampling at the GC poll
   rate, and RSS does not move fast enough for the resolution to matter.
+- **A sample is backdated to the start of its tick**, the price of one instant per round. The
+  instant is read before the poll phase and `psutil` runs after it, so a value lands up to a whole
+  poll phase before it was read, and earlier than every GC record from the same tick. The skew is
+  bounded by how long the polls take, which on a wide tree exceeds the 0.1 s rate. Accepted: RSS
+  moves slowly enough that tens of milliseconds change nothing a reader concludes, while the
+  per-sample read it replaced distorted the `Processes` track by hash order
+  ([ADR-0011](0011-process-lifetime-and-ordering.md)).
 - You can unit-test `RssSampler` without `psutil` and without a monitor loop.
 - Missing `psutil`, a dead process, or a permission error each produce no sample and no
   error. `--rss` on a machine without `psutil` is ignored, with one info log.
@@ -93,13 +110,15 @@ the 0.1 s GC poll rate.
 
 ## Implementation
 
-- `src/gcmon/rss_sampler.py` holds `RssSampler`, its `tick(now, live_pids)` entry point,
+- `src/gcmon/rss_sampler.py` holds `RssSampler`, its `tick(now_ns, live_pids)` entry point,
   the interval check, and the default sampler catching `NoSuchProcess` / `AccessDenied`.
 - `src/gcmon/exporters/_buffered_exporter.py` holds the `-1` sentinel, the `iid >= 0` guard
   that suppresses thread meta for it, and `add_rss_sample`.
 - `src/gcmon/exporters/perfetto_format.py` carries `"rss"` in the top-level metric set.
-- `src/gcmon/monitor_loop.py` collects live pids, reports liveness, then ticks the sampler;
-  `src/gcmon/commands/monitoring_base.py` constructs it.
+- `src/gcmon/monitor_loop.py` reads the clock once per tick and hands the instant to the monitor
+  and then to the sampler; the monitor collects the live pids and reports liveness
+  ([ADR-0017](0017-monitor-owns-the-pid-lifecycle.md)).
+  `src/gcmon/commands/monitoring_base.py` constructs the sampler.
 - `src/gcmon/_env.py` reads `GCMON_RSS` and `GCMON_RSS_INTERVAL`.
 - Tests: `tests/test_rss_sampler.py` (interval timing, live-pid filtering, injected sampler,
   psutil-unavailable fallback); `tests/exporters/test_buffered_exporter.py` (`iid = -1`

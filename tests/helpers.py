@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import json
 import threading
-from collections.abc import Mapping
+from collections.abc import Mapping, Set
 from pathlib import Path
 from typing import override
 
 from gcmon.data import GCStatsInfo, GenLoss, LossMsg
 from gcmon.exporters.exporter import EventsExporter
-from gcmon.protocol import TGCStatsInfo, TInstantMsg
+from gcmon.protocol import TGCStatsInfo, TInstantMsg, TLossMsg
 
 _JsonValue = int | float | str
 ChromeTraceValue = _JsonValue | Mapping[str, _JsonValue]
@@ -47,6 +47,14 @@ class MockExporter(EventsExporter):
         super().__init__()
         self.events: list[TGCStatsInfo] = []
         self.instant_events: list[tuple[int, TInstantMsg]] = []
+        # Per-pid state surviving a process it does not belong to (ADR-0017)
+        # emits no record of its own. It shows up as the wrong pid's cursor
+        # answering, or as a loss window for collections that never happened,
+        # and `events` shows neither.
+        self.events_by_pid: dict[int, list[TGCStatsInfo]] = {}
+        self.loss_events: list[tuple[int, TLossMsg]] = []
+        # One entry per tick that observed anything (ADR-0011).
+        self.liveness: list[tuple[Set[int], int]] = []
         self._close_called = False
         self._event_added = threading.Event()
 
@@ -59,7 +67,23 @@ class MockExporter(EventsExporter):
             item: The stats item to add.
         """
         self.events.append(item)
+        self.events_by_pid.setdefault(pid, []).append(item)
         self._event_added.set()  # Signal that event was added
+
+    @override
+    def add_loss_event(self, pid: int, item: TLossMsg) -> None:
+        """Record a loss window the monitor's arithmetic produced.
+
+        Deliberately does not set ``_event_added``: a caller blocking on
+        ``wait_for_event`` is waiting for a GC record, and releasing it on a
+        loss record would let it wake and assert against an empty ``events``.
+        """
+        self.loss_events.append((pid, item))
+
+    @override
+    def add_process_liveness(self, pids: Set[int], ts_ns: int) -> None:
+        """Record one tick's liveness observation."""
+        self.liveness.append((pids, ts_ns))
 
     @override
     def add_instant_event(self, pid: int, item: TInstantMsg) -> None:

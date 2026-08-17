@@ -27,6 +27,7 @@ from gcmon.monitor import EventsMonitor
 from gcmon.protocol import TGCStatsInfo, TGenLoss, TInstantMsg, TLossMsg
 from gcmon.stats import StreamingStats
 from gcmon.target_process import ExternalProcess
+from gcmon.wait_policy import no_wait_policy
 from tests.helpers import create_mock_stats_item
 from tests.test_monitor_cursor import POLL_0, POLL_1, build_batch
 
@@ -190,7 +191,9 @@ class Ingested:
         self.pid = pid
         self.recorder = LossRecorder()
         self.stats = StreamingStats()
-        self.monitor = EventsMonitor(ExternalProcess(pid=pid), self.recorder, self.stats)
+        self.monitor = EventsMonitor(
+            ExternalProcess(pid=pid), self.recorder, self.stats, wait_policy_factory=no_wait_policy
+        )
         self.polled_at: list[int] = []
 
     def poll(self, batch: Sequence[GCStatsInfo], ts: int | None = None) -> list[TLossMsg]:
@@ -1037,7 +1040,7 @@ class TestForgettingAPid:
 
         ingested = Ingested()
         ingested.poll([events[0]], ts=1_000)
-        ingested.monitor.forget(PID)
+        ingested.monitor._forget(PID)
         ingested.poll([events[4]], ts=2_000)
 
         assert ingested.recorder.losses == []
@@ -1047,7 +1050,7 @@ class TestForgettingAPid:
 
         ingested = Ingested()
         ingested.poll([events[0]], ts=1_000)
-        ingested.monitor.retain(set())
+        ingested.monitor._retain(set())
         ingested.poll([events[4]], ts=2_000)
 
         assert ingested.recorder.losses == []

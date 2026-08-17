@@ -4,7 +4,7 @@ exporters."""
 import logging
 import time
 from _remote_debugging import get_child_pids, get_gc_stats
-from collections.abc import Sequence, Set
+from collections.abc import Callable, Sequence, Set
 from itertools import groupby
 from typing import Self
 
@@ -20,10 +20,11 @@ from .poll_status import PollStatus
 from .protocol import TGCStatsInfo
 from .stats import StreamingStats
 from .target_process import TargetProcess
+from .wait_policy import WaitPolicy, WaitPolicyFactory
 
 logger = logging.getLogger("gcmon")
 
-__all__ = ["EventsMonitor", "create_monitor"]
+__all__ = ["EventsMonitor", "PollReport"]
 
 
 def _is_complete(event: TGCStatsInfo) -> bool:
@@ -41,20 +42,100 @@ class PidState(msgspec.Struct):
     ts_last_poll: int | None = None
 
 
+class PollReport(msgspec.Struct):
+    """What one tick of monitoring found.
+
+    ``live_pids`` answered :attr:`PollStatus.OK`. For a process that never
+    collects, a successful read is the only evidence gcmon has that it existed,
+    which is what liveness reporting rests on (ADR-0011).
+
+    ``keep_running`` is false once no wait policy wants the run to go on.
+    """
+
+    live_pids: frozenset[int]
+    keep_running: bool
+
+
 class EventsMonitor:
     def __init__(
         self,
         process: TargetProcess,
         exporter: EventsExporter,
         stats: StreamingStats,
+        *,
+        wait_policy_factory: WaitPolicyFactory,
+        is_pid_enabled: Callable[[int], bool] | None = None,
     ) -> None:
+        """
+        *wait_policy_factory* builds the per-pid policy that decides when a pid
+        is finished.
 
+        *is_pid_enabled* is the control plane's per-pid verdict: ``False`` means
+        the control server has suppressed that pid and it must not be polled.
+        ``None`` means no control plane.
+        """
         self._process = process
         self._exporter = exporter
         self._enabled = True
         self._pids: dict[int, PidState] = {}
+        self._policies: dict[int, WaitPolicy] = {}
+        self._wait_policy_factory = wait_policy_factory
+        self._is_pid_enabled = is_pid_enabled
         self._stats = stats
         self._coverage_warned = False
+
+    def tick(self, now_ns: int, stop: Callable[[], bool]) -> PollReport:
+        """Poll the target and every child once, and report what answered.
+
+        Prunes the state of every pid that has left the process tree first, so
+        a reused pid inherits nothing from the process before it.
+
+        *now_ns* stamps the whole tick, liveness included. The caller reads the
+        clock once and hands the same instant to the RSS sampler.
+
+        *stop* is asked between pids, so a shutdown does not have to wait out a
+        whole process tree.
+        """
+        child_pids = self.get_child_pids()
+        children = [self._process.pid, *(child_pids or [])]
+
+        # A process that exits between two ticks is never polled again, so no
+        # policy gives up on it and the branch below never runs. None means the
+        # listing failed, so prune only when it worked.
+        if child_pids is not None:
+            self._retain(set(children))
+
+        live: set[int] = set()
+        keep_running = False
+        for pid in children:
+            if stop():
+                break
+
+            if self._is_pid_enabled is not None and not self._is_pid_enabled(pid):
+                continue
+
+            policy = self._policies.get(pid)
+            if policy is None:
+                policy = self._policies[pid] = self._wait_policy_factory()
+
+            rc = self.poll(pid)
+            keep_waiting = policy.wait(rc)
+            keep_running = keep_running or keep_waiting
+            if rc == PollStatus.OK:
+                live.add(pid)
+            elif not keep_waiting:
+                # The policy stays behind. A fresh one answers True until its
+                # own startup timeout expires, holding the run open.
+                self._forget(pid)
+
+        live_pids = frozenset(live)
+
+        # After the poll phase, one batched call, skipped on an empty set.
+        # ADR-0011 argues all three.
+        if live_pids:
+            self._exporter.add_process_liveness(live_pids, now_ns)
+
+        return PollReport(live_pids=live_pids, keep_running=keep_running)
 
     def get_child_pids(self) -> list[int] | None:
         """Every descendant of the target, or ``None`` when the read failed.
@@ -97,21 +178,25 @@ class EventsMonitor:
             logger.warning("Monitor for PID %s (child PID=%s) encountered error", self._process.pid, pid, exc_info=exc)
             return PollStatus.FAIL
 
-    def forget(self, pid: int) -> None:
-        """Drop everything held for *pid*, so a reused pid inherits no counter
-        and no poll instant from the process before it.
+    def _forget(self, pid: int) -> None:
+        """Drop the cursors held for *pid*, so a reused pid inherits no counter
+        and no poll instant from the process before it. The policy stays; see
+        :meth:`tick`.
         """
         self._pids.pop(pid, None)
         self._stats.materialize(pid)
 
-    def retain(self, pids: Set[int]) -> None:
-        """Drop the state of every pid outside *pids*.
+    def _retain(self, pids: Set[int]) -> None:
+        """Drop the state of every pid outside *pids*, all of it at once.
 
-        A process that exits between two ticks is never polled again, so no
-        wait policy gives up on it and ``forget`` never runs.
+        A cursor outliving its policy, or the reverse, is the disagreement
+        ADR-0017 rules out. A process that exits between two ticks is never
+        polled again, so no policy gives up on it and this drops it instead.
         """
         for pid in self._pids.keys() - pids:
             del self._pids[pid]
+        for pid in self._policies.keys() - pids:
+            del self._policies[pid]
         self._stats.retain(pids)
 
     def _ingest(self, pid: int, events: Sequence[TGCStatsInfo], ts_poll: int) -> None:
@@ -206,21 +291,8 @@ class EventsMonitor:
     def pid(self) -> int:
         return self._process.pid
 
-    @property
-    def exporter(self) -> EventsExporter:
-        return self._exporter
-
     def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *args: object) -> None:
         self.stop()
-
-
-def create_monitor(
-    process: TargetProcess,
-    exporter: EventsExporter,
-    stats: StreamingStats,
-) -> EventsMonitor:
-    """An :class:`EventsMonitor` for *process*, ready to be polled."""
-    return EventsMonitor(process, exporter, stats)

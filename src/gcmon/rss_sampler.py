@@ -1,12 +1,7 @@
-"""RSS (Resident Set Size) sampling for monitored processes.
-
-Why sampling lives in a class of its own, on a sentinel track, behind a flag:
-ADR-0013. The loop drives it once per tick, after reporting liveness (ADR-0011).
-"""
+"""RSS (Resident Set Size) sampling for monitored processes."""
 
 import logging
-import time
-from collections.abc import Callable
+from collections.abc import Callable, Set
 
 from .exporters.exporter import EventsExporter
 
@@ -26,10 +21,9 @@ class RssSampler:
         Minimum time (seconds) between RSS sampling rounds.
     rss_provider
         Optional callable returning RSS in bytes for a PID (0 if
-        unreachable). Follows the same injectable-callback pattern as
-        ``cmdline_provider`` in the encoder. When ``None``, defaults to
-        ``_default_rss_sampler`` (psutil-based) if psutil is available,
-        otherwise RSS tracking is silently disabled.
+        unreachable). When ``None``, defaults to ``_default_rss_sampler``
+        (psutil-based) if psutil is available, otherwise RSS tracking
+        is silently disabled.
     """
 
     def __init__(
@@ -39,8 +33,8 @@ class RssSampler:
         rss_provider: Callable[[int], int] | None = None,
     ) -> None:
         self._exporter = exporter
-        self._interval = interval
-        self._last_sample: float = 0.0
+        self._interval_ns = round(interval * 1e9)
+        self._last_sample_ns = 0
         self._enabled = True
 
         if rss_provider is not None:
@@ -55,25 +49,28 @@ class RssSampler:
             else:
                 self._provider = _default_rss_sampler
 
-    def tick(self, now: float, live_pids: set[int]) -> None:
-        """Sample RSS for *live_pids* if the sampling interval has elapsed."""
+    def tick(self, now_ns: int, live_pids: Set[int]) -> None:
+        """Sample RSS for *live_pids* if the sampling interval has elapsed.
+
+        *now_ns* both paces the round and stamps every sample in it, so one
+        round lands on one instant.
+        """
         if not self._enabled or not live_pids:
             return
-        if now - self._last_sample < self._interval:
+        if now_ns - self._last_sample_ns < self._interval_ns:
             return
-        self._last_sample = now
+        self._last_sample_ns = now_ns
         for pid in live_pids:
-            self._sample(pid)
+            self._sample(pid, now_ns)
 
-    def _sample(self, pid: int) -> None:
+    def _sample(self, pid: int, ts_ns: int) -> None:
         try:
             rss = self._provider(pid)
         except Exception as exc:
             logger.debug("Could not sample RSS for PID %s: %s", pid, exc)
             return
         if rss:
-            ts = time.monotonic_ns()
-            self._exporter.add_rss_sample(pid, rss, ts)
+            self._exporter.add_rss_sample(pid, rss, ts_ns)
 
 
 def _noop_rss_sampler(pid: int) -> int:
