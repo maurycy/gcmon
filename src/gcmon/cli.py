@@ -110,7 +110,7 @@ def _split_run_args(argv: list[str]) -> tuple[list[str], list[str]]:
         if arg.startswith("--module=") or arg.startswith("--script="):
             # --module=value or --script=value → split after this arg
             return argv[: i + 1], argv[i + 1 :]
-    # No target option found — all args go to gcmon
+    # No target option found: all args go to gcmon
     return argv, []
 
 
@@ -145,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
     if hasattr(args, "func"):
         return int(args.func(args))
 
-    # No command specified — default to monitor
+    # No command specified: default to monitor
     if args.command is None:
         return main(["monitor", *argv])
 

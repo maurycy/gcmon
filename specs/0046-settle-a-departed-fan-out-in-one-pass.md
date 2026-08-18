@@ -1,7 +1,7 @@
-# 0046 — Settle every departed pid in one pass over the running rings
+# 0046: Settle every departed pid in one pass over the running rings
 
 - **Status:** Not started
-- **Kind:** bug — performance
+- **Kind:** bug (performance)
 - **Effort:** S
 - **Origin:** a design question while landing 0038, 2026-08-17, recorded in §6
 - **Respects:** [ADR-0016](../docs/adr/0016-the-ring-is-the-statistics-unit.md) (the ring settles,
@@ -127,7 +127,7 @@ ADR-0015's arithmetic reports that, but nobody has run the case.
 What would settle it: a fan-out wide enough to cost tens of milliseconds, exiting in one tick,
 with a surviving sibling collecting fast enough to wrap its gen-0 ring inside the stall, then a
 check for a `GC Loss` span on that survivor across the exit. If no span appears, the Kind becomes
-`feature — cleanup` and §1 needs rewriting. The fix stays S either way.
+`feature (cleanup)` and §1 needs rewriting. The fix stays S either way.
 
 That experiment is harder to build than the fix and needs a tuned collector racing a tuned ring,
 so the one-pass change does not wait on it.

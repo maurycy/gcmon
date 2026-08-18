@@ -1,10 +1,10 @@
-# 0044 — Close the two unsynchronized-read hazards, once CPython synchronizes the ring
+# 0044: Close the two unsynchronized-read hazards, once CPython synchronizes the ring
 
-- **Status:** Blocked (`upstream — the publish/read synchronization proposed in
+- **Status:** Blocked (`upstream: the publish/read synchronization proposed in
   [0024](0024-cpython-report-remote-readable-gc-stats.md) §3.3 and §3.5 has to land in CPython
   first`)
-- **Kind:** bug — correctness
-- **Effort:** S once unblocked — see §7 for the M-sized alternative that does not wait
+- **Kind:** bug (correctness)
+- **Effort:** S once unblocked; see §7 for the M-sized alternative that does not wait
 - **Origin:** the loss-spans working set, itself from ADR-0015's
   `## What gcmon trusts the target for`, which names both hazards and mitigates neither
 - **Respects:** [ADR-0015](../docs/adr/0015-gc-loss-spans-on-their-own-track.md) (what gcmon
@@ -48,9 +48,9 @@ fresh. The record then reaches `RingAccumulator.ingest`, which adds its span to
 still. A collection finishing partway through advances the write cursor across a region already
 copied, so one poll can return slots from two generations of the ring: sorted on `collections`,
 consecutive at both ends with a hole in the middle. `RingAccumulator.ingest` says what it does
-with that in its own docstring — *"A ring holds consecutive records, so only the first of them
+with that in its own docstring, *"A ring holds consecutive records, so only the first of them
 can sit across a gap and only the last settles the cursor. Contiguity it trusts without
-checking, see ADR-0015."* — and `_gen_loss` is only ever called on `events[0]`, so a hole after
+checking, see ADR-0015."*, and `_gen_loss` is only ever called on `events[0]`, so a hole after
 it opens no window.
 
 ADR-0015 records the same two in its `## What gcmon trusts the target for`, under **"Two hazards
@@ -58,19 +58,19 @@ break the first two properties, and gcmon mitigates neither yet."**
 
 ## 3. Scope
 
-**Affected.** Every command that reads a live target — `gcmon monitor`, `gcmon run`, and the
-pyperf hook's live path — on every `--format`. Both hazards are in the read, so a wrong number
+**Affected.** Every command that reads a live target (`gcmon monitor`, `gcmon run`, and the
+pyperf hook's live path) on every `--format`. Both hazards are in the read, so a wrong number
 is already wrong before any exporter sees it.
 
 **Not affected.** `gcmon combine` and the pyperf hook's `_replay`, which read a JSONL capture:
 replay reproduces faithfully whatever the live run recorded, so it neither introduces these nor
-repairs them. Free-threaded builds cannot form the straddled read at all — `GC_YOUNG_STATS_SIZE`
+repairs them. Free-threaded builds cannot form the straddled read at all: `GC_YOUNG_STATS_SIZE`
 is 1 there, so a poll returns at most one record per generation and there is no interior slot to
 straddle. Lifetime totals rest on neither hazard: `collections` and `duration` are cumulative
 from interpreter start, so a reordered or straddled read of the ring leaves them intact.
 
 **Why the suite does not catch it.** Both are races inside the target, and every fixture in
-`tests/captures.py` is synthesized from complete, consecutive records — neither shape is
+`tests/captures.py` is synthesized from complete, consecutive records, so neither shape is
 generated, so no assertion can fail on one. This is also why a fix needs the ground-truth
 captures named in §5 rather than a unit test alone.
 
@@ -93,7 +93,7 @@ captures named in §5 rather than a unit test alone.
 3. **Version-gate the caveat.** ADR-0015's `## What gcmon trusts the target for` and 0024 §4's
    handling table both state "not handled" unconditionally. Once a fixed CPython exists the
    statement is version-dependent, and the docs have to say which side of the line a capture was
-   taken on — an operator holding a trace needs to know whether the caveat applies to it.
+   taken on; an operator holding a trace needs to know whether the caveat applies to it.
 4. **Re-verify with ground truth** per §5 before either caveat is relaxed. "The hazard is fixed
    upstream" is a claim about the target, and the property gcmon should assert is its own: the
    records one poll returns for a ring are consecutive.
@@ -105,11 +105,11 @@ someone runs it the check stays unbuilt.
 ## 5. Seams and testing decisions
 
 - **Seam:** `RingAccumulator.ingest`. It already receives exactly one poll's records for one
-  ring, in counter order, and already owns the arithmetic that turns a gap into a window — so it
+  ring, in counter order, and already owns the arithmetic that turns a gap into a window, so it
   is the highest place a hole is both visible and repairable. `EventsMonitor._ingest` sits above
   it and would work too, but it holds every ring of a pid at once and would have to re-group.
 - **New seam needed:** none.
-- **What makes a good test here:** external behavior only — the reconstructed exact count, the
+- **What makes a good test here:** external behavior only: the reconstructed exact count, the
   exact pause sum, and the loss window's `lost_from`/`lost_count`/`lost_pause_ns`. Assert on the
   reconstruction, never on whether a detector fired; a detector that fires and repairs nothing is
   the outcome §7 argues against.
@@ -117,9 +117,9 @@ someone runs it the check stays unbuilt.
   building a poll's record set with a known ground truth. `tests/test_loss_replay.py` is the
   model for asserting that two paths agree on one capture.
 - **Cases:**
-  1. One poll's records for a ring carrying an interior hole — today the hole's pause reaches no
+  1. One poll's records for a ring carrying an interior hole: today the hole's pause reaches no
      window, and `exact_pause_ns` is short by it.
-  2. A record holding its predecessor's `ts_start` against its own `ts_stop` — today its span is
+  2. A record holding its predecessor's `ts_start` against its own `ts_stop`: today its span is
      added to `sampled_pause_ns` whole.
   3. The regression guard: an ordinary poll, with consecutive records and the mid-write slot at
      the head, produces byte-identical numbers to today.
@@ -139,27 +139,27 @@ someone runs it the check stays unbuilt.
 ## 7. Further notes
 
 **The alternative this spec defers, and why it is not dead.** The two hazards are not equally
-opaque, and the difference is worth writing down because the obvious reading — "neither is
-detectable from the reader" — is only true of one of them.
+opaque, and the difference is worth writing down because the obvious reading, "neither is
+detectable from the reader", is only true of one of them.
 
 The straddled read *does* leave a signature. One poll returns every slot of the ring, so the
 records it yields for a ring should be consecutive on `collections`; a hole in the middle of that
 set means the cursor crossed the read. The two shapes that could produce a false positive both
 sit at the head rather than the middle: a mid-write slot, which `monitor._is_complete` already
 drops, and the §3.4 twin, which is a duplicate rather than a gap. And an interior hole is not
-merely detectable but repairable — `RingAccumulator._gen_loss` already converts a counter gap
+merely detectable but repairable: `RingAccumulator._gen_loss` already converts a counter gap
 into a window from the cumulative `duration` delta, and applying it at an interior hole rather
 than only at `events[0]` would attribute the pause that is lost today.
 
 That is an M-sized change and it is deferred, not rejected, on two grounds: the upstream fix
 deletes the shape entirely, so the code would exist to handle a case that stops occurring; and
-the false-positive cost is asymmetric — a check that fires on a genuine record discards it and
+the false-positive cost is asymmetric: a check that fires on a genuine record discards it and
 widens a gap, which is worse than the hazard, since loss is already reconstructed. §4's measured
 condition is what would reopen it.
 
 The reordering has no equivalent. Every fingerprint it leaves is one a genuine record can also
 leave, so any client-side test for it is a heuristic over plausible pause lengths, and that is a
-detector that eventually drops a real long pause — the one record an operator most wants.
+detector that eventually drops a real long pause, the one record an operator most wants.
 
 **Where the answer goes.** ADR-0015's `## What gcmon trusts the target for` is the statement of
 record and is amended when this lands, per README convention 4. 0024 §4's handling table carries

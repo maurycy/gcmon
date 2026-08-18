@@ -1,16 +1,16 @@
-# 0047 — Decide the no-subcommand form, `gcmon 12345`
+# 0047: Decide the no-subcommand form, `gcmon 12345`
 
 - **Status:** Not started
-- **Kind:** bug — reporting
+- **Kind:** bug (reporting)
 - **Effort:** XS
 - **Origin:** spec 0045 §7, 2026-08-17, which fixed the two documented examples it had to touch
   and deliberately left the question open
-- **Respects:** —
+- **Respects:** none
 
 ## 1. Problem
 
-`README.md` and `docs/cli.md` tell an operator that `gcmon` without a subcommand monitors —
-"`gcmon` takes three subcommands: `monitor`, `run` and `combine`. Without one it monitors" — and
+`README.md` and `docs/cli.md` tell an operator that `gcmon` without a subcommand monitors
+("`gcmon` takes three subcommands: `monitor`, `run` and `combine`. Without one it monitors"), and
 show `gcmon 12345`, `gcmon 12345 -v`, `gcmon 12345 --output trace.json --rate 0.01`. Every one of
 them exits 2 with a usage message. The operator's first command, copied from the top of the
 README, fails.
@@ -38,8 +38,8 @@ invocation that names its subcommand works.
 
 One of two, and this spec does not choose:
 
-1. **Make it work.** `main` detects a leading token that is not a subcommand choice — an
-   all-digit pid — and inserts `monitor` before it, so the fallback branch becomes reachable and
+1. **Make it work.** `main` detects a leading token that is not a subcommand choice (an
+   all-digit pid) and inserts `monitor` before it, so the fallback branch becomes reachable and
    the documentation is true. Costs a parser that guesses at its first argument.
 2. **Delete it.** Drop the fallback branch and rewrite the examples to name `monitor`. Costs the
    shorter form the docs have promised since the first release.

@@ -1,7 +1,7 @@
-# 0034 — Give interpreter confirmation its own seam, and put the mid-write bound back
+# 0034: Give interpreter confirmation its own seam, and put the mid-write bound back
 
 - **Status:** **Superseded** by ADR-0015's 2026-08-12 rewrite, which reached §1's goal another way
-- **Kind:** feature — enhancement
+- **Kind:** feature (enhancement)
 - **Effort:** S
 - **Origin:** grilling session, 2026-08-08
 - **Respects:** [ADR-0015](../docs/adr/0015-gc-loss-spans-on-their-own-track.md) (the loss
@@ -76,7 +76,7 @@ contains nothing else.
 **Why the mid-write bound is sound, and the abandoned clipping is not.** ADR-0015 tried and
 rejected *"clipping a window's far end to the poll's earliest observation anywhere in the
 interpreter"*, because oldest-first eviction orders a key's lost records against **that key's**
-kept records and says nothing about another generation's — a lost gen-0 collection can have run
+kept records and says nothing about another generation's: a lost gen-0 collection can have run
 after an observed gen-2 one. The two arguments are unrelated:
 
 - The rejected clipping is an **eviction-order** argument. It infers when a lost record ran from
@@ -91,7 +91,7 @@ Write this into the extracted unit's docstring. It is the whole reason the mecha
 and its similarity to a rejected idea is the reason it will be deleted again if it is not stated.
 
 **Both edges of the mid-write record confirm, and they are not redundant.** Its `ts_start`
-survives the record never coming back — the slot is often overwritten before the next read, which
+survives the record never coming back, since the slot is often overwritten before the next read, which
 is the situation that produced it. Its `ts_stop`, learned when the record returns complete a poll
 later, raises the bound further. Take the max of whatever is available.
 
@@ -121,7 +121,7 @@ the footer already names no culprit, so nothing needs rewording; expect the coun
   in step with it by hand.
 - **What makes a good test here:** feed observations and assert the bound, with no polls and no
   cursors in the test. Then one span-level test that a window opens at the mid-write record's
-  `ts_stop` rather than at the previous generation's — the behaviour an operator sees.
+  `ts_stop` rather than at the previous generation's, the behaviour an operator sees.
 - **Prior art:** `tests/test_loss.py::TestARecordReadIncompleteThenComplete`, deleted by the
   redesign. Restore its eight cases against the new seam rather than rewriting them; they
   already state the right things, including that the start alone confirms when the record never

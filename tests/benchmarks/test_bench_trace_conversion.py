@@ -29,7 +29,7 @@ def test_convert_item_to_trace_format_batch(benchmark: BenchmarkFixture) -> None
     The measured callable used to convert one record. A single conversion grows
     the interpreter's event list once, so whichever call happened to trip the
     allocator into consolidating its free lists absorbed the cost of every chunk
-    freed before it — a figure that moved with the process's heap history rather
+    freed before it, a figure that moved with the process's heap history rather
     than with this function, and that flipped on branches touching nothing on
     the conversion path. Converting a batch spreads that over ``ITEM_BATCH``
     calls, so the number tracks the converter. Renamed on the way past: the unit

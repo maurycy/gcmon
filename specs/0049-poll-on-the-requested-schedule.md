@@ -1,7 +1,7 @@
-# 0049 — Poll on the requested schedule, and report when the loop overruns
+# 0049: Poll on the requested schedule, and report when the loop overruns
 
 - **Status:** **Pinned** (`tests/monitoring/test_monitor_loop.py::TestTheTickInstant::test_one_clock_read_per_tick_shared_with_the_sampler`)
-- **Kind:** bug — correctness
+- **Kind:** bug (correctness)
 - **Effort:** S
 - **Origin:** a design session on 2026-08-17, from the observation that the loop runs at a rate
   nobody asked for
@@ -55,7 +55,7 @@ tick. Read the ratios; the absolute figures date to the machine.
 A second, independent contributor: `threading.Event.wait` quantises to the platform scheduler
 tick, where `time.sleep` does not. On the same box `wait(0.020)` slept 31 ms, `wait(0.100)` slept
 109 ms, and `wait(0.200)` slept 203 ms; `time.sleep` was within 0.7 ms at every one of those. The
-loop must keep `Event.wait`, because shutdown has to interrupt the sleep — so a scheduled tick
+loop must keep `Event.wait`, because shutdown has to interrupt the sleep, so a scheduled tick
 start still lands up to a scheduler quantum late. The rows above show that scheduling against a
 deadline stops that error accumulating even though it cannot remove it.
 
@@ -72,8 +72,8 @@ RSS samples on a run whose `--rss-interval` is at or below `--rate`.
 
 **Not affected:** where a loss window's *edges* fall. Those are per-pid `ts_read_start` instants
 taken inside `EventsMonitor.poll`, one clock read per pid per tick, and this change does not touch
-them. It changes how far apart two consecutive reads of the same pid are — the window's **width**
-— which today is `rate + tick_cost` and after this is `rate`.
+them. It changes how far apart two consecutive reads of the same pid are, the window's **width**,
+which today is `rate + tick_cost` and after this is `rate`.
 
 Also not affected: the loss arithmetic in `RingAccumulator`, the wait policies, the run policies
 in `run_policy`, discovery and pruning, and anything in the exporters. `DurationRunner` keeps
@@ -94,8 +94,8 @@ no benchmark covers.
 
 2. **Read the clock a second time, after the tick, for pacing only.** The wait cannot be computed
    from the pre-tick instant without reintroducing the defect. The two reads have different jobs
-   and the spec depends on their staying separate: the first stamps — liveness (ADR-0011), the RSS
-   round (ADR-0013) — and is passed downstream unconverted; the second stamps nothing and reaches
+   and the spec depends on their staying separate: the first stamps liveness (ADR-0011) and the RSS
+   round (ADR-0013), and is passed downstream unconverted; the second stamps nothing and reaches
    nothing outside `run`. The order in the body is: stamping read, `monitor.tick`, RSS round,
    `keep_running` check, pacing read, wait. The RSS round is inside the measured cost, because it
    is inside the tick.
@@ -105,7 +105,7 @@ no benchmark covers.
    and the effective interval degrades in multiples of the rate. Missed positions are dropped and
    never made up.
 
-   **Settled:** re-basing the deadline to `now + rate` is rejected — one overrun would shift the
+   **Settled:** re-basing the deadline to `now + rate` is rejected: one overrun would shift the
    phase permanently, and a run that overruns on most ticks has reverted to today's behaviour with
    `rate` as the gap again. Running the missed ticks back-to-back to preserve the count is
    rejected outright: it schedules the heaviest polling at the moment the target is slowest, and
@@ -128,7 +128,7 @@ no benchmark covers.
    the returned value.
 
 6. **Split the coverage advisory by what each side knows.** `EventsMonitor._warn_low_coverage`
-   fires once, mid-run, the first time coverage drops below its floor — which can be seconds in,
+   fires once, mid-run, the first time coverage drops below its floor, which can be seconds in,
    before the loop has enough ticks to know whether it is keeping up. It keeps the half that is
    true regardless of pacing (percentiles are sampled and read high; counts and sums are
    reconstructed and exact) and loses its closing remediation sentence. The remediation moves to
@@ -137,8 +137,8 @@ no benchmark covers.
    smaller `--rate` will not help.
 
    **Settled:** lending the monitor a saturation predicate, the way the loop already lends it
-   `_stop_event.is_set`, is rejected. The answer is meaningless in the first few ticks — exactly
-   when the advisory is most likely to fire — so it would need a warm-up threshold nobody can
+   `_stop_event.is_set`, is rejected. The answer is meaningless in the first few ticks, exactly
+   when the advisory is most likely to fire, so it would need a warm-up threshold nobody can
    defend, and it would put loop state inside the monitor for no gain. Splitting the message keeps
    ADR-0017's boundary intact and means neither half is ever false.
 
@@ -158,7 +158,7 @@ no benchmark covers.
 - **New seam needed:** none, but be honest about the rung. Observing the timeout means reaching
   `loop._stop_event`, the lowest rung on CONVENTIONS' ladder. It is the highest seam available
   once the arithmetic stays inline in `MonitorLoop`: nothing public exposes an intended wait, and
-  the alternative — asserting real elapsed time — is the probabilistic suite ADR-0014 exists to
+  the alternative, asserting real elapsed time, is the probabilistic suite ADR-0014 exists to
   forbid. The existing tests in this module already reach `loop._stop_event` directly. If the
   arithmetic is ever extracted into an object of its own, the pacing tests should move onto it and
   this note is the reason why.
@@ -193,7 +193,7 @@ no benchmark covers.
 ## 6. Out of scope
 
 - **Renaming `--rate`.** It is a period in seconds under a name that means a frequency, and the
-  code shows the strain — `monitoring_options` logs `"Rate: %ss"`, and ADR-0013 writes "10 Hz" and
+  code shows the strain: `monitoring_options` logs `"Rate: %ss"`, and ADR-0013 writes "10 Hz" and
   "the 0.1 s GC poll rate" one sentence apart. The confusion is plausibly upstream of this bug:
   nobody sleeps `rate` after the work if they are thinking "period". But the name has 45
   references across five doc pages, three ADRs, five specs, the CLI, the advisory text and the
@@ -202,7 +202,7 @@ no benchmark covers.
   "one bad phase or the whole run?", which the summary's two integers cannot, but it reaches into
   the exporter layer for a fix otherwise confined to one file and one log line. Take it when
   someone has a capture where the answer matters.
-- **Changing the wait primitive** to beat the scheduler quantum — a chunked sleep, or raising the
+- **Changing the wait primitive** to beat the scheduler quantum: a chunked sleep, or raising the
   platform timer resolution. It buys per-tick precision at the cost of shutdown latency, and §2
   shows deadline scheduling already stops the error accumulating, which is the part that made
   captures incomparable.
@@ -221,21 +221,21 @@ no benchmark covers.
 
 - **A new ADR** for the pacing policy. It has to exist because this spec is deleted on retirement
   and two of its decisions are ones a future reader will try to undo. The second clock read reads
-  as a violation of ADR-0011 and ADR-0013 — someone tidying up will collapse it back and
-  reintroduce the bug — and skip-don't-catch-up reads as a missing feature rather than a rejected
+  as a violation of ADR-0011 and ADR-0013 (someone tidying up will collapse it back and
+  reintroduce the bug), and skip-don't-catch-up reads as a missing feature rather than a rejected
   alternative. Its content is §4 steps 2 to 4 plus the rejected alternatives named there; the
   measurements in §2 stay here, since a reading from one machine settles nothing the shape does
   not settle on its own.
 - **An amendment to ADR-0013**, narrowing "the loop takes one `time.monotonic_ns()` per tick and
   passes it unconverted" to one *stamping* instant per tick. The pacing read stamps nothing and is
-  passed nowhere, so it does not overturn that decision — but the sentence as written becomes
+  passed nowhere, so it does not overturn that decision, but the sentence as written becomes
   false the moment this lands, and CONVENTIONS §4 says amend the record rather than the code alone.
 
 **On the vocabulary.** `CONTEXT.md` gained **Tick**, **Poll**, **Rate** and **Overrun** alongside
 this spec, because the loose usage is what made the bug easy to write: prose in this repo has used
 "poll" for both one pid's read and one iteration of the loop, and "rate" for both a frequency and
 an interval. The words used here follow those entries. Note in particular that there is no noun
-for a position on the schedule — `slot` belongs to the ring buffer, where 0024 counts ring slots —
+for a position on the schedule (`slot` belongs to the ring buffer, where 0024 counts ring slots)
 so the report counts ticks, and **overrun** is the one word for the condition at both scales.
 
 **On the measurements.** The table in §2 stands a `time.sleep` in for the tick, so it isolates the

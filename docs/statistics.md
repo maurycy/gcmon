@@ -23,7 +23,7 @@ SLO is a good starting point for tuning.
 
 The last row, `Read Time`, is monitor-side cost rather than target-process cost:
 it measures how long each read of a target's GC stats took, recorded once per
-successful poll of every monitored PID and aggregated into a single row — with
+successful poll of every monitored PID and aggregated into a single row; with
 child processes its `Count` is polls × PIDs, and there is no per-PID breakdown.
 Use it to sanity-check `--rate`: a mean `Read Time` close to `--rate` means you
 are sampling at roughly half the rate you asked for, for the reason given in

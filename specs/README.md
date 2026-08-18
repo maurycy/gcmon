@@ -17,28 +17,28 @@ This file holds the open set and the order to take it in. The other two:
 
 | Spec | Kind | Effort | Summary |
 |------|------|--------|---------|
-| [0020](0020-process-metadata-in-perfetto-traces.md) | Feature — enhancement | M | A trace does not say which Python ran it or what GC thresholds it used; gcmon logs both to stderr and loses them |
-| [0024](0024-cpython-report-remote-readable-gc-stats.md) | Report — upstream | S | Five findings on `_remote_debugging.get_gc_stats` to file upstream with CPython; no gcmon change |
-| [0025](0025-control-server-accept-loop-survives-transient-errors.md) | Bug — **availability** | XS | One transient accept error and the control server refuses every later connection, saying nothing |
-| [0026](0026-one-process-name-across-live-and-offline-paths.md) | Bug — correctness | XS | A live capture names a process `Process 12345`; combined from JSONL, the same process comes out `12345` |
-| [0027](0027-thread-descriptor-tid-for-interpreter-zero.md) | Bug — reporting | XS | The main interpreter's `thread.tid` is the pid, so a SQL query has to special-case interpreter zero to read ids |
-| [0028](0028-combined-exporter-reaches-into-sub-exporter-privates.md) | Feature — cleanup | XS | `chrome+perfetto` works only by reading a private attribute, with the type checkers told not to look |
-| [0030](0030-exporter-hygiene-batch.md) | Feature — cleanup | S | Six one-file hazards in the exporter package: rank dict, `getattr` probe, builtin shadow, two undocumented threading contracts, duplicated validation |
-| [0031](0031-readme-output-example-is-labelled-chrome-only.md) | Bug — cosmetic | XS | The README heads its only trace example "Chrome Trace Output" and captions it as the Perfetto UI |
-| [0033](0033-loss-counter-track.md) | Feature — enhancement | S | The loss row shows where gcmon went blind but not how much it missed; a bar losing 1 record looks like one losing 40 |
-| [0035](0035-derive-every-gc-sub-phase-from-one-table.md) | Feature — cleanup | L | gcmon writes CPython's eight optional GC sub-phases out by hand in six places; adding the ninth means six edits, and nothing fails if you miss one |
-| [0036](0036-one-exporter-method-per-record-kind.md) | Feature — cleanup | M | `EventsExporter` has grown one method per record kind, three of them no-ops, and the CLI keeps a hand-maintained list of which formats handle RSS at all |
-| [0037](0037-one-meta-emission-path-for-live-and-combined-traces.md) | Feature — cleanup | M | Two implementations of "emit this pid's process and thread meta"; 0026 exists because they already drifted once |
-| [0039](0039-split-the-record-model-and-stats-by-concern.md) | Feature — cleanup | S | The record model and the stats module carry three jobs each; `tests/stats/` already splits along a seam the source does not have |
-| [0040](0040-derive-the-monitoring-options-from-one-table.md) | Feature — cleanup | M | gcmon declares every monitoring option three times, and echoes a rejected configuration to the log as though it had accepted it |
-| [0041](0041-give-the-package-explicit-layers.md) | Feature — cleanup | L | The package's five layers are invisible and unchecked; the dependency direction is clean today and nothing keeps it that way |
-| [0042](0042-name-the-process-session-for-its-role.md) | Feature — cleanup | S | The monitored-process seam carries the name of a role it does not fill, and its two adapters do not have the same shape |
-| [0044](0044-torn-reads-and-reordered-publishes.md) | Bug — correctness | S | **Blocked on upstream.** A pause slice can read one inter-collection interval too long, and a hole inside one poll's records reaches no loss window; both are races in the target that every filter gcmon has passes |
-| [0046](0046-settle-a-departed-fan-out-in-one-pass.md) | Bug — performance | S | Settling a departed pid rescans every running ring, so a fan-out that exits together costs a tick tens of milliseconds and may draw loss on its surviving siblings |
-| [0047](0047-the-no-subcommand-form-has-never-worked.md) | Bug — reporting | XS | `gcmon 12345`, the form the README opens with, exits 2; the branch in `main` that would dispatch it is unreachable |
-| [0048](0048-attach-once-per-pid.md) | Feature — efficiency | M | gcmon re-derives where a process keeps its GC state on every poll and throws it away again; 470 µs of each 473 µs read is that, per process, per tick |
-| [0049](0049-poll-on-the-requested-schedule.md) | Bug — correctness | S | `--rate 0.1` polls every 0.1 s *plus* however long a tick took, so the target sets the interval; a tree costing 30 ms a tick polls at 7.1 Hz and nothing says so |
-| [0050](0050-name-the-poll-interval-for-what-it-is.md) | Feature — ergonomics | S | `--rate` is a duration in seconds under a name that means a frequency, and gcmon echoes `Rate: 0.1s` back |
+| [0020](0020-process-metadata-in-perfetto-traces.md) | Feature (enhancement) | M | A trace does not say which Python ran it or what GC thresholds it used; gcmon logs both to stderr and loses them |
+| [0024](0024-cpython-report-remote-readable-gc-stats.md) | Report (upstream) | S | Five findings on `_remote_debugging.get_gc_stats` to file upstream with CPython; no gcmon change |
+| [0025](0025-control-server-accept-loop-survives-transient-errors.md) | Bug (**availability**) | XS | One transient accept error and the control server refuses every later connection, saying nothing |
+| [0026](0026-one-process-name-across-live-and-offline-paths.md) | Bug (correctness) | XS | A live capture names a process `Process 12345`; combined from JSONL, the same process comes out `12345` |
+| [0027](0027-thread-descriptor-tid-for-interpreter-zero.md) | Bug (reporting) | XS | The main interpreter's `thread.tid` is the pid, so a SQL query has to special-case interpreter zero to read ids |
+| [0028](0028-combined-exporter-reaches-into-sub-exporter-privates.md) | Feature (cleanup) | XS | `chrome+perfetto` works only by reading a private attribute, with the type checkers told not to look |
+| [0030](0030-exporter-hygiene-batch.md) | Feature (cleanup) | S | Six one-file hazards in the exporter package: rank dict, `getattr` probe, builtin shadow, two undocumented threading contracts, duplicated validation |
+| [0031](0031-readme-output-example-is-labelled-chrome-only.md) | Bug (cosmetic) | XS | The README heads its only trace example "Chrome Trace Output" and captions it as the Perfetto UI |
+| [0033](0033-loss-counter-track.md) | Feature (enhancement) | S | The loss row shows where gcmon went blind but not how much it missed; a bar losing 1 record looks like one losing 40 |
+| [0035](0035-derive-every-gc-sub-phase-from-one-table.md) | Feature (cleanup) | L | gcmon writes CPython's eight optional GC sub-phases out by hand in six places; adding the ninth means six edits, and nothing fails if you miss one |
+| [0036](0036-one-exporter-method-per-record-kind.md) | Feature (cleanup) | M | `EventsExporter` has grown one method per record kind, three of them no-ops, and the CLI keeps a hand-maintained list of which formats handle RSS at all |
+| [0037](0037-one-meta-emission-path-for-live-and-combined-traces.md) | Feature (cleanup) | M | Two implementations of "emit this pid's process and thread meta"; 0026 exists because they already drifted once |
+| [0039](0039-split-the-record-model-and-stats-by-concern.md) | Feature (cleanup) | S | The record model and the stats module carry three jobs each; `tests/stats/` already splits along a seam the source does not have |
+| [0040](0040-derive-the-monitoring-options-from-one-table.md) | Feature (cleanup) | M | gcmon declares every monitoring option three times, and echoes a rejected configuration to the log as though it had accepted it |
+| [0041](0041-give-the-package-explicit-layers.md) | Feature (cleanup) | L | The package's five layers are invisible and unchecked; the dependency direction is clean today and nothing keeps it that way |
+| [0042](0042-name-the-process-session-for-its-role.md) | Feature (cleanup) | S | The monitored-process seam carries the name of a role it does not fill, and its two adapters do not have the same shape |
+| [0044](0044-torn-reads-and-reordered-publishes.md) | Bug (correctness) | S | **Blocked on upstream.** A pause slice can read one inter-collection interval too long, and a hole inside one poll's records reaches no loss window; both are races in the target that every filter gcmon has passes |
+| [0046](0046-settle-a-departed-fan-out-in-one-pass.md) | Bug (performance) | S | Settling a departed pid rescans every running ring, so a fan-out that exits together costs a tick tens of milliseconds and may draw loss on its surviving siblings |
+| [0047](0047-the-no-subcommand-form-has-never-worked.md) | Bug (reporting) | XS | `gcmon 12345`, the form the README opens with, exits 2; the branch in `main` that would dispatch it is unreachable |
+| [0048](0048-attach-once-per-pid.md) | Feature (efficiency) | M | gcmon re-derives where a process keeps its GC state on every poll and throws it away again; 470 µs of each 473 µs read is that, per process, per tick |
+| [0049](0049-poll-on-the-requested-schedule.md) | Bug (correctness) | S | `--rate 0.1` polls every 0.1 s *plus* however long a tick took, so the target sets the interval; a tree costing 30 ms a tick polls at 7.1 Hz and nothing says so |
+| [0050](0050-name-the-poll-interval-for-what-it-is.md) | Feature (ergonomics) | S | `--rate` is a duration in seconds under a name that means a frequency, and gcmon echoes `Rate: 0.1s` back |
 
 Every row here has a file. A missing number either retired or never became one;
 [RETIRED.md](RETIRED.md) says which.
