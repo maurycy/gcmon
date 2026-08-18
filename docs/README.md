@@ -27,4 +27,5 @@ how to read the result.
 | [../specs/CONVENTIONS.md](../specs/CONVENTIONS.md) | The rules a spec follows, the two templates, and what retiring one means |
 | [../specs/RETIRED.md](../specs/RETIRED.md) | Spec numbers that no longer have a file, and what became of each |
 | [agents/](agents/issue-tracker.md) | How agent skills work in this repo: issue tracker, triage labels, domain docs |
+| [agents/prose.md](agents/prose.md) | Prose conventions: which file owns which kind of statement, and what to cut from the rest |
 | [RELEASE.md](RELEASE.md) | The release process |
