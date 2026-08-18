@@ -125,14 +125,14 @@ benefit. Out of scope, stated here so nobody "fixes" it as part of this.
 - The process *name* itself. [0026](0026-one-process-name-across-live-and-offline-paths.md)
   settles it, is XS, and should land first; this spec assumes its `process_display_name`
   helper exists.
-- Routing `combine` through an `EventsExporter` (see §4.2, rejected with the condition that
+- Routing `combine` through an `EventsExporter` (see section 4.2, rejected with the condition that
   would reopen it).
 - The two timestamp normalizers. `_normalize_trace_timestamps` works on `TraceEvent` and
   `_normalize_jsonl_timestamps` on records; they exist because there are two representations,
   not because of this duplication. [0035](0035-derive-every-gc-sub-phase-from-one-table.md)
   turns the second into a table walk, which is most of the cost of the second one.
 - Naming a process after its cmdline. ADR-0010 territory, and 0026 already excluded it.
-- Emission ordering (see §4.4).
+- Emission ordering (see section 4.4).
 
 ## 7. Further notes
 

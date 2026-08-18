@@ -52,9 +52,9 @@ the branch has no coverage in either direction.
 ## 4. Proposed change
 
 1. `tid=pid if iid == 0 else iid` → `tid=iid`.
-2. Add the SQL assertion described in §5 so the convention is stated somewhere executable.
+2. Add the SQL assertion described in section 5 so the convention is stated somewhere executable.
 3. If the trace processor turns out to *depend* on `tid == pid` to identify a main thread
-   (see §5 for how this is settled), keep the current expression and replace this spec with a
+   (see section 5 for how this is settled), keep the current expression and replace this spec with a
    comment on the branch saying why, plus a note in
    [docs/perfetto-sql.md](../docs/perfetto-sql.md) telling query authors about the special
    case. Silence is the only outcome this spec rules out.
@@ -63,7 +63,7 @@ the branch has no coverage in either direction.
 
 - **Seam:** the trace processor, via `tests/exporters/test_perfetto_exporter_integration.py`.
   `thread.tid` is a real column there, so this is the highest seam that can see the defect,
-  and the only one that can settle §4.3, since what matters is how the trace processor
+  and the only one that can settle section 4.3, since what matters is how the trace processor
   interprets the field, not what bytes we wrote.
 - **New seam needed:** none. `test_dump_thread_table` already queries the table; it needs
   assertions rather than prints.
@@ -86,4 +86,4 @@ the branch has no coverage in either direction.
 - The `RSS_TID` and `loss_tid` sentinels. They are settled by ADR-0013 and ADR-0015 and are
   what makes the `iid == 0` case look out of place.
 - Documenting the tid convention in [docs/perfetto-sql.md](../docs/perfetto-sql.md). Worth
-  doing either way, but it belongs with whichever outcome §4 reaches, not ahead of it.
+  doing either way, but it belongs with whichever outcome section 4 reaches, not ahead of it.

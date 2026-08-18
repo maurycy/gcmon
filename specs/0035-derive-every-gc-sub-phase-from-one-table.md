@@ -115,7 +115,7 @@ loss work relies on.
 is not.** This is the strongest objection to the spec and it is real. mypy and pyrefly verify
 today that `item.ts_mark_alive_start` exists on the type the guard narrowed to; `getattr(item,
 phase.start)` verifies nothing. The mitigation is the same one [0030](0030-exporter-hygiene-batch.md)
-§4.1 chose for `_COUNTER_RANKS`: a test that asserts every field name in every row exists on
+section 4.1 chose for `_COUNTER_RANKS`: a test that asserts every field name in every row exists on
 `data.GCStatsInfo`, checked by name. That converts a typo from a silently absent sub-phase into
 a test failure, which is a better outcome than today's, where a *missing* row is not caught by
 anything at all.
@@ -142,7 +142,7 @@ bytes must not change.
   table. `tests/stats/test_metrics.py` and the JSONL golden file cover the two consumers the
   trace processor cannot see.
 - **New seam needed:** none for behaviour. One new test *file* at an existing seam, the
-  table-completeness test in §4, which asserts against `data.GCStatsInfo`, not against the
+  table-completeness test in section 4, which asserts against `data.GCStatsInfo`, not against the
   table itself.
 - **What makes a good test here:** assert the trace still *means* the same thing: that a
   record carrying all eight sub-phases produces the same eight named slices, at the same

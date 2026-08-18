@@ -117,7 +117,7 @@ rather than blocked on anything.
 - **Cases:**
   1. `gcmon run` propagates a failing script's exit code, as today.
   2. `gcmon monitor <pid>` exits 0 whatever the attached process does, as today, the property
-     §1 says is undocumented, pinned by a test so that documenting it does not change it.
+     section 1 says is undocumented, pinned by a test so that documenting it does not change it.
   3. Both adapters satisfy the session interface with the same shape: `start()` returns a target
      that is not the session itself.
   4. Regression guard: the full suite passes; only imports, names and the trimmed members change.
@@ -136,6 +136,6 @@ rather than blocked on anything.
 ## 7. Further notes
 
 This is the smallest spec in the set and the one most likely to be objected to as churn. The
-argument for it is §4.3: two adapters at one seam that do not have the same shape is not a naming
+argument for it is section 4.3: two adapters at one seam that do not have the same shape is not a naming
 problem, and the naming is what makes it hard to see. If only one of the five items is taken,
 take that one.

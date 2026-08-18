@@ -147,7 +147,7 @@ no benchmark covers.
    and is converted once at construction, as `RssSampler` does with its interval.
 
 8. **Correct the `--rate` help text** to describe an interval between poll starts rather than a
-   rate. The name is not touched here; see §6.
+   rate. The name is not touched here; see section 6.
 
 ## 5. Seams and testing decisions
 
@@ -164,7 +164,7 @@ no benchmark covers.
   this note is the reason why.
 - **What makes a good test here:** assert the interval the loop *intends*, never the interval it
   achieves. The achieved one carries a scheduler quantum of noise on every platform and up to
-  16 ms of it on Windows (§2), so a test that measures elapsed time is asserting the operating
+  16 ms of it on Windows (section 2), so a test that measures elapsed time is asserting the operating
   system. Feed instants, assert the timeout.
 - **Prior art:** `TestTheTickInstant` for patching `time.monotonic_ns` with a `side_effect`
   sequence and asserting what reached the monitor and the sampler; `TestRssSamplerInLoop` for
@@ -203,7 +203,7 @@ no benchmark covers.
   the exporter layer for a fix otherwise confined to one file and one log line. Take it when
   someone has a capture where the answer matters.
 - **Changing the wait primitive** to beat the scheduler quantum: a chunked sleep, or raising the
-  platform timer resolution. It buys per-tick precision at the cost of shutdown latency, and §2
+  platform timer resolution. It buys per-tick precision at the cost of shutdown latency, and section 2
   shows deadline scheduling already stops the error accumulating, which is the part that made
   captures incomparable.
 - **A lower bound on `--rate`.** A rate below the floor is already well defined: every tick
@@ -223,13 +223,13 @@ no benchmark covers.
   and two of its decisions are ones a future reader will try to undo. The second clock read reads
   as a violation of ADR-0011 and ADR-0013 (someone tidying up will collapse it back and
   reintroduce the bug), and skip-don't-catch-up reads as a missing feature rather than a rejected
-  alternative. Its content is §4 steps 2 to 4 plus the rejected alternatives named there; the
-  measurements in §2 stay here, since a reading from one machine settles nothing the shape does
+  alternative. Its content is section 4 steps 2 to 4 plus the rejected alternatives named there; the
+  measurements in section 2 stay here, since a reading from one machine settles nothing the shape does
   not settle on its own.
 - **An amendment to ADR-0013**, narrowing "the loop takes one `time.monotonic_ns()` per tick and
   passes it unconverted" to one *stamping* instant per tick. The pacing read stamps nothing and is
   passed nowhere, so it does not overturn that decision, but the sentence as written becomes
-  false the moment this lands, and CONVENTIONS §4 says amend the record rather than the code alone.
+  false the moment this lands, and CONVENTIONS section 4 says amend the record rather than the code alone.
 
 **On the vocabulary.** `CONTEXT.md` gained **Tick**, **Poll**, **Rate** and **Overrun** alongside
 this spec, because the loose usage is what made the bug easy to write: prose in this repo has used
@@ -238,7 +238,7 @@ an interval. The words used here follow those entries. Note in particular that t
 for a position on the schedule (`slot` belongs to the ring buffer, where 0024 counts ring slots)
 so the report counts ticks, and **overrun** is the one word for the condition at both scales.
 
-**On the measurements.** The table in §2 stands a `time.sleep` in for the tick, so it isolates the
+**On the measurements.** The table in section 2 stands a `time.sleep` in for the tick, so it isolates the
 scheduling arithmetic and says nothing about what a real tick costs. It is evidence that the
 interval is wrong and that deadline scheduling fixes it, not a benchmark of gcmon. Two numbers
 worth having afterwards, neither of which blocks the fix: what a tick actually costs across tree

@@ -105,7 +105,7 @@ current sees one name.
   real ergonomic ideas and both are a different feature: this spec makes one name honest, it does
   not add an input format. Adding a frequency later is easier once the duration has a duration's
   name.
-- **A general deprecation policy.** Named in §4 as the thing that does not exist. Inventing one to
+- **A general deprecation policy.** Named in section 4 as the thing that does not exist. Inventing one to
   retire a single alias is the wrong order.
 - **`GCMON_*` variables other than this one.** None of the rest is misnamed.
 

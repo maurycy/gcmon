@@ -11,12 +11,12 @@
 
 The three byte-identical buffering blocks exist because `EventsExporter` has three `add_*`
 methods for the JSONL path to implement. 0036 collapses the interface to one `add`, so there is
-one block and nothing left to extract; §4's generic holder is not needed under that design.
+one block and nothing left to extract; section 4's generic holder is not needed under that design.
 
 Everything else here still holds and 0036 carries it forward verbatim: the JSONL schema does not
-change and JSONL does not move onto `TraceEvent` (§4, and the rejected alternative that goes
+change and JSONL does not move onto `TraceEvent` (section 4, and the rejected alternative that goes
 with it), the missing `_closed` guard, the `_open_writer` override, and the golden-file test.
-Read §4 before touching the JSONL exporter: it is the fullest statement of why the file format
+Read section 4 before touching the JSONL exporter: it is the fullest statement of why the file format
 is load-bearing, and 0036 summarizes rather than replaces it.
 
 ## 1. Problem statement

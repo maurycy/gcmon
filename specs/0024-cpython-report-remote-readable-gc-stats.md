@@ -181,7 +181,7 @@ Rows 3.3 and 3.5 stay unhandled by decision rather than by omission.
 [Spec 0044](0044-torn-reads-and-reordered-publishes.md) took them from the reader's side and
 concluded that gcmon waits: 3.3 leaves no fingerprint a genuine record cannot also leave, and
 3.5's seam is inside this module's own cross-process copy, so it is not observable from Python
-at all. A reader could only ever detect these; §3.3's suggested fix removes them.
+at all. A reader could only ever detect these; section 3.3's suggested fix removes them.
 
 The reconstruction in the first row is only possible because `collections` and `duration` are both
 cumulative and monotonic. That is a genuinely good property of this API and worth preserving in any
@@ -208,7 +208,7 @@ redesign: it is what lets a reader recover exact totals from an incomplete sampl
 **Lifecycle.** This spec is done when the issue is filed: replace the file with nothing and record
 the issue URL in [ADR-0015](../docs/adr/0015-gc-loss-spans-on-their-own-track.md), which is where
 a future maintainer will look when the ring sizes change upstream. Any measurement here that gets
-re-run before filing should be re-run on the tag in §2, or the tag updated with it.
+re-run before filing should be re-run on the tag in section 2, or the tag updated with it.
 
 **A finding to re-check before filing:** whether 3.1's ring sizes still hold on the current 3.15
 branch. They are constants and constants get tuned; a report quoting a stale value is easy to

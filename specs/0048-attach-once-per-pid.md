@@ -25,7 +25,7 @@ running gcmon carries the cost against the machine's other work, which for an op
 a production process is the cost they were most careful about.
 
 It also puts a floor under `--rate` that has nothing to do with the target.
-[0024](0024-cpython-report-remote-readable-gc-stats.md) §3.1 rests its headline on that floor,
+[0024](0024-cpython-report-remote-readable-gc-stats.md) section 3.1 rests its headline on that floor,
 *"The read cost alone bounds the achievable rate below the collection rate, so the loss is
 structural rather than a tuning problem"*, measuring ~583 µs median against ~1.15 ms between
 gen-0 collections. Two thirds of that floor is attach, and none of it is load-bearing.
@@ -44,7 +44,7 @@ honest answer.
 
 The one behaviour an operator could notice and should not: nothing about starting up, waiting for
 a target, or watching one exit may change. A target that has not started yet must still be waited
-for; a target that exits must still end the run quietly. §4 treats that as the risk it is.
+for; a target that exits must still end the run quietly. Section 4 treats that as the risk it is.
 
 ## 3. User stories
 
@@ -126,10 +126,10 @@ real reader, and a test that forgot to inject would attach to whatever process h
 it used as a pid; `tests/monitoring/test_monitor.py` polls 12345 and 999 throughout. The
 existing assertion that `wait_policy_factory` is required grows a second missing argument.
 
-**Settled: the name is `EventsReader`, not `RecordsReader`.** CONVENTIONS §4 and `CONTEXT.md`
+**Settled: the name is `EventsReader`, not `RecordsReader`.** CONVENTIONS section 4 and `CONTEXT.md`
 both reserve **record** for what is read and **event** for what is written, and by that rule this
 is misnamed. It is named for its siblings instead (`EventsMonitor`, `EventsExporter`) because
-renaming one member of a family makes the family less coherent, not more. §6 carries the rename.
+renaming one member of a family makes the family less coherent, not more. Section 6 carries the rename.
 
 **Settled: `get_child_pids` stays a module-level import in `gcmon.monitor`.** It is not on
 `GCMonitor`, it caches nothing, and it answers a question about the process tree rather than about
@@ -186,8 +186,8 @@ The free function hardcodes `debug=1`, which is why it reported `RuntimeError`.
 **Settled: pass `debug=True` explicitly, with a comment saying what it does.** It is the setting
 that makes this a swap rather than a change, and it keeps the descriptive message gcmon already
 logs. `debug=False` gives strictly better signal (it is the only way to tell target death from a
-`gc_stats` size mismatch) but nothing consumes that distinction today, since §4.3 collapses both
-into `TargetUnavailable`. It becomes the right answer alongside the §6 mismatch spec, not before.
+`gc_stats` size mismatch) but nothing consumes that distinction today, since section 4.3 collapses both
+into `TargetUnavailable`. It becomes the right answer alongside the section 6 mismatch spec, not before.
 
 The macro only fires on an error path, so the happy path costs nothing either way.
 
@@ -211,7 +211,7 @@ the statistics. Reader and cursors die together, which is ADR-0017's rule holdin
 state. On Windows there is a further consequence worth stating: `_Py_RemoteDebug_InitProcHandle`
 calls `OpenProcess`, and a held handle keeps the process object alive, so **the pid cannot be
 recycled while gcmon is attached**. Under this lifetime the pin lasts exactly until gcmon has
-recorded the death and advanced the pid epoch. Linux holds no handle and gets no such pin; §6
+recorded the death and advanced the pid epoch. Linux holds no handle and gets no such pin; section 6
 carries what follows from that.
 
 Verified: with a live attachment held, constructing a second `GCMonitor` on the killed pid got
@@ -229,7 +229,7 @@ The time was spent reading. A separate attach statistic was rejected: it needs a
 `--stats` table, and this change adds no output.
 
 Rename the locals in `EventsMonitor.poll` and `EventsMonitor._ingest` while both are being
-rewritten: they are called `events` and hold `TGCStatsInfo`, which CONVENTIONS §4 calls records.
+rewritten: they are called `events` and hold `TGCStatsInfo`, which CONVENTIONS section 4 calls records.
 Two identifiers, in the two functions this spec already touches.
 
 ## 5. Seams and testing decisions
@@ -258,8 +258,8 @@ Two identifiers, in the two functions this spec already touches.
      through `caplog`. This is the regression the change most invites, and today nothing would
      catch it: the end-to-end tests exercise real target death but assert only trace validity.
   2. A pid whose first attach fails is retried on the next tick and succeeds, so a target that
-     starts late is still waited for. Guards §4.5's "never cache a failed attach" and the Linux
-     startup path in §4.3.
+     starts late is still waited for. Guards section 4.5's "never cache a failed attach" and the Linux
+     startup path in section 4.3.
   3. A failed read drops the attachment: the next `read` of that pid attaches again.
   4. A pid leaving the child listing, and a pid a policy gives up on, each drop their attachment in
      the same pass that drops their cursors. ADR-0017's rule, asserted for the new state.
@@ -273,20 +273,20 @@ Two identifiers, in the two functions this spec already touches.
 ## 6. Out of scope
 
 - **Changing `--rate`.** This removes a floor; it does not follow it down. The gen-0 ring holds
-  11 slots against ~87 collections per 100 ms (0024 §3.1), so a 10× faster poll may buy real
+  11 slots against ~87 collections per 100 ms (0024 section 3.1), so a 10× faster poll may buy real
   coverage and a 100× one mostly buys CPU. That is a measurement nobody has taken, and it cannot
   be taken until this lands. Its own spec, and the payoff this one enables.
-- **A version mismatch masquerading as "target not started yet."** §4.3 keeps `RuntimeError` →
+- **A version mismatch masquerading as "target not started yet."** Section 4.3 keeps `RuntimeError` →
   unavailable, which swallows `gc_stats.c`'s *"Remote gc_stats size does not match local size"*
   (gcmon built against a different CPython than its target) and burns the whole startup timeout in
   silence. Pre-existing, operator-facing, and its fix wants `debug=False` and a classification of
   its own, so it must argue against ADR-0019 rather than preempt it.
-- **A pid recycled between two ticks with no failing read in between.** §4.5 closes every window
+- **A pid recycled between two ticks with no failing read in between.** Section 4.5 closes every window
   gcmon can detect; this one it cannot. Linux only; Windows cannot recycle a pinned pid. It is
   pre-existing for cursors and ADR-0017 was written about it; what this change alters is the
   consequence, from a wrong number to records fabricated out of another process's memory that pass
   every filter gcmon has. It wants the pid-epoch machinery, not a start-time check bolted onto the
-  reader. **File this one; §7 says when.**
+  reader. **File this one; section 7 says when.**
 - **Renaming the `Events*` family.** `EventsMonitor` reads records and writes events, and the
   family is named for the second. Worth settling as a set, in one pass, the way 0042 treats the
   process-session seam, not by renaming one member here.
@@ -295,7 +295,7 @@ Two identifiers, in the two functions this spec already touches.
   window**, **Observed span** and **Sampled** at once, which is a glossary change standing on its
   own merits rather than one smuggled in under a performance change. **Attach** is added by this
   spec because this spec is what resolves it.
-- **`get_child_pids`.** Stateless, uncached, and about the process tree. §4.2 gives the reason.
+- **`get_child_pids`.** Stateless, uncached, and about the process tree. Section 4.2 gives the reason.
 - **Anything about what a record means, how loss is computed, or what reaches the trace.**
   ADR-0015 and ADR-0016 own those and this contradicts neither.
 
@@ -305,14 +305,14 @@ Two identifiers, in the two functions this spec already touches.
 
 1. **Write ADR-0019**, and let it own the three decisions a later reader would otherwise
    "clean up" and thereby reintroduce: that `debug=True` selects an exception type rather than a
-   log level (§4.4); that an attachment is dropped on every failed read, and why a stale
-   `debug_offsets` is worse than a stale cursor (§4.5); and that on Windows a held handle pins the
+   log level (section 4.4); that an attachment is dropped on every failed read, and why a stale
+   `debug_offsets` is worse than a stale cursor (section 4.5); and that on Windows a held handle pins the
    pid until gcmon lets go, which orders the release after the pid epoch advances. It extends
    ADR-0017's "one owner, one prune" to the new state and contradicts nothing.
 2. **Break the work into tickets** under `.scratch/0048-attach-once-per-pid/issues/`, in the
    `NN-slug.md` shape with *What to build*, *Blocked by*, *Status* and an acceptance checklist.
    The natural cut: the reader module and its exception translation; the `EventsMonitor` wiring and
-   the required argument; the test double and the 16 conversions; the new cases in §5; the
+   the required argument; the test double and the 16 conversions; the new cases in section 5; the
    `GCMonitor` entry in `stubs/_remote_debugging.pyi`; and a closeout ticket for the documentation
    and the CHANGELOG.
 
@@ -327,12 +327,12 @@ leave any *change* to `--rate` guidance to the spec that measures it.
 `Documentation` entry: that section is for new user-facing documentation files, and this adds
 none.
 
-**Spec 0024 needs an edit before it is filed**, not a new spec. Its §2 environment is 3.15.0b3 and
-its §3.1 headline argues that read cost bounds the achievable poll rate, citing ~583 µs. Two
+**Spec 0024 needs an edit before it is filed**, not a new spec. Its section 2 environment is 3.15.0b3 and
+its section 3.1 headline argues that read cost bounds the achievable poll rate, citing ~583 µs. Two
 thirds of that figure is attach, and this spec removes it. The ring-size finding survives intact
 and is the stronger half; the read-cost sentence does not. Filing 0024 with that sentence in it
 invites the reply that the reporter did not know about `GCMonitor`.
 
-**File the recycled-pid spec when ADR-0019 exists**, so it can cite §4.5's lifetime as the thing it
-extends rather than restate it. It is the only §6 item that stands entirely on today's code, and
+**File the recycled-pid spec when ADR-0019 exists**, so it can cite section 4.5's lifetime as the thing it
+extends rather than restate it. It is the only section 6 item that stands entirely on today's code, and
 the only one whose consequence this change makes worse.

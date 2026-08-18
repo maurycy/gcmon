@@ -3,7 +3,7 @@
 - **Status:** Not started
 - **Kind:** bug (reporting)
 - **Effort:** XS
-- **Origin:** spec 0045 §7, 2026-08-17, which fixed the two documented examples it had to touch
+- **Origin:** spec 0045 section 7, 2026-08-17, which fixed the two documented examples it had to touch
   and deliberately left the question open
 - **Respects:** none
 
@@ -28,7 +28,7 @@ its help, and every other CLI test names a subcommand.
 ## 3. Scope
 
 **Affected:** the documented `gcmon <pid> …` form in `README.md` (Quick Start, and the RSS and
-`combine` neighbours around it) and `docs/cli.md` (§What you'll see, §monitor), and the
+`combine` neighbours around it) and `docs/cli.md` (the "What you'll see" and "monitor" sections), and the
 unreachable fallback branch in `gcmon.cli.main`.
 
 **Not affected:** `gcmon monitor <pid>`, `gcmon run`, `gcmon combine`. Every documented

@@ -4,7 +4,7 @@
 - **Kind:** feature (cleanup)
 - **Effort:** L
 - **Origin:** code structure review of `src/gcmon`, 2026-08-15
-- **Respects:** every ADR that anchors on a module path; see §4.4, which is most of the work
+- **Respects:** every ADR that anchors on a module path; see section 4.4, which is most of the work
 
 ## 1. Problem statement
 
@@ -14,7 +14,7 @@ tell from the listing that `trace_event` is a data model and `rss_sampler` is a 
 `protocol` is at the bottom of everything and `commands` at the top.
 
 The layering itself is not broken; it is invisible. Walking the intra-package imports and
-ordering them as §4.1 does yields **zero** upward imports today: the dependency direction is
+ordering them as section 4.1 does yields **zero** upward imports today: the dependency direction is
 already clean. Nothing states that, nothing checks it, and the first edit that reaches upward
 will land without comment. That is the cost: a property the codebase currently has, held by
 nobody, documented nowhere, and one import away from being lost quietly.
@@ -147,7 +147,7 @@ is the CLI's profile. Settled by whether a second integration ever appears.
   table-format enum. Under these edges it is legal (the CLI may import analysis) so this
   spec's test would not flag it. Worth noting because it is the one place an option's type
   lives in a presentation module, and worth leaving alone until something makes it matter.
-- Any public API change beyond the re-export shims in §4.3.
+- Any public API change beyond the re-export shims in section 4.3.
 - Enforcing anything else with the same test: no cycle detection, no fan-out limits, no
   file-size rules. One rule, one failure message.
 

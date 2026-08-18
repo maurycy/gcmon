@@ -10,12 +10,12 @@
 
 Six independent one-file changes, batched because each is too small to schedule alone and all
 six live in the same package. None is operator-visible today; each is a way for a future change
-to go wrong quietly. They are listed in §4 in the order they should land, cheapest first. Take
+to go wrong quietly. They are listed in section 4 in the order they should land, cheapest first. Take
 them together or drop any one; nothing here depends on anything else here.
 
 ## 2. Solution
 
-No operator-visible change, with one exception noted in §4.5: the message for an unsupported
+No operator-visible change, with one exception noted in section 4.5: the message for an unsupported
 `combine` format combination gains an `Error combining files:` prefix. Exit code, log level and
 the sentence itself are unchanged.
 
@@ -119,7 +119,7 @@ lazy import is what makes it work.
 ## 6. Out of scope
 
 - Anything that changes trace bytes. Every item here is internal.
-- `psutil` as a hard dependency (see §4, not adopted).
+- `psutil` as a hard dependency (see section 4, not adopted).
 - Splitting `perfetto_format`, which is large enough to deserve it but not as part of a
   hygiene pass.
 - The `EventEncoder` `Protocol` → `ABC` question. Unrelated; ADR-0008 chose the protocol.

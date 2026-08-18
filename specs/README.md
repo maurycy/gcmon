@@ -66,7 +66,7 @@ Every row here has a file. A missing number either retired or never became one;
 | 15 | 0042 | |
 | 16 | 0020 | |
 | 17 | 0048 | Constrained: before 0041, which would otherwise have to place the module it adds |
-| 18 | 0041 | Last on purpose: its §7 argues against doing it between two changes that move code |
+| 18 | 0041 | Last on purpose: its section 7 argues against doing it between two changes that move code |
 
 "Constrained" means the list below forces the position. A blank cell means no recorded reason, so
 that row can move.
@@ -75,7 +75,7 @@ that row can move.
 
 - **0024** is the owner's to file, and depends on nothing here.
 - **0033** wants a real capture in front of you before anyone can judge it worth a fourth row.
-- **0044** waits on CPython synchronizing the ring. Its §4 states the one measurement that would
+- **0044** waits on CPython synchronizing the ring. Its section 4 states the one measurement that would
   put it back in play sooner.
 
 **The only ordering constraints:**
@@ -101,7 +101,7 @@ of ADR-0015's work and neither blocks the other, 0035 being the cheapest and sta
 
 0035–0042 came out of a code-structure review of `src/gcmon` on 2026-08-15. Three of its findings
 are missing from the table because specs already covered them: 0028, 0029 (since retired) and
-0030 §4.5.
+0030 section 4.5.
 
 0049 and 0050 came out of a design session on 2026-08-17 that started from "the loop runs at a rate
 nobody asked for". They are one finding split in two: the scheduling is a correctness bug and the

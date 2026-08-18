@@ -13,7 +13,7 @@
 ## 1. Problem
 
 > What the **operator** experiences, in their words: the command they ran, the trace they
-> opened, and what was wrong with it. Not the faulty expression; that is §2. One short
+> opened, and what was wrong with it. Not the faulty expression; that is section 2. One short
 > paragraph.
 
 ## 2. Evidence

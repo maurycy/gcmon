@@ -16,7 +16,7 @@
 ## 1. Problem statement
 
 > The problem from the **operator's** perspective: what they cannot do today, or what costs
-> them something. Not the implementation gap; that belongs in §4.
+> them something. Not the implementation gap; that belongs in section 4.
 
 ## 2. Solution
 

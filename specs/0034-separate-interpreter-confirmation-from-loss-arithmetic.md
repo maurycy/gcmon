@@ -1,6 +1,6 @@
 # 0034: Give interpreter confirmation its own seam, and put the mid-write bound back
 
-- **Status:** **Superseded** by ADR-0015's 2026-08-12 rewrite, which reached §1's goal another way
+- **Status:** **Superseded** by ADR-0015's 2026-08-12 rewrite, which reached section 1's goal another way
 - **Kind:** feature (enhancement)
 - **Effort:** S
 - **Origin:** grilling session, 2026-08-08
@@ -13,13 +13,13 @@
 A loss span now runs from one poll's read to the next, both instants taken from
 `time.monotonic_ns()` in `EventsMonitor.poll`. That left edge already sits later than the one
 this spec set out to raise: the old edge was the newest record the previous poll saw finish,
-and the read that saw it came after. §1's complaint is answered, without a confirmation bound
+and the read that saw it came after. Section 1's complaint is answered, without a confirmation bound
 and without the mid-write record having to prove anything.
 
 Nothing below is implementable as written. `read_bound_per_interpreter`, `LossWindow`,
 `is_drawable`, the shared left edge and the nesting guarantee are all gone, along with
 `tests/test_loss.py::TestOneLeftEdgePerPoll` and `tests/exporters/test_loss_track_stack.py`.
-The argument in §4 for why a temporal bound differs from the eviction-order clipping ADR-0015
+The argument in section 4 for why a temporal bound differs from the eviction-order clipping ADR-0015
 rejected is still correct, and worth reading before anyone proposes narrowing a span again.
 
 ## 1. Problem statement
@@ -139,7 +139,7 @@ the footer already names no culprit, so nothing needs rewording; expect the coun
 ## 6. Out of scope
 
 - **Any other tightening of a window.** In particular the far-end clipping ADR-0015 abandoned, and
-  the per-window capacity floor it also rejected. Both stay rejected; §4 explains why this one is
+  the per-window capacity floor it also rejected. Both stay rejected; section 4 explains why this one is
   a different argument rather than a re-run of either.
 - **Drawing the mid-write record itself.** `_is_complete` filters it and the next poll emits it
   where it ran. That is correct and untouched.

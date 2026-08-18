@@ -60,7 +60,7 @@ via `_build_debug_annotation_string`. No new track, no new packet, no change to
 
 `PerfettoTrackState` stores both per pid, with getters and setters following the existing
 `set_cmdline` / `get_cmdline` pair. It is not internally thread-safe and does not need to be;
-see [0030](0030-exporter-hygiene-batch.md) §4.3 for why.
+see [0030](0030-exporter-hygiene-batch.md) section 4.3 for why.
 
 **Each value has exactly one trustworthy source, and they are different sources.** This is the
 decision the original spec left open, and getting it wrong produces annotations that are
@@ -136,7 +136,7 @@ trace changes. This matches how `cmdline` already behaves.
 ## 7. Further notes
 
 **To confirm when this is picked up:** whether `_remote_debugging` exposes the target's version
-hex or GC thresholds directly. If it does, the attach case stops needing cooperation and §4's
+hex or GC thresholds directly. If it does, the attach case stops needing cooperation and section 4's
 source table gets simpler. This is a factual question about the extension module, not a
 preference, and it should be answered before the control-plane path is built. See
 [0024](0024-cpython-report-remote-readable-gc-stats.md), which reviews what that API does and
