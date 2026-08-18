@@ -44,6 +44,13 @@ the batch in `4731e50` from specs that had landed days earlier. A reference from
 They stay. Renumbering nine files to repair two would break the other half of the same rule, and
 nothing outside this folder cites either number.
 
+**Findings a review raised that never became specs**, because an open spec already covered them.
+One row per review, so the next one appends a line rather than editing this text:
+
+| Review | Findings already covered |
+|---|---|
+| `src/gcmon` structure, 2026-08-15 | [0028](0028-combined-exporter-reaches-into-sub-exporter-privates.md), 0029 (since retired), [0030](0030-exporter-hygiene-batch.md) section 4.5 |
+
 ## Provenance
 
 This folder takes its conventions from the sibling `gcscope` repo. Before 2026-08-05 it held six
