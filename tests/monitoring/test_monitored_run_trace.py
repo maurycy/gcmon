@@ -74,6 +74,7 @@ from gcmon.run_policy import Runner
 from gcmon.stats import StreamingStats
 from gcmon.target_process import ExternalProcess
 from gcmon.wait_policy import no_wait_policy
+from tests.helpers import FakeEventsReader
 from tests.test_loss_replay import MS, READ_COST_NS, RING_SIZES, capture_records, ring_at
 
 FIXTURE = Path(__file__).resolve().parent.parent / "fixtures" / "monitored_run_chrome_trace.json"
@@ -258,7 +259,7 @@ def run_monitored(output: Path) -> MonitoredRun:
         assert pid == TARGET_PID, f"the tree was listed for {pid}, not the target"
         return next(listings)
 
-    def one_read(pid: int, all_interpreters: bool = True) -> list[GCStatsInfo]:
+    def one_read(pid: int) -> list[GCStatsInfo]:
         """The ring *pid* would have held when this read began.
 
         Asserting the pid rather than looking it up: the order the loop polls
@@ -275,6 +276,7 @@ def run_monitored(output: Path) -> MonitoredRun:
         ExternalProcess(pid=TARGET_PID),
         exporter,
         StreamingStats(),
+        reader=FakeEventsReader(one_read),
         wait_policy_factory=no_wait_policy,
     )
     # A 1 ms rate, the point where the loop's spin-guard takes over, so the
@@ -288,7 +290,6 @@ def run_monitored(output: Path) -> MonitoredRun:
 
     with (
         patch("gcmon.monitor.get_child_pids", side_effect=one_listing),
-        patch("gcmon.monitor.get_gc_stats", side_effect=one_read),
         # On the `time` module itself, not on either importer's namespace:
         # `monitor_loop` and `monitor` both reach it through `import time`, so
         # this one patch is what makes the tick instant and the read instants

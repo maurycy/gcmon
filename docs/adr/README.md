@@ -30,12 +30,15 @@ spec that settles a durable design question graduates into a record below.
   reading taken from one run does not: a collection rate, a bar's width, a byte count, an error
   bound. Those date a record to the machine that produced them and settle nothing the shape
   does not settle on its own.
-- **Anchors:** module paths and the names outside the module boundary. A record names no
-  private class, function or method: architecture does not turn on what a helper is called, and
-  a record that tracks internal names goes stale on every refactor. Point the other way
-  instead, from a docstring citing ADR-NNNN, which survives the rename of the code around it.
-  Domain vocabulary stays whatever its spelling in code, so a state a record argues about, such
-  as `INVALID_PROCESS`, keeps its name even though an enum member holds it.
+- **Anchors:** module paths, class names and the names outside the module boundary. A record
+  names no function or method: architecture does not turn on what a helper is called, and a
+  record that tracks internal names goes stale on every refactor. Point the other way instead,
+  from a docstring citing ADR-NNNN, which survives the rename of the code around it. The one
+  exception is a method that *is* the decision, meaning a protocol's members or a seam's entry
+  point: ADR-0008 spells the encoder's three methods because they are what it decided, and
+  ADR-0017 spells the monitor's tick for the same reason. Domain vocabulary stays whatever its
+  spelling in code, so a state a record argues about, such as `INVALID_PROCESS`, keeps its name
+  even though an enum member holds it.
 - **New records:** copy [`0000-template.md`](0000-template.md).
 
 Amend an existing ADR when the reasoning is refined or when a name it anchors on moves. Write a
@@ -64,6 +67,7 @@ new one when the decision itself changes. A rename inside a module is neither.
 | [0017](0017-monitor-owns-the-pid-lifecycle.md) | Give the monitor every piece of per-pid state, and leave the loop the clock |
 | [0018](0018-stats-requires-a-view-and-keeps-no-bare-alias.md) | Require a value on `--stats`, and keep no bare alias |
 | [0019](0019-schedule-tick-starts-on-a-fixed-grid.md) | Schedule tick starts on a fixed grid, and skip the positions a slow tick misses |
+| [0020](0020-attach-to-a-process-once.md) | Attach to a process once, and let go the moment a read fails |
 
 ## Reading order
 
