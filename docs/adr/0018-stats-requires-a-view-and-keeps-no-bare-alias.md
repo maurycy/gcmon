@@ -1,7 +1,7 @@
 # ADR-0018: Require a value on `--stats`, and keep no bare alias
 
 - **Status:** Accepted
-- **Date:** 2026-08-17
+- **Date:** 2026-08-18
 
 ## Context
 
