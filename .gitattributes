@@ -1,3 +1,7 @@
+# Every text file is stored and checked out with LF, whatever the local
+# `core.autocrlf` says.
+* text=auto eol=lf
+
 # tests/fixtures holds output that is asserted byte for byte, so it has to
 # reach every checkout exactly as it was committed. `-text` turns off
 # end-of-line translation for it whatever the local `core.autocrlf` says;
