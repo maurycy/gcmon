@@ -36,7 +36,6 @@ This file holds the open set and the order to take it in. The other two:
 | [0044](0044-torn-reads-and-reordered-publishes.md) | Bug (correctness) | S | **Blocked on upstream.** A pause slice can read one inter-collection interval too long, and a hole inside one poll's records reaches no loss window; both are races in the target that every filter gcmon has passes |
 | [0047](0047-the-no-subcommand-form-has-never-worked.md) | Bug (reporting) | XS | `gcmon 12345`, the form the README opens with, exits 2; the branch in `main` that would dispatch it is unreachable |
 | [0048](0048-attach-once-per-pid.md) | Feature (efficiency) | M | gcmon re-derives where a process keeps its GC state on every poll and throws it away again; 470 µs of each 473 µs read is that, per process, per tick |
-| [0049](0049-poll-on-the-requested-schedule.md) | Bug (correctness) | S | `--rate 0.1` polls every 0.1 s *plus* however long a tick took, so the target sets the interval; a tree costing 30 ms a tick polls at 7.1 Hz and nothing says so |
 | [0050](0050-name-the-poll-interval-for-what-it-is.md) | Feature (ergonomics) | S | `--rate` is a duration in seconds under a name that means a frequency, and gcmon echoes `Rate: 0.1s` back |
 | [0051](0051-key-the-running-rings-by-pid.md) | Feature (efficiency) | S | Asking `StreamingStats` about one process walks every process's rings; `low_coverage` does it once per polled pid per tick, and on a healthy run it never stops |
 
@@ -49,8 +48,7 @@ Every row here has a file. A missing number either retired or never became one;
 |------|----------|
 | 0025 | The only outage, and the fix is one word |
 | 0026 | Smallest user-visible wrongness |
-| 0049 | The only wrongness every run is subject to, and the advisory currently misdirects the operator who notices |
-| 0050 | Constrained: after 0049, and immediately after, so the help text and the advisory are edited once |
+| 0050 | Unblocked: 0049 landed, and taking this next edits the help text and the advisory once |
 | 0028 | XS, and it shrinks 0036 |
 | 0027 | Needs an answer from trace-processor before anyone can settle it either way |
 | 0031 | |
