@@ -56,6 +56,12 @@ _Avoid_: sample, entry, datapoint
 One thing gcmon wrote into a trace. A record becomes one or more events.
 _Avoid_: record (for the trace side), slice (that is one shape of event)
 
+**Trace**:
+The file gcmon writes for a viewer: events drawn on tracks, opened in the
+Perfetto UI. One run writes one, live or through `combine`. **Tracefile** and
+**trace file** say the same thing and are interchangeable with it.
+_Avoid_: timeline, profile, output file
+
 **Span**:
 A slice on the `Processes` track, bounding a process's observed lifetime.
 _Avoid_: lifetime (unqualified; see below), duration, extent

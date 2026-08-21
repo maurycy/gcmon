@@ -37,6 +37,7 @@ This file holds the open set and the order to take it in. The other two:
 | [0051](0051-key-the-running-rings-by-pid.md) | Feature (efficiency) | S | Asking `StreamingStats` about one process walks every process's rings; `low_coverage` does it once per polled pid per tick, and on a healthy run it never stops |
 | [0052](0052-a-recycled-pid-can-be-read-through-a-stale-attachment.md) | Bug (correctness) | S | A pid the OS reissues between two ticks is read through the attachment gcmon still holds, so an unrelated process's memory reaches the trace as plausible records; only Linux is exposed |
 | [0054](0054-macos-attachment-leaks-a-mach-task-port.md) | Bug (availability) | S | On macOS every attachment costs gcmon a Mach port name that nothing gives back; CPython's cleanup has a Windows arm and a Linux arm and no Apple one |
+| [0055](0055-drop-the-chrome-trace-output-format.md) | Feature (cleanup) | L | gcmon writes two trace formats and defaults to the weaker one: Chrome carries no command lines, no `Processes` track and microsecond timestamps, and keeping it costs a fan-out exporter, a `combine` matrix with a rejected cell and 1,800 lines of test |
 
 Every row here has a file. A missing number either retired or never became one;
 [RETIRED.md](RETIRED.md) says which.
@@ -46,6 +47,7 @@ Every row here has a file. A missing number either retired or never became one;
 | Spec | Why here |
 |------|----------|
 | 0025 | The only outage, and the fix is one word |
+| 0055 | Subtracts: 0028 and 0031 retire with it rather than being implemented, and 0030 and 0036 each lose an item. Anything below it that touches the exporters is smaller afterwards |
 | 0026 | Smallest user-visible wrongness |
 | 0050 | Unblocked: 0049 landed, and taking this next edits the help text and the advisory once |
 | 0028 | XS, and it shrinks 0036 |
@@ -78,6 +80,7 @@ cell means no recorded reason, so that row can move.
 
 | First | Then | Why |
 |-------|------|-----|
+| 0055 | 0028, 0031, 0036 | 0055 deletes the exporter 0028 fixes and the example 0031 complains about, and removes one of 0036's two problems. Taken second, each of the three is work thrown away |
 | 0026 | 0037 | 0037 assumes 0026's shared naming helper |
 | 0028 | 0036 | 0028 shrinks 0036 |
 | 0050 | 0040 | 0040 derives the option declarations from one table and would otherwise have to carry the alias 0050 introduces through a rewrite of the structure holding it |
