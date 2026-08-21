@@ -309,13 +309,37 @@ for something nothing ships.
      unchanged. A trace's contents must not move by one field in a change that only removes another
      format.
 
+- **Three suites reach a claim through the Chrome leg and get ported, not deleted.** Each asserts
+  something that stays true with one format left, so deleting it would drop the assertion along
+  with the format.
+
+  `tests/exporters/test_combine_loss_round_trip.py` walks the combined output, parsing the Chrome
+  JSON and resolving BEGIN/END as a stack the way a trace processor does, because a span emitted
+  after the one it should precede reads as nested and every field-by-field assertion passes on a
+  file whose lines were shuffled. ADR-0015 names that depth as the one place the mistake shows.
+  It is rebuilt to resolve the combined spans through the trace processor instead, which is a
+  rewrite of the walk rather than a changed argument; the live side from `loss_row` is untouched.
+
+  `tests/exporters/test_perfetto_exporter_integration.py` is parametrized over `chrome` and
+  `perfetto` across five classes, which is the parametrization ADR-0014 records. It keeps the
+  Perfetto leg and loses the parameter, the format-keyed arg-prefix dict and the branch choosing
+  `trace.json` or `trace.pb`.
+
+  `tests/exporters/test_exporter_thread_safety.py` runs its concurrency claims over a list of
+  exporter factories, one of them `_ChromeTraceExporterFactory`, and carries two Chrome-only
+  tests for a race the base class arbitrates. The factory leaves the list. The two tests go, since
+  the Perfetto and JSONL factories already cover that race through the same base class.
+
+- **`tests/exporters/test_buffered_exporter.py` changes encoder rather than losing cases.** It
+  tests `BufferedTraceExporter` itself and reaches for `JsonEventEncoder` only as something to
+  instantiate the base with. It takes `ProtobufEventEncoder` instead and keeps every case.
+
 **Deleted with the format:** `tests/exporters/test_chrome_trace_exporter.py`,
 `test_chrome_trace_format.py`, `test_combined_exporter.py`,
-`test_combined_exporter_integration.py`, the Chrome half of `test_combine.py`,
-`test_convert_cmd.py` and `test_buffered_exporter.py`, the `chrome -> perfetto` input class in
-`test_convert_cmd_perfetto.py`, the Chrome assertions and `ChromeTraceValue` in `tests/helpers.py`,
-the `trace_exporter` fixtures in `tests/exporters/conftest.py`, and
-`tests/fixtures/monitored_run_chrome_trace.json`.
+`test_combined_exporter_integration.py`, the Chrome half of `test_combine.py` and
+`test_convert_cmd.py`, the `chrome -> perfetto` input class in `test_convert_cmd_perfetto.py`, the
+Chrome assertions and `ChromeTraceValue` in `tests/helpers.py`, the `trace_exporter` fixtures in
+`tests/exporters/conftest.py`, and `tests/fixtures/monitored_run_chrome_trace.json`.
 
 ## 6. Out of scope
 
