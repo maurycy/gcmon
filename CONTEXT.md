@@ -66,6 +66,13 @@ _Avoid_: timeline, profile, output file
 A slice on the `Processes` track, bounding a process's observed lifetime.
 _Avoid_: lifetime (unqualified; see below), duration, extent
 
+**Intern id**:
+The number a packet writes in place of a string the trace has already spelled
+out: a slice name, a category, or the name of a debug annotation. Perfetto
+spells it `iid` on the wire and gcmon does not, because an **iid** here is an
+interpreter.
+_Avoid_: iid (that is the interpreter), string id, symbol, handle, reference
+
 ### The things gcmon counts
 
 **Ring**:
@@ -78,7 +85,8 @@ _Avoid_: buffer, per-generation stats, slot array
 **Interpreter**:
 One CPython interpreter inside a process, identified by its **iid**. Each keeps
 its own collector, its own rings and its own cumulative counters, and gcmon
-publishes the iid as a Perfetto `tid`.
+publishes the iid as a Perfetto `tid`. Perfetto's own `iid` on an interned
+string is a different thing; see **Intern id**.
 _Avoid_: subinterpreter (an iid of 0 is an interpreter too), thread, isolate
 
 **Generation**:

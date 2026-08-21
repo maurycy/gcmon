@@ -38,6 +38,7 @@ This file holds the open set and the order to take it in. The other two:
 | [0052](0052-a-recycled-pid-can-be-read-through-a-stale-attachment.md) | Bug (correctness) | S | A pid the OS reissues between two ticks is read through the attachment gcmon still holds, so an unrelated process's memory reaches the trace as plausible records; only Linux is exposed |
 | [0054](0054-macos-attachment-leaks-a-mach-task-port.md) | Bug (availability) | S | On macOS every attachment costs gcmon a Mach port name that nothing gives back; CPython's cleanup has a Windows arm and a Linux arm and no Apple one |
 | [0055](0055-drop-the-chrome-trace-output-format.md) | Feature (cleanup) | L | gcmon writes two trace formats and defaults to the weaker one: Chrome carries no command lines, no `Processes` track and microsecond timestamps, and keeping it costs a fan-out exporter, a `combine` matrix with a rejected cell and 1,800 lines of test |
+| [0056](0056-intern-the-strings-a-trace-repeats.md) | Feature (efficiency) | M | Over half of every trace is the same few dozen strings, written out again for every slice gcmon draws |
 
 Every row here has a file. A missing number either retired or never became one;
 [RETIRED.md](RETIRED.md) says which.
