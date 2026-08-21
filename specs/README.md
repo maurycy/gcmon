@@ -55,10 +55,10 @@ Every row here has a file. A missing number either retired or never became one;
 | 0047 | XS, and the command that fails is the one the README opens with |
 | 0052 | Silent, and what it produces is indistinguishable from a real measurement |
 | 0030 | |
-| 0035 | Constrained: before 0039 |
+| 0035 | Taken before 0039 it deletes nine classes 0039 would otherwise move; neither order is forced |
 | 0037 | Constrained: after 0026 |
 | 0036 | Constrained: after 0028 |
-| 0039 | Constrained: after 0035. 0041 landed first, so its splits happen inside `model/` and `stats/` |
+| 0039 | Constrained: before 0051. 0041 landed first, so it has a layer to name for each piece |
 | 0040 | Constrained: after 0050. Rewrites the option declarations 0045 edited |
 | 0042 | |
 | 0020 | |
@@ -82,7 +82,6 @@ cell means no recorded reason, so that row can move.
 |-------|------|-----|
 | 0026 | 0037 | 0037 assumes 0026's shared naming helper |
 | 0028 | 0036 | 0028 shrinks 0036 |
-| 0035 | 0039 | 0039 would otherwise move nine classes 0035 deletes |
 | 0039 | 0051 | 0039 moves `StreamingStats`; taken first, 0051 edits the module in its final home rather than one about to move |
 | 0050 | 0040 | 0040 derives the option declarations from one table and would otherwise have to carry the alias 0050 introduces through a rewrite of the structure holding it |
 

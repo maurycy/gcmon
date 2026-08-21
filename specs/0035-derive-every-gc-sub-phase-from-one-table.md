@@ -171,9 +171,11 @@ bytes must not change.
   this is a refactor with no output diff.
 - The `--stats` table layout in `stats_output`. It consumes `METRICS`; it does not care where
   `METRICS` came from.
-- Splitting `stats.py` and `data.py` into modules by concern. That is
-  [0039](0039-split-the-record-model-and-stats-by-concern.md), which this spec makes smaller
-  by deleting the nine `Metric` classes first.
+- Splitting `stats/stats.py` and `model/data.py` into modules by concern. That is
+  [0039](0039-split-the-record-model-and-stats-by-concern.md). Taken first, this spec makes it
+  smaller by deleting the nine `Metric` classes; taken second, it edits a module named for the
+  table, and the citations of `stats.METRICS` above are the ones 0039 renames. Neither order is
+  forced.
 - The loss record's own fields. `GenLoss` and `LossMsg` are one shape each with no optional
   variants ([ADR-0015](../docs/adr/0015-gc-loss-spans-on-their-own-track.md)); there is nothing
   to tabulate.
