@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from gcmon.exporters.chrome_trace_io import read_jsonl
+from gcmon.exporters.jsonl_io import read_jsonl
 from gcmon.model.data import GCStatsInfo
 from gcmon.model.protocol import TGCStatsInfo, TItem, is_gc_stats, is_loss
 from gcmon.pyperf.hook import (
@@ -17,7 +17,7 @@ from gcmon.pyperf.hook import (
     gcmon_hook,
 )
 from gcmon.pyperf.metrics import to_metrics
-from gcmon.stats.stats import StreamingStats
+from gcmon.stats.streaming_stats import StreamingStats
 from tests.helpers import assert_valid_jsonl_format
 
 

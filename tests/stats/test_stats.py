@@ -7,7 +7,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from gcmon.stats.stats import HAS_DDSKETCH, Stats, StreamingStats
+from gcmon.stats.stats import HAS_DDSKETCH, Stats
+from gcmon.stats.streaming_stats import StreamingStats
 from tests.helpers import create_mock_stats_item
 
 
@@ -445,6 +446,16 @@ class TestLowCoverage:
         fully covered, whatever its sample size."""
         stats = StreamingStats()
         self._sampled(stats, 3)
+
+        assert stats.low_coverage(1) is None
+
+    def test_a_loss_entry_with_no_count_is_skipped(self) -> None:
+        """`pyperf.hook` records a ring that lost pause time but no collections.
+        Nothing was missed there, so it is not a ring gcmon read too little of."""
+        stats = StreamingStats()
+        self._sampled(stats, 3)
+
+        stats.record_loss(1, 0, 0, 0, 7_000)
 
         assert stats.low_coverage(1) is None
 
