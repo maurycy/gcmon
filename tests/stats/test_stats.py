@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from gcmon.stats import HAS_DDSKETCH, Stats, StreamingStats
+from gcmon.stats.stats import HAS_DDSKETCH, Stats, StreamingStats
 from tests.helpers import create_mock_stats_item
 
 
@@ -862,7 +862,7 @@ class TestTheBoundOnRunningRings:
 
 
 class TestADeathTheMonitorCalled:
-    """`gcmon.monitor` decides who is alive and this side takes the decision.
+    """`gcmon.monitoring.monitor` decides who is alive and this side takes the decision.
 
     Whatever arrives on a pid called dead is a new process, the same one or
     not, which `TestAReusedPid` covers figure by figure. What is left here is

@@ -5,11 +5,11 @@ import logging
 import os
 from argparse import Namespace
 
-from gcmon.commands.monitoring_base import run_monitoring_loop
-from gcmon.commands.monitoring_options import add_monitoring_options, get_monitoring_options
-from gcmon.commands.parser_factory import ParserFactory
-from gcmon.target_process import ExternalProcess, ProcessFactory
-from gcmon.wait_policy import StartupTimeoutPolicy
+from gcmon.cli.commands.monitoring_base import run_monitoring_loop
+from gcmon.cli.commands.monitoring_options import add_monitoring_options, get_monitoring_options
+from gcmon.cli.commands.parser_factory import ParserFactory
+from gcmon.monitoring.target_process import ExternalProcess, ProcessFactory
+from gcmon.monitoring.wait_policy import StartupTimeoutPolicy
 
 logger = logging.getLogger("gcmon")
 

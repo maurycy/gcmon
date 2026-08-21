@@ -8,16 +8,16 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from gcmon.data import GCStatsInfo
 from gcmon.exporters.chrome_trace_io import read_jsonl
-from gcmon.protocol import TGCStatsInfo, TItem, is_gc_stats, is_loss
+from gcmon.model.data import GCStatsInfo
+from gcmon.model.protocol import TGCStatsInfo, TItem, is_gc_stats, is_loss
 from gcmon.pyperf.hook import (
     _get_env_pyperf_hook_control_timeout,
     _replay,
     gcmon_hook,
 )
 from gcmon.pyperf.metrics import to_metrics
-from gcmon.stats import StreamingStats
+from gcmon.stats.stats import StreamingStats
 from tests.helpers import assert_valid_jsonl_format
 
 

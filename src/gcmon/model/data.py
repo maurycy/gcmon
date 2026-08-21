@@ -1,6 +1,6 @@
 import msgspec
 
-from gcmon.protocol import TMapping
+from .protocol import TMapping
 
 
 class GCStatsInfo(msgspec.Struct):

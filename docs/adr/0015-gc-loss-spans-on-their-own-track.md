@@ -195,15 +195,15 @@ about to be overwritten, so the chain survives the ring wrapping.
 
 ## Implementation
 
-- `src/gcmon/loss.py` holds the arithmetic, one accumulator per `(pid, iid, gen)`.
-- `src/gcmon/data.py` holds the loss record.
-- `src/gcmon/monitor.py` keeps each pid's poll instant beside its rings, so dropping a pid
+- `src/gcmon/model/loss.py` holds the arithmetic, one accumulator per `(pid, iid, gen)`.
+- `src/gcmon/model/data.py` holds the loss record.
+- `src/gcmon/monitoring/monitor.py` keeps each pid's poll instant beside its rings, so dropping a pid
   drops both and a reused pid inherits no interval.
 - `src/gcmon/exporters/trace_converter.py` takes loss through the shared pipeline as its third
   record type and restores span order for a capture read back from JSONL.
   `src/gcmon/exporters/perfetto_format.py` and `src/gcmon/exporters/perfetto_builders.py` write
   the track and the generation groups.
-- `src/gcmon/stats.py` records every gap.
+- `src/gcmon/stats/stats.py` records every gap.
 - `tests/test_loss.py` and `tests/test_loss_replay.py` check the arithmetic against synthetic
   sessions and a real capture replayed behind a simulated ring.
   `tests/exporters/test_combine_loss_round_trip.py` resolves the loss row as a stack, live and

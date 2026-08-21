@@ -8,12 +8,12 @@ from unittest.mock import Mock
 
 import pytest
 
-from gcmon.data import GCStatsInfo, InstantMsg
-from gcmon.monitor import EventsMonitor
-from gcmon.protocol import TGCStatsInfo, TMapping, to_mapping
-from gcmon.stats import StreamingStats
-from gcmon.target_process import ExternalProcess
-from gcmon.wait_policy import no_wait_policy
+from gcmon.model.data import GCStatsInfo, InstantMsg
+from gcmon.model.protocol import TGCStatsInfo, TMapping, to_mapping
+from gcmon.monitoring.monitor import EventsMonitor
+from gcmon.monitoring.target_process import ExternalProcess
+from gcmon.monitoring.wait_policy import no_wait_policy
+from gcmon.stats.stats import StreamingStats
 from tests.data_helpers import create_instant_msg
 from tests.helpers import FakeEventsReader, MockExporter, create_mock_stats_item
 
@@ -151,7 +151,7 @@ def make_monitor(
 @pytest.fixture
 def env_module() -> types.ModuleType:
     """Provide the _env module for testing."""
-    from gcmon import _env
+    from gcmon.cli import _env
 
     return _env
 

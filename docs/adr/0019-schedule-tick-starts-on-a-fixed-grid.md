@@ -107,15 +107,15 @@ joins the summary rather than the loop.
 
 - Two leaf modules carry what has to reach the option parser without dragging the loop behind it.
   `_env` and the parser both import `stats_output`, so importing `monitor_loop` there would pull the
-  monitor in behind every environment read. `src/gcmon/schedule.py` holds `MIN_IDLE_NS`,
-  `MIN_RATE_NS` and the grid arithmetic; `src/gcmon/run_report.py` holds the run report and
+  monitor in behind every environment read. `src/gcmon/model/schedule.py` holds `MIN_IDLE_NS`,
+  `MIN_RATE_NS` and the grid arithmetic; `src/gcmon/model/run_report.py` holds the run report and
   `OVERRUN_SHARE`, which crosses from the loop to the summary. The per-poll report sits in
-  `src/gcmon/monitor.py`, beside what produces it, and needs neither.
-- `src/gcmon/monitor_loop.py` holds the two clock reads.
-- `src/gcmon/stats_output.py` states the tick counts and selects the remedy; `src/gcmon/monitor.py`
+  `src/gcmon/monitoring/monitor.py`, beside what produces it, and needs neither.
+- `src/gcmon/monitoring/monitor_loop.py` holds the two clock reads.
+- `src/gcmon/stats/stats_output.py` states the tick counts and selects the remedy; `src/gcmon/monitoring/monitor.py`
   carries the advisory that no longer prescribes one.
-- `src/gcmon/_env.py` parses one rate spelling for both `--rate` and `GCMON_RATE`;
-  `src/gcmon/commands/monitoring_options.py` reports what it rejects and applies the same minimum to
+- `src/gcmon/cli/_env.py` parses one rate spelling for both `--rate` and `GCMON_RATE`;
+  `src/gcmon/cli/commands/monitoring_options.py` reports what it rejects and applies the same minimum to
   a rate arriving from anywhere else.
 - Tests: `tests/test_schedule.py` for the grid, the skip and the floor, asserted on the arithmetic
   directly; `tests/monitoring/test_monitor_loop.py` for the rest, driven by a scripted clock and a

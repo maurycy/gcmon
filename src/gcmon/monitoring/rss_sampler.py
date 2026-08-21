@@ -3,7 +3,7 @@
 import logging
 from collections.abc import Callable, Set
 
-from .exporters.exporter import EventsExporter
+from ..exporters.exporter import EventsExporter
 
 logger = logging.getLogger("gcmon")
 

@@ -26,14 +26,14 @@ from unittest.mock import patch
 
 import pytest
 
-from gcmon.data import GCStatsInfo
 from gcmon.exporters.exporter import EventsExporter
-from gcmon.monitor import EventsMonitor
-from gcmon.poll_status import PollStatus
-from gcmon.protocol import TGCStatsInfo, TGenLoss, TInstantMsg, TLossMsg
-from gcmon.stats import StreamingStats
-from gcmon.target_process import ExternalProcess
-from gcmon.wait_policy import no_wait_policy
+from gcmon.model.data import GCStatsInfo
+from gcmon.model.poll_status import PollStatus
+from gcmon.model.protocol import TGCStatsInfo, TGenLoss, TInstantMsg, TLossMsg
+from gcmon.monitoring.monitor import EventsMonitor
+from gcmon.monitoring.target_process import ExternalProcess
+from gcmon.monitoring.wait_policy import no_wait_policy
+from gcmon.stats.stats import StreamingStats
 from tests.captures import SSL_CONTEXT_SIZE
 from tests.helpers import FakeEventsReader
 from tests.test_monitor_cursor import POLL_0
@@ -255,7 +255,7 @@ def replay(interval_ms: float, sizes: dict[int, int] = RING_SIZES, skew_ms: floa
 
     ticks = clock()
 
-    with patch("gcmon.monitor.time.monotonic_ns", side_effect=lambda: next(ticks)):
+    with patch("gcmon.monitoring.monitor.time.monotonic_ns", side_effect=lambda: next(ticks)):
         for _ in batches:
             assert monitor._poll(PID) is PollStatus.OK
 

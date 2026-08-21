@@ -15,11 +15,11 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from gcmon.monitor import PollReport
-from gcmon.monitor_loop import MonitorLoop
-from gcmon.rss_sampler import RssSampler
-from gcmon.run_policy import InfinityRunner, Runner
-from gcmon.run_report import RunReport
+from gcmon.model.run_report import RunReport
+from gcmon.monitoring.monitor import PollReport
+from gcmon.monitoring.monitor_loop import MonitorLoop
+from gcmon.monitoring.rss_sampler import RssSampler
+from gcmon.monitoring.run_policy import InfinityRunner, Runner
 
 
 def _report(*live: int, keep_running: bool = True) -> PollReport:

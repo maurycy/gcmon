@@ -10,16 +10,16 @@ from typing import Self
 
 import msgspec
 
-from .data import GenLoss, LossMsg
-from .events_reader import EventsReader, TargetUnavailable
-from .exporters import EventsExporter
-from .loss import (
+from ..exporters import EventsExporter
+from ..model.data import GenLoss, LossMsg
+from ..model.loss import (
     RingAccumulator,
     RingKey,
 )
-from .poll_status import PollStatus
-from .protocol import TGCStatsInfo
-from .stats import StreamingStats
+from ..model.poll_status import PollStatus
+from ..model.protocol import TGCStatsInfo
+from ..stats.stats import StreamingStats
+from .events_reader import EventsReader, TargetUnavailable
 from .target_process import TargetProcess
 from .wait_policy import WaitPolicy, WaitPolicyFactory
 

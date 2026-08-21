@@ -14,8 +14,8 @@ from itertools import count
 
 import pytest
 
-from gcmon.data import GCStatsInfo
-from gcmon.monitor import EventsMonitor
+from gcmon.model.data import GCStatsInfo
+from gcmon.monitoring.monitor import EventsMonitor
 from tests.helpers import create_mock_stats_item
 
 PID = 4242

@@ -10,14 +10,14 @@ import pytest
 
 @pytest.fixture
 def gcmon_cli() -> list[str]:
-    return [sys.executable, "-m", "gcmon.cli"]
+    return [sys.executable, "-m", "gcmon"]
 
 
 @pytest.fixture
 def cli_module() -> types.ModuleType:
-    from gcmon import cli
+    from gcmon.cli import main
 
-    return cli
+    return main
 
 
 # =============================================================================
@@ -56,8 +56,8 @@ class TestSetupLogging:
 
 
 def test_main_combine_command(tmp_path: Path) -> None:
-    from gcmon import cli
-    from gcmon.trace_event import process_meta
+    from gcmon.cli import main as cli
+    from gcmon.model.trace_event import process_meta
 
     input_file = tmp_path / "input.json"
     input_file.write_bytes(msgspec.json.encode([process_meta(pid=1, name="test")]))

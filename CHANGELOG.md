@@ -2,6 +2,11 @@
 
 ## WIP
 
+### Breaking changes
+
+- The modules moved into layers, so every deep import path changed and the old ones are gone. `from gcmon import ...` still gives the same names
+
+
 ## Version 0.6.0 (2026-08-21)
 
 ### Breaking changes
