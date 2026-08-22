@@ -46,15 +46,24 @@ def json_to_item(data: TMapping) -> tuple[int, TItem]:
 
 def read_jsonl(filename: Path) -> dict[int, list[TItem]]:
     items: dict[int, list[TItem]] = {}
+    first = True
     with open(filename, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
-            if line:
-                pid, item = json_to_item(msgspec.json.decode(line))
-                if pid not in items:
-                    items[pid] = [item]
-                else:
-                    items[pid].append(item)
+            if not line:
+                continue
+            if first:
+                first = False
+                if line.startswith("["):
+                    raise ValueError(
+                        f"{filename} is a Chrome Trace file, which gcmon no longer reads. "
+                        "The Perfetto UI still opens it."
+                    )
+            pid, item = json_to_item(msgspec.json.decode(line))
+            if pid not in items:
+                items[pid] = [item]
+            else:
+                items[pid].append(item)
 
     return items
 

@@ -12,7 +12,7 @@ class TestEnvVarDefaults:
     @pytest.mark.parametrize(
         "env_var, getter_suffix, default",
         [
-            ("ENV_OUTPUT", "output", Path("gcmon.json")),
+            ("ENV_OUTPUT", "output", Path("gcmon.pftrace")),
             ("ENV_RATE", "rate", 0.1),
             ("ENV_DURATION", "duration", None),
             ("ENV_THREAD_ID", "thread_id", 0),
@@ -146,7 +146,7 @@ class TestEnvFormat:
 
     def test_default(self, monkeypatch: pytest.MonkeyPatch, env_module: types.ModuleType) -> None:
         monkeypatch.delenv(env_module.ENV_FORMAT, raising=False)
-        assert env_module.get_env_format() == "chrome"
+        assert env_module.get_env_format() == "perfetto"
 
     @pytest.mark.parametrize("value, expected", [("stdout", "stdout"), ("jsonl", "jsonl")])
     def test_valid_values(
@@ -155,8 +155,13 @@ class TestEnvFormat:
         monkeypatch.setenv(env_module.ENV_FORMAT, value)
         assert env_module.get_env_format() == expected
 
-    def test_invalid_value_returns_default(self, monkeypatch: pytest.MonkeyPatch, env_module: types.ModuleType) -> None:
-        monkeypatch.setenv(env_module.ENV_FORMAT, "invalid_format")
+    def test_an_unknown_word_is_handed_on_as_written(
+        self, monkeypatch: pytest.MonkeyPatch, env_module: types.ModuleType
+    ) -> None:
+        """Not substituted here. `get_monitoring_options` refuses it once
+        logging is configured, so the operator is told rather than handed a
+        format they did not ask for."""
+        monkeypatch.setenv(env_module.ENV_FORMAT, "chrome")
         assert env_module.get_env_format() == "chrome"
 
 
@@ -166,6 +171,18 @@ class TestEnvOutputSpecialCases:
     def test_default_format_jsonl(self, monkeypatch: pytest.MonkeyPatch, env_module: types.ModuleType) -> None:
         monkeypatch.setenv(env_module.ENV_FORMAT, "jsonl")
         monkeypatch.delenv(env_module.ENV_OUTPUT, raising=False)
+        assert env_module.get_env_output() == Path("gcmon.jsonl")
+
+    @pytest.mark.parametrize("value", [" jsonl ", "JSONL", "\tjsonl\n"])
+    def test_the_default_name_reads_the_variable_the_way_the_format_does(
+        self, monkeypatch: pytest.MonkeyPatch, env_module: types.ModuleType, value: str
+    ) -> None:
+        """One spelling, two answers, is how a run ends up writing JSONL into a
+        file called `gcmon.pftrace`."""
+        monkeypatch.setenv(env_module.ENV_FORMAT, value)
+        monkeypatch.delenv(env_module.ENV_OUTPUT, raising=False)
+
+        assert env_module.get_env_format() == "jsonl"
         assert env_module.get_env_output() == Path("gcmon.jsonl")
 
 
@@ -226,7 +243,7 @@ class TestEnvVarEmpty:
     @pytest.mark.parametrize(
         "env_var, getter_suffix, default",
         [
-            ("ENV_OUTPUT", "output", Path("gcmon.json")),
+            ("ENV_OUTPUT", "output", Path("gcmon.pftrace")),
             ("ENV_RATE", "rate", 0.1),
             ("ENV_DURATION", "duration", None),
             ("ENV_THREAD_ID", "thread_id", 0),
@@ -234,7 +251,7 @@ class TestEnvVarEmpty:
             ("ENV_SERVER_HOST", "server_host", "localhost"),
             ("ENV_SERVER_PORT", "server_port", 9999),
             ("ENV_VERBOSE", "verbose", 0),
-            ("ENV_FORMAT", "format", "chrome"),
+            ("ENV_FORMAT", "format", "perfetto"),
             ("ENV_STATS", "stats", None),
             ("ENV_TABLE_FORMAT", "table_format", None),
             ("ENV_CONTROL_NAME", "control_name", None),
