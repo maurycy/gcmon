@@ -185,5 +185,6 @@ naming the minimum Perfetto version. The second is the whole of what section 4.4
 to hold before this lands is the ordering, zstd 3 beating deflate 6 on both axes, and not the
 figures themselves.
 
-**0056 is measured against deflate.** Its section 1 was re-measured against a compressed baseline
-when 0057 landed. If this lands first, that baseline moves again, by the 12% to 14% above.
+**Interning does not come back with this.** 0056 proposed interning the strings a trace repeats,
+and it was measured under deflate 6 and zstd 3 alike: 8% to 16% off the file either way. Switching
+the codec does not reopen it, and [RETIRED.md](RETIRED.md) carries the row.
