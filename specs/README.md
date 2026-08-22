@@ -35,7 +35,7 @@ This file holds the open set and the order to take it in. The other two:
 | [0051](0051-key-the-running-rings-by-pid.md) | Feature (efficiency) | S | Asking `StreamingStats` about one process walks every process's rings; `low_coverage` does it once per polled pid per tick, and on a healthy run it never stops |
 | [0052](0052-a-recycled-pid-can-be-read-through-a-stale-attachment.md) | Bug (correctness) | S | A pid the OS reissues between two ticks is read through the attachment gcmon still holds, so an unrelated process's memory reaches the trace as plausible records; only Linux is exposed |
 | [0054](0054-macos-attachment-leaks-a-mach-task-port.md) | Bug (availability) | S | On macOS every attachment costs gcmon a Mach port name that nothing gives back; CPython's cleanup has a Windows arm and a Linux arm and no Apple one |
-| [0056](0056-intern-the-strings-a-trace-repeats.md) | Feature (efficiency) | M | **Needs re-measuring.** Over half of the bytes the writer produces is the same few dozen strings, written out again for every slice gcmon draws. On the compressed file 0057 left behind, interning them is worth 6-13%, not the half its section 1 claims |
+| [0056](0056-intern-the-strings-a-trace-repeats.md) | Feature (efficiency) | M | Over half of the bytes the writer produces is the same few dozen strings, written out again for every slice gcmon draws; interning them halves what the writer produces and takes 8-16% off the compressed file |
 | [0058](0058-write-the-batches-with-zstd.md) | Feature (efficiency) | S | **Blocked on a perfetto release.** zstd at its default level writes a trace 12-14% smaller than the deflate gcmon writes, and writes it faster; the field landed in Perfetto v58 and the Python package is still on v57.2 |
 
 Every row here has a file. A missing number either retired or never became one;
@@ -71,13 +71,12 @@ cell means no recorded reason, so that row can move.
   put it back in play sooner.
 - **0054** was found in CPython's source and not in a run. Nobody should size it until the ports have
   been counted on a Mac.
-- **0056** is sized against an uncompressed trace, which 0057 stopped gcmon writing. Its section 1
-  has to be re-measured on a compressed baseline before anyone can rank it. The work itself is
-  still M; what changed is what it buys.
+- **0056** was re-measured on 2026-08-23 against the trace 0057 left gcmon writing. It still halves
+  what the writer produces, and takes 8% to 16% off the file rather than the half its section 1
+  claimed. The work is still M, and nobody has ranked it against the smaller number.
 - **0058** waits on the `perfetto` package shipping a v58 trace processor. Until it does, the
   field number has no generated descriptor to be checked against and CI would read every trace it
-  wrote as empty. Its section 4.5 says what to watch for, and taking it moves 0056's baseline
-  again.
+  wrote as empty. Its section 4.5 says what to watch for.
 
 **The only ordering constraints:**
 
