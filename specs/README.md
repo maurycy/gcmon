@@ -35,7 +35,8 @@ This file holds the open set and the order to take it in. The other two:
 | [0051](0051-key-the-running-rings-by-pid.md) | Feature (efficiency) | S | Asking `StreamingStats` about one process walks every process's rings; `low_coverage` does it once per polled pid per tick, and on a healthy run it never stops |
 | [0052](0052-a-recycled-pid-can-be-read-through-a-stale-attachment.md) | Bug (correctness) | S | A pid the OS reissues between two ticks is read through the attachment gcmon still holds, so an unrelated process's memory reaches the trace as plausible records; only Linux is exposed |
 | [0054](0054-macos-attachment-leaks-a-mach-task-port.md) | Bug (availability) | S | On macOS every attachment costs gcmon a Mach port name that nothing gives back; CPython's cleanup has a Windows arm and a Linux arm and no Apple one |
-| [0056](0056-intern-the-strings-a-trace-repeats.md) | Feature (efficiency) | M | Over half of every trace is the same few dozen strings, written out again for every slice gcmon draws |
+| [0056](0056-intern-the-strings-a-trace-repeats.md) | Feature (efficiency) | M | **Blocked on 0057.** Over half of every trace is the same few dozen strings, written out again for every slice gcmon draws |
+| [0057](0057-compress-the-packets-a-trace-writes.md) | Feature (efficiency) | S | Every trace gcmon writes is eight to nine times larger than it has to be, in a format Perfetto already reads compressed |
 
 Every row here has a file. A missing number either retired or never became one;
 [RETIRED.md](RETIRED.md) says which.
@@ -50,6 +51,7 @@ Every row here has a file. A missing number either retired or never became one;
 | 0027 | Needs an answer from trace-processor before anyone can settle it either way |
 | 0047 | XS, and the command that fails is the one the README opens with |
 | 0052 | Silent, and what it produces is indistinguishable from a real measurement |
+| 0057 | S, measured at eight to nine times on every trace, and 0056 cannot be re-sized until it lands |
 | 0030 | |
 | 0035 | 0039 landed, and the nine `Metric` classes it replaces are a module named for the table |
 | 0037 | Constrained: after 0026 |
@@ -70,6 +72,8 @@ cell means no recorded reason, so that row can move.
   put it back in play sooner.
 - **0054** was found in CPython's source and not in a run. Nobody should size it until the ports have
   been counted on a Mac.
+- **0056** is sized against an uncompressed trace, and 0057 changes what interning is worth. Its
+  section 1 has to be re-measured on a compressed baseline before anyone can rank it.
 
 **The only ordering constraints:**
 
@@ -77,5 +81,6 @@ cell means no recorded reason, so that row can move.
 |-------|------|-----|
 | 0026 | 0037 | 0037 assumes 0026's shared naming helper |
 | 0050 | 0040 | 0040 derives the option declarations from one table and would otherwise have to carry the alias 0050 introduces through a rewrite of the structure holding it |
+| 0057 | 0056 | Compressing first is what 0056 has to be measured against; interning on top of a compressed trace measured 6-13%, not the halving its section 1 claims |
 
 0042 depends on nothing else here; take it at any time.
