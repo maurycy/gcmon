@@ -8,6 +8,7 @@ implementation (ADR-0008).
 from __future__ import annotations
 
 import logging
+import zlib
 from collections.abc import Callable, Sequence, Set
 from pathlib import Path
 from typing import Protocol
@@ -16,12 +17,15 @@ from ..model.trace_event import ProcessMeta, TraceEvent
 from .perfetto_format import (
     PerfettoTrackState,
     TraceField,
+    TracePacketField,
     convert_trace_events_to_perfetto,
     finalize_perfetto_packets,
 )
 from .protobuf_encoder import encode_bytes_field
 
 logger = logging.getLogger("gcmon")
+
+_COMPRESSION_LEVEL = 6
 
 __all__ = [
     "EventEncoder",
@@ -107,6 +111,17 @@ class ProtobufEventEncoder:
         for pid in pids:
             self._track_state.update_process_lifetime(pid, ts_ns)
 
+    def _write_batch(self, descriptors: Sequence[bytes], packets: Sequence[bytes]) -> None:
+        """Append one batch to the trace as a single deflated packet."""
+        assert self._path is not None, "open() must be called before writing"
+        batch = b"".join(encode_bytes_field(TraceField.PACKET, entry) for entry in (*descriptors, *packets))
+        compressed = encode_bytes_field(TracePacketField.COMPRESSED_PACKETS, zlib.compress(batch, _COMPRESSION_LEVEL))
+        mode = "wb" if not self._has_written else "ab"
+        self._has_written = True
+        with open(self._path, mode) as f:
+            f.write(encode_bytes_field(TraceField.PACKET, compressed))
+            f.flush()
+
     def write_events(self, events: Sequence[TraceEvent]) -> None:
         if not events:
             return
@@ -121,14 +136,7 @@ class ProtobufEventEncoder:
         )
         if not descriptors and not packets:
             return
-        mode = "wb" if not self._has_written else "ab"
-        self._has_written = True
-        with open(self._path, mode) as f:
-            for entry in descriptors:
-                f.write(encode_bytes_field(TraceField.PACKET, entry))
-            for entry in packets:
-                f.write(encode_bytes_field(TraceField.PACKET, entry))
-            f.flush()
+        self._write_batch(descriptors, packets)
 
     def close(self) -> None:
         """Emit the ``Processes`` track and finish the file.
@@ -144,9 +152,4 @@ class ProtobufEventEncoder:
         packets = finalize_perfetto_packets(self._track_state, self._sequence_id)
         if not packets:
             return
-        mode = "wb" if not self._has_written else "ab"
-        self._has_written = True
-        with open(self._path, mode) as f:
-            for entry in packets:
-                f.write(encode_bytes_field(TraceField.PACKET, entry))
-            f.flush()
+        self._write_batch((), packets)
