@@ -74,6 +74,13 @@ Perfetto UI. One run writes one, live or through `combine`. **Tracefile** and
 **trace file** say the same thing and are interchangeable with it.
 _Avoid_: timeline, profile, output file
 
+**Capture**:
+The JSONL file gcmon writes: one JSON object per line, holding the records
+gcmon read and the loss windows between them. A **trace** holds events drawn
+for a viewer; a capture holds what they were made from, which is why `combine`
+reads one and writes the other.
+_Avoid_: dump, log, export, trace file (that is the Perfetto file)
+
 **Span**:
 A slice on the `Processes` track, bounding a process's observed lifetime.
 _Avoid_: lifetime (unqualified; see below), duration, extent
