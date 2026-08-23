@@ -1,7 +1,7 @@
 # Domain Docs
 
-How the engineering skills should consume this repo's domain documentation when
-exploring the codebase.
+How the engineering skills should consume this repo's domain documentation
+when exploring the codebase.
 
 ## Before exploring, read these
 
@@ -23,12 +23,12 @@ directory.
 
 ## The forward-looking complement
 
-`docs/adr/` records decisions already taken. `specs/` records work specified but
-not yet built, one file per open item, deleted when it lands. Read
+`docs/adr/` records decisions already taken. `specs/` records work specified
+but not yet built, one file per open item, deleted when it lands. Read
 `specs/README.md` when you need to know what is already planned in the area
-you're about to work in; proposing something that is already spec'd is the most
-common way to duplicate work here. Its neighbour `specs/CONVENTIONS.md` carries
-this repo's vocabulary rules, which the next section depends on.
+you're about to work in; proposing something that is already spec'd is the
+most common way to duplicate work here. Its neighbour `specs/CONVENTIONS.md`
+carries this repo's vocabulary rules, which the next section depends on.
 
 ## File structure
 
@@ -61,19 +61,19 @@ Multi-context repo (presence of `CONTEXT-MAP.md` at the root):
 
 ## Use the glossary's vocabulary
 
-When your output names a domain concept (in an issue title, a refactor proposal,
-a hypothesis, a test name), use the term as defined in `CONTEXT.md`. Don't drift
-to synonyms the glossary explicitly avoids.
+When your output names a domain concept (in an issue title, a refactor
+proposal, a hypothesis, a test name), use the term as defined in `CONTEXT.md`.
+Don't drift to synonyms the glossary explicitly avoids.
 
-Until `CONTEXT.md` exists, `specs/CONVENTIONS.md` holds the vocabulary
-rules: one entry read out of the target's ring is a **record**, one thing
-written into a trace is an **event**, an interpreter is identified by its
-**iid**, an interval whose records never reached gcmon is a **loss window**, and
-a `Processes`-track slice is a **span**.
+Until `CONTEXT.md` exists, `specs/CONVENTIONS.md` holds the vocabulary rules:
+one entry read out of the target's ring is a **record**, one thing written
+into a trace is an **event**, an interpreter is identified by its **iid**, an
+interval whose records never reached gcmon is a **loss window**, and a
+`Processes`-track slice is a **span**.
 
 If the concept you need isn't in the glossary yet, that's a signal: either
-you're inventing language the project doesn't use (reconsider) or there's a real
-gap (note it for `/domain-modeling`).
+you're inventing language the project doesn't use (reconsider) or there's a
+real gap (note it for `/domain-modeling`).
 
 ## Flag ADR conflicts
 

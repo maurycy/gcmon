@@ -1,39 +1,41 @@
 # Statistics
 
-Use `--stats` to display a statistics table at the end of monitoring. The table
-reports GC pause durations (p50, p90, p95, p99) and counts per generation, in a
-`Total` block for the whole run, with one block per interpreter under it if you
-ask for them.
+Use `--stats` to display a statistics table at the end of monitoring. The
+table reports GC pause durations (p50, p90, p95, p99) and counts per
+generation, in a `Total` block for the whole run, with one block per
+interpreter under it if you ask for them.
 
-The flag takes the view as a required value. `--stats=total` prints the run-wide
-`Total` block, `Read Time` and the footer, and `--stats=full` adds one block per
-interpreter. [CLI usage](cli.md#--stats) lists every word the flag and
-`GCMON_STATS` accept, including the ones asking for no table.
+The flag takes the view as a required value. `--stats=total` prints the
+run-wide `Total` block, `Read Time` and the footer, and `--stats=full` adds
+one block per interpreter. [CLI usage](cli.md#--stats) lists every word the
+flag and `GCMON_STATS` accept, including the ones asking for no table.
 
-**On a single-interpreter run `--stats=total` costs you nothing.** The block it
-drops, `12345:0`, repeats the `Total` block above it line for line. Reach for
-`--stats=full` on a target running sub-interpreters or a tree of processes,
-where the per-interpreter blocks say which interpreter carried the pause time.
+**On a single-interpreter run `--stats=total` costs you nothing.** The block
+it drops, `12345:0`, repeats the `Total` block above it line for line. Reach
+for `--stats=full` on a target running sub-interpreters or a tree of
+processes, where the per-interpreter blocks say which interpreter carried the
+pause time.
 
 Read it as: **P99 is your tail latency** (1 in 100 pauses is at least this
 long), **Sum divided by the monitoring wall time gives the share of the
 monitored window spent in GC**, and **Count and Avg show how many pauses there
-were and how long a typical one took**. A P99 GC pause that exceeds your request
-SLO is a good starting point for tuning.
+were and how long a typical one took**. A P99 GC pause that exceeds your
+request SLO is a good starting point for tuning.
 
-The last row, `Read Time`, is monitor-side cost rather than target-process cost:
-it measures how long each read of a target's GC stats took, recorded once per
-successful poll of every monitored PID and aggregated into a single row; with
-child processes its `Count` is polls × PIDs, and there is no per-PID breakdown.
+The last row, `Read Time`, is monitor-side cost rather than target-process
+cost: it measures how long each read of a target's GC stats took, recorded
+once per successful poll of every monitored PID and aggregated into a single
+row; with child processes its `Count` is polls × PIDs, and there is no per-PID
+breakdown.
 
 The first read of a process has to locate its GC state before it can read it,
 which costs far more than the read itself: one outlier per monitored process,
 charged to this row. That is why `Avg` sits above `P50` here, while the
 percentiles describe the ordinary reads.
 
-Use it to sanity-check `--rate`: a mean `Read Time` approaching `--rate` means a
-tick is close to outlasting its own position on the schedule, and the summary's
-tick counts say whether it did. See
+Use it to sanity-check `--rate`: a mean `Read Time` approaching `--rate` means
+a tick is close to outlasting its own position on the schedule, and the
+summary's tick counts say whether it did. See
 [How gcmon reads a process](monitoring.md#polling).
 
 ## Example Output
@@ -74,20 +76,20 @@ process has an interpreter 0, so an ordinary run reads `12345:0`.
 An operating system hands the same pid out again once the process holding it
 has gone, and a long run watching a tree of short-lived workers will see that.
 Each process that held the pid gets a block, and the ones after the first say
-which they are: `12345:0#2` is the second process to run under pid 12345. Their
-counts, their coverage and their history stay apart.
+which they are: `12345:0#2` is the second process to run under pid 12345.
+Their counts, their coverage and their history stay apart.
 
 ## Three intervals, and which one a cell reports
 
 A target's collector can run faster than gcmon reads the records it writes, so
 some GC runs never reach the table. See
-[How gcmon reads a process](monitoring.md). Every number below describes one of
-three intervals:
+[How gcmon reads a process](monitoring.md). Every number below describes one
+of three intervals:
 
 - **Sampled**: the records gcmon read. `Avg` and every percentile are sampled.
 - **Exact, over the observed span**: every GC run between the first and last
-  record gcmon saw, including those whose records never reached it. `Count` and
-  `Sum` report this, reconstructed from the target's cumulative counters.
+  record gcmon saw, including those whose records never reached it. `Count`
+  and `Sum` report this, reconstructed from the target's cumulative counters.
 - **Lifetime totals**: everything an interpreter has collected since it
   started, monitored window included. They appear in the footer under the
   table, and as `pause_gen_N_lifetime_*` in [pyperf metadata](pyperf.md). They
@@ -98,9 +100,9 @@ Always write the qualifier: bare *lifetime* means a process's span on the
 `Processes` track ([ADR-0011](adr/0011-process-lifetime-and-ordering.md)), a
 wall-clock interval.
 
-The observed span starts at the first record gcmon read. gcmon cannot tell "ran
-before we attached" from "lost", so an earlier run falls outside the span and
-counts as neither.
+The observed span starts at the first record gcmon read. gcmon cannot tell
+"ran before we attached" from "lost", so an earlier run falls outside the span
+and counts as neither.
 
 ## `Count` and `Sum` cells: `sampled/exact`
 
@@ -111,13 +113,14 @@ Count           Sum
 42/210          55.795/240.595
 ```
 
-gcmon read 42 gen-0 pauses totalling 55.795 ms. 210 gen-0 runs finished in that
-window, taking 240.595 ms. A cell carries one number when nothing was lost.
+gcmon read 42 gen-0 pauses totalling 55.795 ms. 210 gen-0 runs finished in
+that window, taking 240.595 ms. A cell carries one number when nothing was
+lost.
 
 Sub-phase rows (`GC Mark Alive`, `GC Deduce Unreachable`, `GC Delete Garbage`,
-…) mark their second number with a leading `~`: `42/~210`. CPython accumulates a
-total for the whole pause only, so a sub-phase has no exact counterpart. Those
-are estimates, the sampled value scaled by `F`.
+…) mark their second number with a leading `~`: `42/~210`. CPython accumulates
+a total for the whole pause only, so a sub-phase has no exact counterpart.
+Those are estimates, the sampled value scaled by `F`.
 
 ## The `Cov` and `F` columns
 
@@ -127,8 +130,8 @@ four out of five records in that row never reached a poll. It never rounds to
 `<100.0%`.
 
 **`F`** is the multiplier taking a sampled pause sum to the exact one,
-`exact_sum ÷ sampled_sum`. It scales the sub-phase rows, and prints `>1.000` for
-the same reason.
+`exact_sum ÷ sampled_sum`. It scales the sub-phase rows, and prints `>1.000`
+for the same reason.
 
 Both are blank on rows with no generation, such as `Read Time`.
 
@@ -144,21 +147,21 @@ Polling faster may observe more, but it will not lift `Cov` to 100%;
 
 `P50` through `P99` describe the records gcmon read rather than every run that
 happened, and the difference skews one way. A long run delays the next one, so
-its record sits in the ring slot for longer and is likelier to survive until the
-next poll. Long pauses are over-represented among the survivors, so **the
+its record sits in the ring slot for longer and is likelier to survive until
+the next poll. Long pauses are over-represented among the survivors, so **the
 reported percentiles read high**, the more so the lower `Cov` is.
 
 `Total`'s percentiles mix one more thing: every interpreter and every process
 the run watched. The ring rows below keep those apart, so read the shape off
 one of them.
 
-`F` does not fix this. It is a ratio of two totals, so applying it to a quantile
-would assume the sampled and unsampled pauses share a shape, which is what the
-bias denies. gcmon reports the quantiles it measured instead. On a low-`Cov`
-row, trust the counts and sums and distrust the shape.
+`F` does not fix this. It is a ratio of two totals, so applying it to a
+quantile would assume the sampled and unsampled pauses share a shape, which is
+what the bias denies. gcmon reports the quantiles it measured instead. On a
+low-`Cov` row, trust the counts and sums and distrust the shape.
 
-The trace draws the intervals the missing records fell in, on a `GC Loss` track.
-See [output formats](formats.md#gc-loss-slices).
+The trace draws the intervals the missing records fell in, on a `GC Loss`
+track. See [output formats](formats.md#gc-loss-slices).
 
 ## The notes under the table
 
@@ -184,8 +187,9 @@ anything was lost, listing only the generations that lost something.
 ```
 
 The third interval above. It changes no cell in the table. The counts say what
-the figure folded: three interpreters that started at different moments, in two
-processes. A run watching one interpreter reads `1 interpreter in 1 process`.
+the figure folded: three interpreters that started at different moments, in
+two processes. A run watching one interpreter reads
+`1 interpreter in 1 process`.
 
 **3. Rings with no row.** `--stats=full` only.
 

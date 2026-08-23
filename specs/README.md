@@ -1,17 +1,20 @@
 # Specs
 
-One file per unit of *forward-looking* work: identified, understood and specified, but not yet
-built. A spec states the problem, the evidence, the proposed change, and the seam you will test
-it through. It does not record a decision.
+One file per unit of *forward-looking* work: identified, understood and
+specified, but not yet built. A spec states the problem, the evidence, the
+proposed change, and the seam you will test it through. It does not record a
+decision.
 
-It complements [`docs/adr/`](../docs/adr/README.md), which records decisions already taken and is
-the authority on why the design looks as it does. If a spec here contradicts an ADR, assume the
-spec is wrong.
+It complements [`docs/adr/`](../docs/adr/README.md), which records decisions
+already taken and is the authority on why the design looks as it does. If a
+spec here contradicts an ADR, assume the spec is wrong.
 
 This file holds the open set and the order to take it in. The other two:
 
-- [CONVENTIONS.md](CONVENTIONS.md): how to write a spec, the templates, how to retire one.
-- [RETIRED.md](RETIRED.md): every number that no longer has a file, and what became of it.
+- [CONVENTIONS.md](CONVENTIONS.md): how to write a spec, the templates, how to
+  retire one.
+- [RETIRED.md](RETIRED.md): every number that no longer has a file, and what
+  became of it.
 
 ## Open specs
 
@@ -37,8 +40,8 @@ This file holds the open set and the order to take it in. The other two:
 | [0054](0054-macos-attachment-leaks-a-mach-task-port.md) | Bug (availability) | S | On macOS every attachment costs gcmon a Mach port name that nothing gives back; CPython's cleanup has a Windows arm and a Linux arm and no Apple one |
 | [0058](0058-write-the-batches-with-zstd.md) | Feature (efficiency) | S | **Blocked on a perfetto release.** zstd at its default level writes a trace 12-14% smaller than the deflate gcmon writes, and writes it faster; the field landed in Perfetto v58 and the Python package is still on v57.2 |
 
-Every row here has a file. A missing number either retired or never became one;
-[RETIRED.md](RETIRED.md) says which.
+Every row here has a file. A missing number either retired or never became
+one; [RETIRED.md](RETIRED.md) says which.
 
 ## Suggested order
 
@@ -59,20 +62,22 @@ Every row here has a file. A missing number either retired or never became one;
 | 0020 | |
 | 0051 | Unblocked: 0039 landed, and `StreamingStats` is in the module it will keep |
 
-Rows run in order, top to bottom. "Constrained" means the table below forces the position. A blank
-cell means no recorded reason, so that row can move.
+Rows run in order, top to bottom. "Constrained" means the table below forces
+the position. A blank cell means no recorded reason, so that row can move.
 
 **Not in the run**, which is every other row in the index:
 
 - **0024** is the owner's to file, and depends on nothing here.
-- **0033** wants a real capture in front of you before anyone can judge it worth a fourth row.
-- **0044** waits on CPython synchronizing the ring. Its section 4 states the one measurement that would
-  put it back in play sooner.
-- **0054** was found in CPython's source and not in a run. Nobody should size it until the ports have
-  been counted on a Mac.
-- **0058** waits on the `perfetto` package shipping a v58 trace processor. Until it does, the
-  field number has no generated descriptor to be checked against and CI would read every trace it
-  wrote as empty. Its section 4.5 says what to watch for.
+- **0033** wants a real capture in front of you before anyone can judge it
+  worth a fourth row.
+- **0044** waits on CPython synchronizing the ring. Its section 4 states the
+  one measurement that would put it back in play sooner.
+- **0054** was found in CPython's source and not in a run. Nobody should size
+  it until the ports have been counted on a Mac.
+- **0058** waits on the `perfetto` package shipping a v58 trace processor.
+  Until it does, the field number has no generated descriptor to be checked
+  against and CI would read every trace it wrote as empty. Its section 4.5
+  says what to watch for.
 
 **The only ordering constraints:**
 

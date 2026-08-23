@@ -14,9 +14,9 @@ A trace carries these, on one track per interpreter:
 
 - **`GC Pause(gen)` slices**, one per GC run gcmon read, carrying that run's
   counters as args.
-- **Sub-step slices** nested inside a pause: Mark Alive, Fill increment, Deduce
-  Unreachable, Handle Weakrefs Callbacks, Finalize Garbage, Handle Resurrected,
-  Clear Weakrefs, Delete Garbage.
+- **Sub-step slices** nested inside a pause: Mark Alive, Fill increment,
+  Deduce Unreachable, Handle Weakrefs Callbacks, Finalize Garbage, Handle
+  Resurrected, Clear Weakrefs, Delete Garbage.
 - **Counter tracks** per generation, `G{gen}`, carrying `collected`,
   `candidates`, `duration` and `uncollectable`, with `heap_size` as a
   process-level counter beside them.
@@ -24,8 +24,8 @@ A trace carries these, on one track per interpreter:
   `G0 collected`, `G1 collected` and `G2 collected` line up.
 - **`GC Loss` track**: one row per interpreter, `GC Loss {iid}`, under that
   process's own track; see [GC Loss slices](#gc-loss-slices).
-- **`rss` counter** per PID under `--rss`, in bytes, sampled at `--rss-interval`
-  (default 1s).
+- **`rss` counter** per PID under `--rss`, in bytes, sampled at
+  `--rss-interval` (default 1s).
 - **`Processes` track**: a minimap of the session, one slice per monitored
   process, so these join to pids one-to-one. Filter on the track name
   `Processes` in SQL. **Read a process's span from the `real_start_ts` and
@@ -37,12 +37,12 @@ A trace carries these, on one track per interpreter:
 - **Process command lines**: with the [`[cmdline]`
   extra](rss.md#the-cmdline-extra); see
   [Process command lines](#process-command-lines).
-- **`Start Process` marker**: a zero-duration instant on each process track, at
-  that process's first event. Filter it out when enumerating slices.
+- **`Start Process` marker**: a zero-duration instant on each process track,
+  at that process's first event. Filter it out when enumerating slices.
 
-> **Note:** sub-step slices (Mark Alive, Fill increment, Deduce Unreachable, …)
-> need a CPython build carrying the extra GC instrumentation. A standard build
-> gives the top-level `GC Pause` slices and the counters.
+> **Note:** sub-step slices (Mark Alive, Fill increment, Deduce Unreachable,
+> …) need a CPython build carrying the extra GC instrumentation. A standard
+> build gives the top-level `GC Pause` slices and the counters.
 
 ### GC Loss slices
 
@@ -55,12 +55,12 @@ consecutive spans meet without overlapping and the row reads as a sequence.
 Every GC run a span accounts for finished between those two reads, and nothing
 narrows that further.
 
-**Read the magnitude from the args, not the width.** One lost 5 ms run can draw
-a 130 ms bar.
+**Read the magnitude from the args, not the width.** One lost 5 ms run can
+draw a 130 ms bar.
 
 The name lists the generations that lost records, `GC Loss(0,2)`, so the row
-says which went blind before you click anything, and each combination keeps its
-own colour.
+says which went blind before you click anything, and each combination keeps
+its own colour.
 
 Each slice carries these totals for the whole interval:
 
@@ -86,8 +86,8 @@ Then one group per generation that collected or lost anything, named `gen0`,
 A generation that came through whole still gets a group with what it observed,
 so the groups add up to the totals above them. In SQL the trace processor
 flattens a group by joining the names with a dot, so `gen1`'s count is
-`args.debug.gen1.lost_count`. A JSONL capture carries the same numbers under the
-same names; see [Loss records](#loss-records).
+`args.debug.gen1.lost_count`. A JSONL capture carries the same numbers under
+the same names; see [Loss records](#loss-records).
 
 **The counts are exact**, so a group reading `lost_count = 19` also reads
 `413..431`. Between the first and last record gcmon read on a generation's
@@ -100,8 +100,8 @@ for most of every tick. Lower `--rate` or a calmer workload thins it out. See
 
 ### Process command lines
 
-gcmon writes each command line to **three** places, no one of which serves both
-the UI and SQL:
+gcmon writes each command line to **three** places, no one of which serves
+both the UI and SQL:
 
 | Where | Form | Visible in the UI | Queryable from SQL |
 |---|---|---|---|
@@ -112,9 +112,9 @@ the UI and SQL:
 Queries for the latter two are in
 [Trace Analysis with Perfetto SQL](perfetto-sql.md#example-querying-process-command-lines).
 
-They need the [`[cmdline]` extra](rss.md#the-cmdline-extra). Without it, or when
-the process has already exited, gcmon writes no command line and says nothing
-about it. The trace stays valid.
+They need the [`[cmdline]` extra](rss.md#the-cmdline-extra). Without it, or
+when the process has already exited, gcmon writes no command line and says
+nothing about it. The trace stays valid.
 
 **A `combine` run reads whatever holds that pid today**, which for a dead pid
 is nothing. Read a command line on a combined trace as the pid's current
@@ -148,8 +148,8 @@ terminal), each line is a JSON object holding one GC record:
 | `deleted_garbage_count` | Objects this run deleted | Custom build |
 | `clear_weakrefs_count` | Weakrefs this run cleared | Custom build |
 
-> **Note:** fields marked **Custom build** need the instrumented CPython build,
-> as the [sub-step slices](#perfetto-output) do.
+> **Note:** fields marked **Custom build** need the instrumented CPython
+> build, as the [sub-step slices](#perfetto-output) do.
 
 ### Loss records
 
@@ -178,10 +178,10 @@ and in each `gens` entry:
 | `lost_count` | Records of it gcmon missed. Zero for a generation that lost nothing |
 | `lost_pause_ns` | Pause time the runs behind those records took, in nanoseconds |
 
-An entry and the `gen{N}` group on the slice drawn from it hold the same numbers
-under the same names. `observed_count`, `lost_count` and `lost_pause_ns` carry
-across unchanged; three things are written differently on the slice, because a
-slice is read by eye:
+An entry and the `gen{N}` group on the slice drawn from it hold the same
+numbers under the same names. `observed_count`, `lost_count` and
+`lost_pause_ns` carry across unchanged; three things are written differently
+on the slice, because a slice is read by eye:
 
 | `gens` entry | `gen{N}` group |
 |---|---|
@@ -189,6 +189,6 @@ slice is read by eye:
 | `lost_from` with `lost_count` | `lost_collections`, one field, both ends included |
 | `lost_pause_ns` | `lost_pause` beside it, the same total as text |
 
-Tell the record types apart by field presence: a GC record has `collections`, a
-loss record has `gens`, an instant event has `type`. Line order carries no
+Tell the record types apart by field presence: a GC record has `collections`,
+a loss record has `gens`, an instant event has `type`. Line order carries no
 meaning.

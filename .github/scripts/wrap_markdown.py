@@ -1,13 +1,26 @@
 """Rewrap the prose in a Markdown file, leaving everything else byte for byte.
 
-    python .github/scripts/wrap_markdown.py --width 80 docs/formats.md
+    python .github/scripts/wrap_markdown.py --width 78 docs/formats.md
 
 Verbatim: fenced blocks, tables, headings and HTML. Rewrapped: paragraphs,
-block quotes, and list items with their continuation lines.
+block quotes, and list items with their continuation lines. A bare ``>`` ends
+the quoted paragraph it follows, the way a blank line ends an unquoted one.
 
-A link reads badly split over two lines, and stops being greppable, so the
-spaces inside ``[text](target)`` and inside a short parenthesised list are held
-together while the wrapping happens.
+A link, an inline code span and a short parenthesised list read badly split
+over two lines, and stop being greppable, so the spaces inside them are held
+together while the wrapping happens, which moves the whole of one down to the
+next line rather than break it. A code span or a list too long to fit a line
+of its own is left breakable, since holding it would only overflow the line
+it landed on. A link is held whichever way, because a broken link costs more
+than the overflow it saves.
+
+A ``|`` and an ordinal are held to the word before them for a different
+reason: a continuation line that opens with one reads as a table row or a
+list item, and the next pass would wrap it as one.
+
+A definition list is written as a label in bold or italic, a colon, and the
+text under it, so a line starting on one of those labels keeps the break
+before it. A line that is only the label is left where it stands.
 
 An indented code block and a list continuation line look alike, and rewrapping
 one as the other would turn code into prose. A file carrying an indented block
@@ -31,13 +44,25 @@ LIST_ITEM = re.compile(r"^(\s*(?:[-*+]|\d+\.)\s+)(.*)$")
 QUOTE = re.compile(r"^(\s*>\s*)(.*)$")
 VERBATIM = re.compile(r"^(\s*\||#{1,6}\s|<)")
 INDENTED = re.compile(r"^ {4,}\S")
+LABEL = re.compile(r"^(?:\*\*[^*]+\*\*|_[^_]+_):")
 # Spaces that must not become a line break.
-GLUE = re.compile(r"\[[^\]]*\]\([^)]*\)|\((?:[^()\s]+[,;]\s+){1,4}[^()\s]+\)")
+LINK = re.compile(r"\[[^\]]*\]\([^)]*\)")
+# Held only while the whole of it still fits a line: a code span, a list.
+FITTED = re.compile(r"`[^`]+`|\((?:[^()\s]+[,;]\s+){1,4}[^()\s]+\)")
+# Joined to the word before, so no wrapped line opens like a table or a list.
+MARKER = re.compile(r"(?<=\S) (?=\||\d+\.(?:\s|$))")
+
+
+def _hold(text: str) -> str:
+    return text.replace(" ", "\0")
 
 
 def _wrap(lines: list[str], first: str, rest: str, width: int) -> list[str]:
     joined = " ".join(line.strip() for line in lines)
-    glued = GLUE.sub(lambda m: m.group(0).replace(" ", "\0"), joined)
+    room = width - len(rest)
+    glued = LINK.sub(lambda m: _hold(m.group(0)), joined)
+    glued = FITTED.sub(lambda m: _hold(m.group(0)) if len(m.group(0)) <= room else m.group(0), glued)
+    glued = MARKER.sub("\0", glued)
     wrapped = textwrap.wrap(
         glued,
         width=width,
@@ -75,7 +100,17 @@ def rewrap(text: str, width: int) -> str:
         elif VERBATIM.match(line) and not para:
             flush()
             out.append(line)
+        elif LABEL.match(line):
+            flush()
+            if len(line.split()) == 1:
+                out.append(line.rstrip())
+            else:
+                para.append(line)
         elif quote := QUOTE.match(line):
+            if not quote.group(2).strip():
+                flush()
+                out.append(quote.group(1).rstrip())
+                continue
             if not para:
                 first = rest = quote.group(1)
             para.append(quote.group(2))
@@ -155,7 +190,7 @@ def process(path: Path, width: int, check: bool) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="+", type=Path)
-    parser.add_argument("--width", type=int, default=80)
+    parser.add_argument("--width", type=int, default=78)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     ok = [process(path, args.width, args.check) for path in args.paths]

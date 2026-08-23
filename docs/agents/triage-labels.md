@@ -11,8 +11,8 @@ roles to the actual label strings used in this repo's issue tracker.
 | `ready-for-human`          | `ready-for-human`    | Requires human implementation            |
 | `wontfix`                  | `wontfix`            | Will not be actioned                     |
 
-When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the
-corresponding label string from this table.
+When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use
+the corresponding label string from this table.
 
 ## How a label is applied here
 
@@ -30,4 +30,5 @@ One status per file. Changing a label means editing that line, and the file's
 history in the working copy is the only record of the change; `.scratch/` is
 gitignored.
 
-Edit the right-hand column above to match whatever vocabulary you actually use.
+Edit the right-hand column above to match whatever vocabulary you actually
+use.

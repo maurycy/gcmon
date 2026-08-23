@@ -10,40 +10,46 @@ in circulation. `docs/adr/` records decisions and `specs/` records open work.
 ### How gcmon reaches a process
 
 **Attach**:
-What gcmon does once per pid before it can read that process at all: work out where the
-target's runtime lives and how its structures are laid out. Held for as long as gcmon keeps
-reading that pid, given up when gcmon sees the pid go, and done again from scratch if a
-process comes back on it. Costs far more than a read does, which is why it is worth naming
-separately from the reads it makes possible.
-_Avoid_: connect, open, handle (that is one platform's mechanism for it), session
+What gcmon does once per pid before it can read that process at all: work out
+where the target's runtime lives and how its structures are laid out. Held for
+as long as gcmon keeps reading that pid, given up when gcmon sees the pid go,
+and done again from scratch if a process comes back on it. Costs far more than
+a read does, which is why it is worth naming separately from the reads it
+makes possible.
+_Avoid_: connect, open, handle (that is one platform's mechanism for it),
+session
 
 ### How often gcmon looks
 
 **Tick**:
-One pass of the monitoring loop. gcmon reads the clock once to stamp the pass, drops the pids that
-have left the tree, polls every pid still there, samples RSS, and answers one report. The unit the
-**rate** is expressed in, and the unit an **overrun** is counted in.
+One pass of the monitoring loop. gcmon reads the clock once to stamp the pass,
+drops the pids that have left the tree, polls every pid still there, samples
+RSS, and answers one report. The unit the **rate** is expressed in, and the
+unit an **overrun** is counted in.
 _Avoid_: poll (that is one pid's read, below), iteration, cycle, round, sweep
 
 **Poll**:
-One pid's read inside a tick: one look at that process's rings, bounded by its own two instants. A
-tick over a tree of ten is ten polls, each with its own pair, which is why the instant a poll
-starts is the thing that bounds a **loss window** rather than the instant that stamps the tick.
+One pid's read inside a tick: one look at that process's rings, bounded by its
+own two instants. A tick over a tree of ten is ten polls, each with its own
+pair, which is why the instant a poll starts is the thing that bounds a **loss
+window** rather than the instant that stamps the tick.
 _Avoid_: tick (that is the whole pass), sample, scan, query
 
 **Rate**:
-The interval an operator asks for between one tick's start and the next, in seconds, spelled
-`--rate`. A duration, despite what the word usually means: gcmon expresses nothing in Hz. Separate
-from what a tick costs, which the target's size decides and nobody requests.
-_Avoid_: frequency, Hz, poll rate (reads as the cost of a poll), delay, sleep, period (fine in
-prose about the arithmetic, not as the name)
+The interval an operator asks for between one tick's start and the next, in
+seconds, spelled `--rate`. A duration, despite what the word usually means:
+gcmon expresses nothing in Hz. Separate from what a tick costs, which the
+target's size decides and nobody requests.
+_Avoid_: frequency, Hz, poll rate (reads as the cost of a poll), delay, sleep,
+period (fine in prose about the arithmetic, not as the name)
 
 **Overrun**:
-What a tick does when it outlasts the rate, leaving its successor no time to start when it was
-due. gcmon never makes up a tick it missed, so a run that overruns polls less often than asked and
-reads less of the target than the rate implies. Said of one tick and of a whole run alike.
-_Avoid_: saturation, lag, backlog, drift, slip, skipped slot (a **slot** is a position in a ring
-buffer and nothing else)
+What a tick does when it outlasts the rate, leaving its successor no time to
+start when it was due. gcmon never makes up a tick it missed, so a run that
+overruns polls less often than asked and reads less of the target than the
+rate implies. Said of one tick and of a whole run alike.
+_Avoid_: saturation, lag, backlog, drift, slip, skipped slot (a **slot** is a
+position in a ring buffer and nothing else)
 
 ### What the target writes, what gcmon writes
 
@@ -58,8 +64,8 @@ _Avoid_: record (for the trace side), slice (that is one shape of event)
 
 **Batch**:
 The events one flush writes, compressed into a single packet in the trace. It
-is the unit a killed run loses: whole batches reach the file, and the one being
-written when the run died does not.
+is the unit a killed run loses: whole batches reach the file, and the one
+being written when the run died does not.
 _Avoid_: chunk, block, flush (that is the act, not what it wrote)
 
 **Trace**:
@@ -72,11 +78,10 @@ _Avoid_: timeline, profile, output file
 A slice on the `Processes` track, bounding a process's observed lifetime.
 _Avoid_: lifetime (unqualified; see below), duration, extent
 
-**Intern id**:
-The number a packet writes in place of a string the trace has already spelled
-out: a slice name, a category, or the name of a debug annotation. Perfetto
-spells it `iid` on the wire and gcmon does not, because an **iid** here is an
-interpreter.
+**Intern id**: The number a packet writes in place of a string the trace has
+already spelled out: a slice name, a category, or the name of a debug
+annotation. Perfetto spells it `iid` on the wire and gcmon does not, because
+an **iid** here is an interpreter.
 _Avoid_: iid (that is the interpreter), string id, symbol, handle, reference
 
 ### The things gcmon counts
@@ -89,10 +94,10 @@ outlives the process holding it, so what a run keeps to the end carries the
 _Avoid_: buffer, per-generation stats, slot array
 
 **Interpreter**:
-One CPython interpreter inside a process, identified by its **iid**. Each keeps
-its own collector, its own rings and its own cumulative counters, and gcmon
-publishes the iid as a Perfetto `tid`. Perfetto's own `iid` on an interned
-string is a different thing; see **Intern id**.
+One CPython interpreter inside a process, identified by its **iid**. Each
+keeps its own collector, its own rings and its own cumulative counters, and
+gcmon publishes the iid as a Perfetto `tid`. Perfetto's own `iid` on an
+interned string is a different thing; see **Intern id**.
 _Avoid_: subinterpreter (an iid of 0 is an interpreter too), thread, isolate
 
 **Generation**:
@@ -108,20 +113,20 @@ _Avoid_: section, group, table (the whole thing is the table), totals (the
 per-ring `PauseTotals` and `LossTotals` are companion figures on a row, and
 lifetime totals are an interval; neither is a block)
 
-**Pid epoch**:
-Which process held a pid, counting from 1 and advancing when gcmon sees one
-exit. Spelled `pid_epoch`, and part of every key a run keeps to the end, so a
-successor on a recycled pid never writes into its predecessor's figures.
+**Pid epoch**: Which process held a pid, counting from 1 and advancing when
+gcmon sees one exit. Spelled `pid_epoch`, and part of every key a run keeps to
+the end, so a successor on a recycled pid never writes into its predecessor's
+figures.
 _Avoid_: index (that is CPython's write cursor into a ring buffer, and nothing
 else), generation (the collector owns it), epoch (bare, reads as a point in
 time)
 
-**Loss window**:
-An interval whose records were overwritten before any poll read them, bounded
-by the two poll instants either side of it. In a name, **loss** is the window
-itself and **lost** is what was in it: `loss_tid` names the track it is drawn
-on, `lost_count` the records it swallowed. The window has a width of its own,
-so a `loss_duration` and a `lost_pause_ns` are different numbers.
+**Loss window**: An interval whose records were overwritten before any poll
+read them, bounded by the two poll instants either side of it. In a name,
+**loss** is the window itself and **lost** is what was in it: `loss_tid` names
+the track it is drawn on, `lost_count` the records it swallowed. The window
+has a width of its own, so a `loss_duration` and a `lost_pause_ns` are
+different numbers.
 _Avoid_: missing data, dropped events, gap (in output; fine in prose about the
 arithmetic), `loss_count` for a count of records
 
@@ -131,31 +136,30 @@ Every figure gcmon prints answers to one of these, and the two-number cells in
 the `--stats` table are there to say which.
 
 **Sampled**:
-The records gcmon read. Percentiles and averages are always this, and they read
-high: a long run delays the next one, so its record survives in the ring more
-often than a short one's.
+The records gcmon read. Percentiles and averages are always this, and they
+read high: a long run delays the next one, so its record survives in the ring
+more often than a short one's.
 _Avoid_: observed (means the span, below), measured, actual
 
 **Exact**:
-Every GC run between the first and last record gcmon read on a ring, whether or
-not its record survived to be read. Reconstructed from the target's cumulative
-counters, and exact in the arithmetic sense.
+Every GC run between the first and last record gcmon read on a ring, whether
+or not its record survived to be read. Reconstructed from the target's
+cumulative counters, and exact in the arithmetic sense.
 _Avoid_: true, real, total
 
-**Lifetime totals**:
-Everything one interpreter has collected since it started, monitored window
-included. Always written with the qualifier: bare **lifetime** means the
-`Processes`-track span above. The source names the counters underneath rather
-than the interval (`CumulativeCounters`, `StreamingStats.observe_cumulative`,
-`cumulative_totals_by_gen`), so the bare word is left to the span everywhere
-outside this prose and the `pause_gen_N_lifetime_*` pyperf keys.
+**Lifetime totals**: Everything one interpreter has collected since it
+started, monitored window included. Always written with the qualifier: bare
+**lifetime** means the `Processes`-track span above. The source names the
+counters underneath rather than the interval (`CumulativeCounters`,
+`StreamingStats.observe_cumulative`, `cumulative_totals_by_gen`), so the bare
+word is left to the span everywhere outside this prose and the
+`pause_gen_N_lifetime_*` pyperf keys.
 _Avoid_: lifetime (bare), cumulative total (the counters underneath are
 cumulative, the interval is not), since-start count
 
-**Observed span**:
-The interval from the first record gcmon read on a ring to the last. What
-happened before it counts as neither sampled nor lost, because gcmon cannot
-tell "ran before we attached" from "was overwritten".
+**Observed span**: The interval from the first record gcmon read on a ring to
+the last. What happened before it counts as neither sampled nor lost, because
+gcmon cannot tell "ran before we attached" from "was overwritten".
 _Avoid_: monitoring window (that is wall time, and wider), capture
 
 ### How complete a capture is
@@ -165,7 +169,6 @@ Sampled count over exact count, in `[0, 1]`. Printed as the `Cov` column and
 as a percentage in the footer and the advisory.
 _Avoid_: completeness, hit rate, fidelity
 
-**Scale factor**:
-The multiplier taking a sampled pause sum to the exact one. Printed as the `F`
-column. It corrects a sum, never a percentile.
+**Scale factor**: The multiplier taking a sampled pause sum to the exact one.
+Printed as the `F` column. It corrects a sum, never a percentile.
 _Avoid_: correction factor, weight, extrapolation

@@ -9,8 +9,7 @@ count is `debug.gen0.lost_count`.
 
 ## Accessing the SQL Interface
 
-1. Open your `.pftrace` file in
-   [Perfetto UI](https://ui.perfetto.dev)
+1. Open your `.pftrace` file in [Perfetto UI](https://ui.perfetto.dev)
 2. Press `Ctrl+Space` (or `Cmd+Space` on Mac) to open the SQL query panel
 3. Enter your SQL query and press `Run`
 
@@ -115,20 +114,20 @@ ORDER BY s.ts
 Both return nothing when the extra is missing or gcmon could not read the
 command line. The rest of the trace still queries.
 
-**Do not read `dur` on this track as an observed duration.** Crossing spans cut
-each other short, sometimes to a microsecond. `s.dur` is what Perfetto could
-draw; `real_start_ts` and `real_end_ts` are what gcmon observed, and every slice
-carries them whether it was cut or not.
+**Do not read `dur` on this track as an observed duration.** Crossing spans
+cut each other short, sometimes to a microsecond. `s.dur` is what Perfetto
+could draw; `real_start_ts` and `real_end_ts` are what gcmon observed, and
+every slice carries them whether it was cut or not.
 
 Every monitored process gets exactly one slice, so these join to pids
 one-to-one, a process that never collected included. A `dur = 0` slice is one
 observed at a single instant, or cut down to nothing.
 
-Processes still alive when monitoring stops share an end timestamp and nest, and
-the trace processor closes at most **512** nested slices. Past that they return
-`dur = -1` with no diagnostic, so filter on `s.dur >= 0` if more than 512
-processes may have been running at the end. Compare spans only across traces
-captured the same way: `gcmon combine` spans cover GC activity alone.
+Processes still alive when monitoring stops share an end timestamp and nest,
+and the trace processor closes at most **512** nested slices. Past that they
+return `dur = -1` with no diagnostic, so filter on `s.dur >= 0` if more than
+512 processes may have been running at the end. Compare spans only across
+traces captured the same way: `gcmon combine` spans cover GC activity alone.
 
 ```sql
 -- Processes whose drawn duration is shorter than what gcmon observed

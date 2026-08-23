@@ -26,8 +26,8 @@ In pyperf metadata, with `N` the generation, 0 through 2:
 - `gc_pause_gen_N_sum` - total pause time, in milliseconds
 - `gc_pause_gen_N_count` - pauses counted
 - `gc_pause_count` - the same count over every generation and process
-- `gc_pause_gen_N_coverage` - the share of that generation's records gcmon read,
-  in `[0, 1]`
+- `gc_pause_gen_N_coverage` - the share of that generation's records gcmon
+  read, in `[0, 1]`
 - `gc_pause_gen_N_lifetime_count`, `gc_pause_gen_N_lifetime_sum` - runs and
   pause time since the *interpreter* started
 - `gc_heap_size_p99` - P99 across the per-process peak live object counts
@@ -46,14 +46,15 @@ slot for longer, where it is likelier to survive to the next poll.
 
 `gc_pause_gen_N_coverage` tells you how far to trust the `p99` beside it: at
 `1.0` it is the real distribution, at `0.2` it is the tail of a biased sample.
-See [Statistics](statistics.md#percentiles-are-sampled-and-read-high) for why no
-scale factor fixes a quantile.
+See [Statistics](statistics.md#percentiles-are-sampled-and-read-high) for why
+no scale factor fixes a quantile.
 
 ### The lifetime metrics are not benchmark-scoped
 
 `gc_pause_gen_N_lifetime_count` and `_lifetime_sum` cover the interpreter's
-whole history, including whatever ran before the hook attached. They answer what
-this process spent in GC. What this benchmark cost is a different question.
+whole history, including whatever ran before the hook attached. They answer
+what this process spent in GC. What this benchmark cost is a different
+question.
 
 Trend them the way you would trend `sum` and you measure how long each worker
 lived. Use `gc_pause_gen_N_sum` for the benchmark's own share.

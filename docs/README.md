@@ -1,9 +1,9 @@
 # gcmon documentation
 
 The [README](../README.md) covers what gcmon is, how it compares to the
-alternatives, what it cannot do, and how to get a first trace. These pages cover
-everything after that decision: how to drive the CLI, what comes out of it, and
-how to read the result.
+alternatives, what it cannot do, and how to get a first trace. These pages
+cover everything after that decision: how to drive the CLI, what comes out of
+it, and how to read the result.
 
 ## Using gcmon
 

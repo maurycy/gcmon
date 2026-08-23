@@ -1,8 +1,8 @@
 # Programmatic Control
 
-If you start your app with `gcmon run` or `gcmon monitor`, the control plane API
-lets you programmatically start, stop, and annotate GC monitoring from within
-your application.
+If you start your app with `gcmon run` or `gcmon monitor`, the control plane
+API lets you programmatically start, stop, and annotate GC monitoring from
+within your application.
 
 ## Import and Setup
 
@@ -56,8 +56,8 @@ correlate GC activity with application behavior.
   phases that aren't relevant to your analysis.
 - **Focus on specific phases**: Monitor only the critical sections of your
   application (e.g., request handling, batch processing).
-- **Correlate with application events**: Add custom markers to understand how GC
-  pauses relate to specific operations (database queries, API calls, etc.).
+- **Correlate with application events**: Add custom markers to understand how
+  GC pauses relate to specific operations (database queries, API calls, etc.).
 - **Dynamic control**: Enable/disable monitoring based on runtime conditions
   (e.g., only monitor during peak load).
 

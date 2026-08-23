@@ -15,8 +15,8 @@ What was chosen, stated flatly.
 
 ## Consequences
 
-The things this makes easy, the things it makes hard, and any constraint it puts on
-future maintainers.
+The things this makes easy, the things it makes hard, and any constraint it
+puts on future maintainers.
 
 ## Alternatives considered
 

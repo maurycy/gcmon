@@ -2,9 +2,10 @@
 
 gcmon collects a stream of GC records from a running process. Each time the
 collector finishes a run, CPython writes one record describing it: the
-generation, the start and stop times, what the run freed, the heap size, and the
-target's running totals. gcmon derives everything else it prints or draws from
-those records. Read them as they arrive, or save them and come back later.
+generation, the start and stop times, what the run freed, the heap size, and
+the target's running totals. gcmon derives everything else it prints or draws
+from those records. Read them as they arrive, or save them and come back
+later.
 
 gcmon sits outside the process it watches, injecting nothing and pausing
 nothing. It reads what CPython already wrote, so the target runs at full speed
@@ -16,28 +17,29 @@ CPython keeps one small fixed buffer per generation and writes each new record
 into it. gcmon reads the whole buffer on every poll.
 
 The buffer holds the newest few records and never blocks. When it is full,
-CPython drops the oldest record to make room, and nothing else describes the run
-it held.
+CPython drops the oldest record to make room, and nothing else describes the
+run it held.
 
 How many records it holds depends on the CPython version and build. A
-free-threaded build keeps one per generation, so only the newest survives to the
-next poll. gcmon reads that size off the first poll that returns records and
-keeps it for the session.
+free-threaded build keeps one per generation, so only the newest survives to
+the next poll. gcmon reads that size off the first poll that returns records
+and keeps it for the session.
 
 ## Polling
 
-`--rate` is the interval between the *starts* of two ticks, in seconds. One tick
-reads every monitored process once, and gcmon holds the interval whatever those
-reads cost. Watch a wide process tree and you still sample at the number you
-asked for.
+`--rate` is the interval between the *starts* of two ticks, in seconds. One
+tick reads every monitored process once, and gcmon holds the interval whatever
+those reads cost. Watch a wide process tree and you still sample at the number
+you asked for.
 
 A rate gcmon could never hold is refused at startup ([CLI Usage](cli.md)).
 
 A tick that outlasts its own position on the schedule is the exception. gcmon
-skips to the next position rather than making the missed ticks up: the interval
-degrades in whole multiples of `--rate` instead of tracking the size of the
-tree. The end-of-run summary reports how many ticks ran against how many were
-scheduled, which is how you tell a run that kept up from one that did not.
+skips to the next position rather than making the missed ticks up: the
+interval degrades in whole multiples of `--rate` instead of tracking the size
+of the tree. The end-of-run summary reports how many ticks ran against how
+many were scheduled, which is how you tell a run that kept up from one that
+did not.
 
 ## Records gcmon misses
 
@@ -46,21 +48,21 @@ poll reads them. At the default 0.1 s rate, a GC-heavy workload might lose
 records on most ticks.
 
 A shorter `--rate` narrows the gap without closing it, and only up to a point:
-once a tick costs more than the interval it was given, asking for a shorter one
-adds no ticks. The summary says when a run reached that point, and gcmon stops
-suggesting a smaller `--rate` when it has.
+once a tick costs more than the interval it was given, asking for a shorter
+one adds no ticks. The summary says when a run reached that point, and gcmon
+stops suggesting a smaller `--rate` when it has.
 
-A lost record takes its timestamps with it. The two polls around it still bound
-the run: a record goes missing between two consecutive reads, and nothing
-narrows that interval further.
+A lost record takes its timestamps with it. The two polls around it still
+bound the run: a record goes missing between two consecutive reads, and
+nothing narrows that interval further.
 
 ## What the counters recover
 
 For each generation CPython keeps two cumulative numbers: how many runs have
 finished, and how long they took together. Every record carries both as they
 stood at its own run. A dropped record takes nothing off either total, so the
-difference between two polls gives how many runs gcmon missed and what they cost
-together.
+difference between two polls gives how many runs gcmon missed and what they
+cost together.
 
 Three numbers in the stream come off those counters exactly:
 
@@ -68,24 +70,26 @@ Three numbers in the stream come off those counters exactly:
 - how many of them gcmon read
 - how much pause time the rest took
 
-The counters give totals and nothing else. gcmon cannot split a total back into
-the runs behind it, so averages and percentiles cover only the records it read.
+The counters give totals and nothing else. gcmon cannot split a total back
+into the runs behind it, so averages and percentiles cover only the records it
+read.
 
 ## Caveats
 
 **A process that starts and exits inside one interval is never seen.** gcmon
-lists the target's children once a tick and reads whatever that listing names. A
-worker whose whole life falls between two ticks leaves no records, no track and
-no row.
+lists the target's children once a tick and reads whatever that listing names.
+A worker whose whole life falls between two ticks leaves no records, no track
+and no row.
 
 **On Linux, a reissued pid can put two processes on one track.** The operating
 system is free to hand a dead worker's pid to a new process, and gcmon has no
-way to tell that it happened: records read afterwards belong to the new process
-and are drawn on the old one's track. Windows does not reissue a pid gcmon is
-attached to. macOS stops reading the moment the first process exits, and starts
-the second one afresh, so both give you two separate blocks instead of one
-blended track.
+way to tell that it happened: records read afterwards belong to the new
+process and are drawn on the old one's track. Windows does not reissue a pid
+gcmon is attached to. macOS stops reading the moment the first process exits,
+and starts the second one afresh, so both give you two separate blocks instead
+of one blended track.
 
-**A process gcmon is not allowed to read is left out quietly.** A child owned by
-another user is polled, refused, and dropped, and nothing says so at the default
-log level. Run with `-vv` if a process you expected is missing from the trace.
+**A process gcmon is not allowed to read is left out quietly.** A child owned
+by another user is polled, refused, and dropped, and nothing says so at the
+default log level. Run with `-vv` if a process you expected is missing from
+the trace.

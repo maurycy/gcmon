@@ -1,7 +1,7 @@
 # CLI Usage
 
-`gcmon` takes three subcommands: `monitor`, `run` and `combine`. Without one it
-monitors.
+`gcmon` takes three subcommands: `monitor`, `run` and `combine`. Without one
+it monitors.
 
 ## What you'll see
 
@@ -94,8 +94,8 @@ stops the run at startup.
 
 ## Environment Variables
 
-Each variable below sets a default for its flag, and a flag on the command line
-beats it. A value a variable cannot read falls back to the default. The
+Each variable below sets a default for its flag, and a flag on the command
+line beats it. A value a variable cannot read falls back to the default. The
 exception is `GCMON_STATS`, which stops the run.
 
 | Variable | Equivalent flag | Description | Default |
