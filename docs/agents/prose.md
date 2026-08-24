@@ -67,6 +67,18 @@ Links run from an ADR to a page, never back: a page names no ADR and no spec.
   *rather than*.
 - A literary phrase where a standard term exists. "Case and surrounding space
   are forgiven" is "case-insensitive, surrounding whitespace stripped".
+- The document justifying its own existence. "Worth recording because", "this
+  is worth spelling out since the obvious reading is that it was missed",
+  "written down so the next person to look finds it known". A statement earns
+  its place or gets cut, and a defence of keeping it is not the same thing as
+  earning it.
+- An intensifier or a hedge carrying no fact: *strictly*, *deliberately*,
+  *exactly*, *precisely*, *outright*, *quietly*, *for now*. Cut the word and
+  check the sentence still claims what it claimed.
+- The value a test asserts. The routing table sends the constraint to the
+  test, and the number it compares against goes with it. "The same ring
+  without the departure opens one" beats "emits a window of 297", which is a
+  fixture copied into prose and stale the moment the fixture changes.
 
 ## Mechanical
 

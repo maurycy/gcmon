@@ -27,6 +27,13 @@ record below.
 - **Date:** when the change shipped, not when you wrote the file. A record
   that has not shipped yet has no history to keep, so rewrite it in place
   rather than appending a note about what you changed.
+- **Sections:** Decision holds the rules, one to a bullet, each of which
+  something in the code obeys. Consequences holds what follows from them and
+  never restates one: "there is now one prune" is the decision, not a
+  consequence of it. Alternatives holds designs that were weighed and
+  rejected, not choices made inside the decision. "The argument is
+  keyword-only" belongs in Decision or nowhere, and listing it as an
+  alternative invents a debate that did not happen.
 - **Numbers:** the ones that are the decision belong in the record, meaning
   the defaults, thresholds and limits somebody chose, along with an
   illustration anyone can reproduce. A reading taken from one run does not: a
