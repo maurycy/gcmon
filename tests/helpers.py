@@ -6,6 +6,7 @@ import zlib
 from collections.abc import Callable, Iterator, Sequence, Set
 from contextlib import contextmanager
 from pathlib import Path
+from types import ModuleType
 from typing import override
 
 from perfetto.protos.perfetto.trace.perfetto_trace_pb2 import Trace, TracePacket
@@ -16,6 +17,15 @@ from gcmon.model.data import GCStatsInfo, GenLoss, LossMsg
 from gcmon.model.protocol import TGCStatsInfo, TInstantMsg, TLossMsg
 from gcmon.monitoring.events_reader import EventsReader
 from tests.perfetto_prebuilt import trace_processor_bin
+
+zstd: ModuleType | None
+try:
+    from compression import zstd
+except ImportError:
+    zstd = None
+
+HAS_LIBZSTD: bool = zstd is not None
+"""Whether this interpreter can read a zstd batch (ADR-0022)."""
 
 _JsonValue = int | float | str
 JsonlRecord = dict[str, _JsonValue]
@@ -370,16 +380,18 @@ def open_trace_processor(path: Path | str) -> Iterator[TraceProcessor]:
 def perfetto_packets(content: bytes) -> list[TracePacket]:
     """Every ``TracePacket`` in a serialized trace, in file order.
 
-    A packet gcmon wrote is deflated inside ``compressed_packets``, and a file
-    may mix those with plain ones. Read through Perfetto's own generated schema
-    rather than gcmon's constants, so a wrong field number fails here
-    (ADR-0001).
+    A batch carries its packets compressed, and a file may mix either encoding
+    with plain packets. Read through Perfetto's own generated schema rather
+    than gcmon's constants, so a wrong field number fails here (ADR-0001).
     """
     trace = Trace()
     trace.ParseFromString(content)
     packets: list[TracePacket] = []
     for packet in trace.packet:
-        if packet.HasField("compressed_packets"):
+        if packet.HasField("zstd_compressed_packets"):
+            assert zstd is not None, "a zstd batch needs a CPython built with libzstd"
+            packets.extend(perfetto_packets(zstd.decompress(packet.zstd_compressed_packets)))
+        elif packet.HasField("compressed_packets"):
             packets.extend(perfetto_packets(zlib.decompress(packet.compressed_packets)))
         else:
             packets.append(packet)

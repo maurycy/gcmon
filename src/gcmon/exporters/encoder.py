@@ -10,8 +10,9 @@ from __future__ import annotations
 import logging
 import zlib
 from collections.abc import Callable, Sequence, Set
+from functools import partial
 from pathlib import Path
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 from ..model.trace_event import ProcessMeta, TraceEvent
 from .perfetto_format import (
@@ -25,7 +26,30 @@ from .protobuf_encoder import encode_bytes_field
 
 logger = logging.getLogger("gcmon")
 
-_COMPRESSION_LEVEL = 6
+_DEFLATE_LEVEL = 6
+_ZSTD_LEVEL = 3
+
+
+class Codec(NamedTuple):
+    """A compressed-batch field and the compressor that fills it."""
+
+    field: TracePacketField
+    compress: Callable[[bytes], bytes]
+
+
+_DEFLATE = Codec(TracePacketField.COMPRESSED_PACKETS, partial(zlib.compress, level=_DEFLATE_LEVEL))
+
+
+def _resolve_codec() -> Codec:
+    """The codec this interpreter can write (ADR-0022)."""
+    try:
+        from compression import zstd
+    except ImportError:
+        return _DEFLATE
+    return Codec(TracePacketField.ZSTD_COMPRESSED_PACKETS, partial(zstd.compress, level=_ZSTD_LEVEL))
+
+
+_CODEC = _resolve_codec()
 
 __all__ = [
     "EventEncoder",
@@ -54,6 +78,7 @@ class ProtobufEventEncoder:
         self,
         cmdline_provider: Callable[[int], list[str] | None] | None = None,
         sequence_id: int | None = None,
+        codec: Codec | None = None,
     ) -> None:
         self._path: Path | None = None
         self._track_state = PerfettoTrackState()
@@ -62,6 +87,7 @@ class ProtobufEventEncoder:
             cmdline_provider if cmdline_provider is not None else self._default_cmdline_provider
         )
         self._has_written: bool = False
+        self._codec: Codec = codec if codec is not None else _CODEC
 
     @staticmethod
     def _default_cmdline_provider(pid: int) -> list[str]:
@@ -112,10 +138,10 @@ class ProtobufEventEncoder:
             self._track_state.update_process_lifetime(pid, ts_ns)
 
     def _write_batch(self, descriptors: Sequence[bytes], packets: Sequence[bytes]) -> None:
-        """Append one batch to the trace as a single deflated packet."""
+        """Append one batch to the trace as a single compressed packet."""
         assert self._path is not None, "open() must be called before writing"
         batch = b"".join(encode_bytes_field(TraceField.PACKET, entry) for entry in (*descriptors, *packets))
-        compressed = encode_bytes_field(TracePacketField.COMPRESSED_PACKETS, zlib.compress(batch, _COMPRESSION_LEVEL))
+        compressed = encode_bytes_field(self._codec.field, self._codec.compress(batch))
         mode = "wb" if not self._has_written else "ab"
         self._has_written = True
         with open(self._path, mode) as f:

@@ -4,6 +4,10 @@ gcmon writes traces in three formats, selected with `--format`: `perfetto`
 (compressed Perfetto binary protobuf), `jsonl` (JSONL to file), and `stdout`
 (JSONL to stdout). See the [CLI reference](cli.md) for the flag.
 
+A `.pftrace` needs Perfetto v58 or newer. An older one shows the capture as an
+empty timeline rather than refusing to open it: a run that collected nothing
+looks the same.
+
 ## Perfetto output
 
 <img src="images/chrome-trace-example.png" alt="Perfetto Trace Example" width="800">
