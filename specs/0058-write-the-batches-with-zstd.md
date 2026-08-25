@@ -51,9 +51,13 @@ today: the same slices, names, categories, args, counters, tracks, SQL keys
 and file extension, with nothing to run before opening it and no flag to
 remember, exactly as ADR-0022 left it.
 
-**An operator on a Perfetto older than v58 can no longer read the trace.**
-That reader does not refuse the file: it skips the field it does not know and
-shows an empty timeline.
+**An operator on a Perfetto older than v58 cannot read the trace.** That
+reader does not refuse the file: it skips the field it does not know and shows
+an empty timeline.
+
+The comparison an operator makes is against 0.6.0, not against the deflate in
+the working tree. Compression sits unreleased under `## WIP`, and 0.6.0 wrote
+plain packets that opened on any Perfetto.
 
 ## 3. User stories
 
@@ -107,8 +111,12 @@ the rest have to be kept working and tested.
 ### 4.3 The reader keeps both branches
 
 `tests/helpers.py`'s reader inflates field 50 today. It gains field 133 and
-**keeps field 50**, so a capture taken before this change still reads, and so
-does a file mixing the two. gcmon writes one.
+**keeps field 50**, and reads a file mixing the two. gcmon writes one.
+
+The branch does not guard an operator's archive. Compression has not shipped,
+and no capture in anyone's hands is deflated. What it guards is this suite,
+the only thing here that reads a trace back, and the deflate Perfetto's own
+tooling writes.
 
 ### 4.4 What an older reader does, and what to do about it
 
@@ -121,7 +129,8 @@ exchange for the size and the CPU.
 Nothing gcmon writes reaches an operator's own copy of Perfetto. The
 mitigation is documentation: a `### Breaking changes` line naming the minimum
 version, and the same minimum beside the word `compressed` where
-`docs/formats.md` names the format.
+`docs/formats.md` names the format. That line is written against 0.6.0, whose
+plain packets opened anywhere. No release carries deflate.
 
 **Rejected: writing both fields, so that an old reader takes 50 and a new one
 takes 133.** A reader that knows both expands both and draws every slice
@@ -218,9 +227,10 @@ shape alone and rewrites two lines of it, the codec and the field number. The
 amendment turns the zstd alternative into the decision and leaves deflate
 behind as what the reader still accepts.
 
-**CHANGELOG.** One line under `### Features` for the size, and one under
-`### Breaking changes` naming the minimum Perfetto version. The second is the
-whole of what section 4.4 can do.
+**CHANGELOG.** The `### Features` line claiming a size is under `## WIP`
+already and was measured on deflate: rewrite it rather than add a second
+beside it. The `### Breaking changes` line names the minimum Perfetto version
+and is the whole of what section 4.4 can do.
 
 **Re-measure on the way past.** Section 1 was measured on one machine, against
 zlib-ng. What has to hold before this lands is the ordering, zstd 3 beating
