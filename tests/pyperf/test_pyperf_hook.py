@@ -1,962 +1,433 @@
-import json
+"""What the hook does: mark where each benchmark ran, and refuse to run blind.
+
+The marks are driven through a real ``ControlClient`` into a real
+``ControlServer``, the highest seam that sees one end to end.
+"""
+
 import os
+import subprocess
 import sys
-from collections.abc import Callable, Generator, Mapping, Sequence
+import time
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, override
-from unittest.mock import Mock, patch
+from typing import NamedTuple, override
+from unittest.mock import patch
 
 import pytest
 
-from gcmon.exporters.jsonl_io import read_jsonl
-from gcmon.model.data import GCStatsInfo
-from gcmon.model.protocol import TGCStatsInfo, TItem, is_gc_stats, is_loss
-from gcmon.pyperf.hook import (
-    _get_env_pyperf_hook_control_timeout,
-    _replay,
-    gcmon_hook,
-)
-from gcmon.pyperf.metrics import to_metrics
-from gcmon.stats.streaming_stats import StreamingStats
-from tests.helpers import assert_valid_jsonl_format
+from gcmon.control.control_server import CONTROL_ADDRESS_ENV, ControlServer, _make_address
+from gcmon.model.marks import Mark, Side, parse_mark
+from gcmon.model.protocol import TInstantMsg
+from gcmon.monitoring.events_reader import RemoteEventsReader, TargetUnavailable
+from gcmon.pyperf.hook import GCMonitorHook, _get_env_pyperf_hook_control_timeout, gcmon_hook
+from tests.helpers import MockExporter
+from tests.test_events_reader import target_executable
 
 
-@pytest.fixture(autouse=True)
-def _mock_control_connect() -> Generator[None]:
-    """Prevent real control plane connection attempts in hook tests."""
-    with patch("gcmon.pyperf.hook.connect_with_retry", return_value=None):
-        yield
+class Marked(NamedTuple):
+    """One mark as the exporter saw it, with the pid it landed on."""
+
+    pid: int
+    mark: Mark
+    ts: int
+
+
+class Sink(NamedTuple):
+    server: ControlServer
+    exporter: MockExporter
+
+    def marks(self) -> list[Marked]:
+        found = []
+        for pid, msg in list(self.exporter.instant_events):
+            mark = parse_mark(msg.name)
+            if mark is not None:
+                found.append(Marked(pid, mark, msg.ts))
+        return found
+
+    def wait_for(self, count: int, timeout: float = 5.0) -> list[Marked]:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            found = self.marks()
+            if len(found) >= count:
+                return found
+            time.sleep(0.01)
+        return self.marks()
 
 
 @pytest.fixture
-def mock_popen_process() -> Generator[tuple[Mock, Mock]]:
-    """Patches Popen. Yields (mock_popen, mock_process)."""
-    with patch("gcmon.pyperf.hook.subprocess.Popen") as mock_popen:
-        mock_process = Mock()
-        mock_process.pid = 54321
-        mock_process.poll.return_value = None
-        mock_process.communicate.return_value = (b"", b"")
-        mock_popen.return_value = mock_process
-        yield mock_popen, mock_process
+def sink(monkeypatch: pytest.MonkeyPatch) -> Generator[Sink]:
+    """A listening control plane, reached the way a worker reaches one."""
+    exporter = MockExporter()
+    server = ControlServer(exporter)
+    server.start()
+    monkeypatch.setenv(CONTROL_ADDRESS_ENV, server.address)
+    try:
+        yield Sink(server, exporter)
+    finally:
+        server.close()
 
 
-@pytest.fixture
-def mock_env_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("GCMON_PYPERF_HOOK_OUTPUT", str(tmp_path / "out.jsonl"))
+def _sides(marks: Sequence[Marked]) -> list[str]:
+    return [m.mark.side for m in marks]
 
 
-def _make_event(**kwargs: Any) -> GCStatsInfo:
-    defaults: dict[str, Any] = {
-        "gen": 0,
-        "iid": 0,
-        "ts_start": 1_000_000_000,
-        "ts_stop": 1_005_000_000,
-        "heap_size": 20000,
-        "collections": 5,
-        "collected": 50,
-        "uncollectable": 2,
-        "candidates": 10,
-        "duration": 0.005,
-    }
-    return GCStatsInfo(**{**defaults, **kwargs})
+class TestAccumulateAndLand:
+    def test_two_regions_land_as_four_instants_at_teardown(self, sink: Sink) -> None:
+        hook = gcmon_hook()
 
-
-def _make_jsonl_event(**kwargs: Any) -> dict[str, Any]:
-    defaults: dict[str, Any] = {
-        "pid": 12345,
-        "tid": 0,
-        "gen": 0,
-        "iid": 0,
-        "ts_start": 1_000_000_000,
-        "ts_stop": 1_005_000_000,
-        "collections": 5,
-        "collected": 50,
-        "uncollectable": 2,
-        "candidates": 10,
-        "heap_size": 20000,
-        "duration": 0.005,
-    }
-    return {**defaults, **kwargs}
-
-
-def _make_jsonl_loss(gen: int = 0, lost_count: int = 0, lost_pause_ns: int = 0, **kwargs: Any) -> dict[str, Any]:
-    """A `LossMsg` line, as `JsonlExporter.add_loss_event` writes one."""
-    defaults: dict[str, Any] = {
-        "pid": 12345,
-        "tid": -2,
-        "iid": 0,
-        "ts_start": 1_005_000_000,
-        "ts_stop": 1_020_000_000,
-        "gens": [
-            {
-                "gen": gen,
-                "observed_count": 1,
-                "lost_from": 0,
-                "lost_count": lost_count,
-                "lost_pause_ns": lost_pause_ns,
-            }
-        ],
-    }
-    return {**defaults, **kwargs}
-
-
-def _write_jsonl(path: Path, *events: dict[str, Any]) -> None:
-    """Write one or more JSON objects as JSONL to a file."""
-    with open(path, "w") as f:
-        for event in events:
-            f.write(json.dumps(event) + "\n")
-
-
-def _parse_jsonl(tmp_path: Path, *lines: dict[str, Any]) -> dict[int, list[TItem]]:
-    """A capture as `_replay` meets it: decoded off a file, not hand-built.
-
-    Going through the file keeps the guards under test facing whatever
-    `from_mapping` actually returns for a line, rather than a struct the test
-    chose to construct.
-    """
-    path = tmp_path / "capture.jsonl"
-    _write_jsonl(path, *lines)
-    return read_jsonl(path)
-
-
-def _teardown_metadata(tmp_path: Path, name: str, *lines: dict[str, Any]) -> dict[str, Any]:
-    """Everything the hook publishes for one capture, via the real teardown."""
-    hook = gcmon_hook(temp_dir=tmp_path, pid=12345)
-    temp_file = tmp_path / f"gcmon_12345_{name}.jsonl"
-    hook._temp_files = [temp_file]
-    _write_jsonl(temp_file, *lines)
-
-    metadata: dict[str, Any] = {}
-    hook.teardown(metadata)
-    return metadata
-
-
-class _RecordingStats(StreamingStats):
-    """A `StreamingStats` that remembers what `_replay` handed it.
-
-    Subclassed rather than mocked because the question is what reaches
-    `update`, and a mock that intercepted the call would also swallow the
-    arithmetic the same tests read back out of `aggregate`.
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.updated: list[TGCStatsInfo] = []
-        self.losses: list[tuple[int, int, int, int, int]] = []
-
-    @override
-    def update(self, pid: int, item: TGCStatsInfo) -> None:
-        self.updated.append(item)
-        if is_loss(item):
-            # Folding one would die on the `heap_size` it does not have,
-            # and that AttributeError would surface before any assertion
-            # about `updated` got to run. Recording it and stopping lets a
-            # guard that stopped being disjoint fail as what it broke.
-            return
-        super().update(pid, item)
-
-    @override
-    def record_loss(self, pid: int, iid: int, gen: int, lost_count: int, lost_pause_ns: int) -> None:
-        self.losses.append((pid, iid, gen, lost_count, lost_pause_ns))
-        super().record_loss(pid, iid, gen, lost_count, lost_pause_ns)
-
-
-def _replay_asking_is_loss_first(stats: StreamingStats, parsed: Mapping[int, Sequence[TItem]]) -> None:
-    """`_replay` with its two guards asked in the opposite order.
-
-    Making `is_gc_stats` stand down for anything `is_loss` claims is exactly
-    what testing `is_loss` first would do, and changes nothing else, so the
-    patched and unpatched runs can only disagree about a record that answers
-    to both guards.
-    """
-    with patch("gcmon.pyperf.hook.is_gc_stats", lambda item: not is_loss(item) and is_gc_stats(item)):
-        _replay(stats, parsed)
-
-
-class TestGCMonitorHookInit:
-    """Test GCMonitorHook initialization."""
-
-    def test_hook_init_default_values(self, tmp_path: Path) -> None:
-        """Hook initializes with default values."""
-        hook = gcmon_hook(temp_dir=tmp_path, pid=12345)
-        assert len(hook._temp_files) > 0
-        assert hook._process is not None
-        assert hook._pid == 12345
-
-
-class TestGCMonitorHookEnter:
-    """Test GCMonitorHook __enter__ method."""
-
-    def test_enter_spawns_subprocess(
-        self,
-        tmp_path: Path,
-        mock_popen_process: tuple[Mock, Mock],
-    ) -> None:
-        """__enter__ spawns subprocess with correct command."""
-        mock_popen, _mock_process = mock_popen_process
-
-        hook = gcmon_hook(temp_dir=tmp_path, pid=12345)
-
-        assert hook._pid == 12345
-        assert hook._process is not None
-
-        # Verify subprocess.Popen was called with correct args
-        mock_popen.assert_called_once()
-        call_args = mock_popen.call_args[0][0]
-        # Command structure: [sys.executable, "-m", "gcmon", "monitor", pid, ...]
-        assert call_args[0] == sys.executable
-        assert call_args[1] == "-m"
-        assert call_args[2] == "gcmon"
-        assert call_args[3] == "monitor"
-        assert call_args[4] == "12345"
-        assert "-o" in call_args
-        assert "--format" in call_args
-        assert "jsonl" in call_args
-
-    def test_enter_raises_on_missing_cli(
-        self,
-        tmp_path: Path,
-        mock_popen_process: tuple[Mock, Mock],
-    ) -> None:
-        """__enter__ raises RuntimeError if gcmon module not found."""
-        mock_popen, _mock_process = mock_popen_process
-        mock_popen.side_effect = FileNotFoundError("module not found")
-
-        with pytest.raises(RuntimeError) as exc_info:
-            gcmon_hook(temp_dir=tmp_path, pid=12345)
-
-        assert "Failed to run gcmon module" in str(exc_info.value)
-        assert "Ensure gcmon is installed" in str(exc_info.value)
-
-    def test_enter_creates_temp_file_path(
-        self,
-        tmp_path: Path,
-        mock_popen_process: tuple[Mock, Mock],
-    ) -> None:
-        """__enter__ creates temp file path with PID."""
-        _mock_popen, _mock_process = mock_popen_process
-
-        hook = gcmon_hook(temp_dir=tmp_path, pid=12345)
         with hook:
-            assert len(hook._temp_files) == 1
-            assert "gcmon_12345_" in str(hook._temp_files[0])
-
-    def test_enter_accumulates_temp_files(
-        self,
-        tmp_path: Path,
-        mock_popen_process: tuple[Mock, Mock],
-    ) -> None:
-        """__enter__ accumulates temp files for multiple calls."""
-        _mock_popen, _mock_process = mock_popen_process
-
-        hook = gcmon_hook(temp_dir=tmp_path, pid=12345)
-
-        # First enter
-        with hook:
-            assert "gcmon_12345_" in str(hook._temp_files[0])
-
-        # Second enter (simulating multiple benchmark runs)
-        with hook:
-            assert len(hook._temp_files) == 1
-            assert "gcmon_12345_" in str(hook._temp_files[0])
-
-
-class TestGCMonitorHookExit:
-    """Test GCMonitorHook __exit__ delegates to terminate_process."""
-
-    def test_exit_calls_terminate_process(
-        self,
-        mock_popen_process: tuple[Mock, Mock],
-        tmp_path: Path,
-        mock_env_output: None,
-    ) -> None:
-        """__exit__ calls terminate_process with correct arguments."""
-        _mock_popen, mock_process = mock_popen_process
-
-        with patch(
-            "gcmon.pyperf.hook.terminate_process",
-            return_value=(b"", b""),
-        ) as mock_terminate:
-            hook = gcmon_hook(temp_dir=tmp_path, pid=12345)
-            hook.teardown({})
-
-        mock_terminate.assert_called_once_with(
-            process=mock_process,
-            graceful_timeout=5.0,
-            force_timeout=2.0,
-        )
-
-
-class TestGCMonitorHookTeardown:
-    """Test GCMonitorHook teardown method."""
-
-    def test_teardown_reads_json_and_adds_metadata(
-        self,
-        tmp_path: Path,
-        mock_env_output: None,
-    ) -> None:
-        """teardown reads JSONL files and adds metrics to metadata."""
-        hook = gcmon_hook(temp_dir=tmp_path, pid=12345)
-        temp_file = tmp_path / "gcmon_12345_0.jsonl"
-        hook._temp_files = [temp_file]
-        _write_jsonl(temp_file, _make_jsonl_event())
-
-        metadata: dict[str, object] = {}
-        hook.teardown(metadata)
-
-        # Verify metadata was added
-        assert "gc_pause_gen_0_p99" in metadata
-        assert isinstance(metadata["gc_pause_gen_0_p99"], (int, float))
-        assert metadata["gc_pause_gen_0_p99"] > 0
-        assert "gc_heap_size_p99" in metadata
-
-    def test_teardown_handles_missing_file(
-        self,
-        tmp_path: Path,
-        mock_env_output: None,
-    ) -> None:
-        """teardown handles missing temp file gracefully."""
-        hook = gcmon_hook(temp_dir=tmp_path, pid=12345)
-        metadata: dict[str, object] = {}
-        hook.teardown(metadata)
-
-        # Should not add any keys if file doesn't exist
-        assert metadata == {}
-
-    def test_teardown_cleans_up_temp_files(
-        self,
-        mock_popen_process: tuple[Mock, Mock],
-        tmp_path: Path,
-        mock_env_output: None,
-    ) -> None:
-        """teardown removes temp files after reading."""
-        _mock_popen, _mock_process = mock_popen_process
-
-        hook = gcmon_hook(temp_dir=tmp_path, pid=12345)
-        with hook:
-            temp_file = hook._temp_files[0]
-
-            _write_jsonl(temp_file, _make_jsonl_event())
-
-            assert temp_file.exists()
-
-        metadata: dict[str, Any] = {}
-        hook.teardown(metadata)
-
-        # Temp file should be removed
-        assert not temp_file.exists()
-
-    def test_teardown_closes_control_client(
-        self,
-        mock_popen_process: tuple[Mock, Mock],
-        tmp_path: Path,
-        mock_env_output: None,
-    ) -> None:
-        """teardown closes the control plane connection."""
-        _mock_popen, _mock_process = mock_popen_process
-
-        hook = gcmon_hook(temp_dir=tmp_path, pid=12345)
+            pass
         with hook:
             pass
 
-        with patch.object(hook._control_client, "close") as mock_close:
-            hook.teardown({})
+        assert sink.marks() == [], "a mark crossed a process boundary while the benchmark was running"
 
-        mock_close.assert_called_once()
+        hook.teardown({"name": "bm_base64"})
 
-    def test_teardown_combines_multiple_files(
-        self,
-        mock_popen_process: tuple[Mock, Mock],
-        tmp_path: Path,
-        mock_env_output: None,
+        marks = sink.wait_for(4)
+        assert _sides(marks) == [Side.BEGIN, Side.END, Side.BEGIN, Side.END]
+        assert [m.mark.bench for m in marks] == ["bm_base64"] * 4
+        first, second = marks[0].mark.region, marks[2].mark.region
+        assert [m.mark.region for m in marks] == [first, first, second, second]
+        assert second == first + 1
+
+    def test_the_marks_carry_the_benchmark_s_own_instants(self, sink: Sink) -> None:
+        hook = gcmon_hook()
+
+        before = time.monotonic_ns()
+        with hook:
+            time.sleep(0.01)
+        after = time.monotonic_ns()
+
+        time.sleep(0.05)
+        sent_no_earlier_than = time.monotonic_ns()
+        hook.teardown({"name": "bm_base64"})
+
+        begin, end = sink.wait_for(2)
+        assert before <= begin.ts < end.ts <= after
+        assert end.ts < sent_no_earlier_than, "the mark was stamped at send time, not at the benchmark"
+
+    def test_the_marks_land_on_the_worker_s_pid(self, sink: Sink) -> None:
+        hook = gcmon_hook()
+        with hook:
+            pass
+        hook.teardown({"name": "bm_base64"})
+
+        assert {m.pid for m in sink.wait_for(2)} == {os.getpid()}
+
+    def test_a_name_that_is_not_a_field_is_sanitized(self, sink: Sink) -> None:
+        hook = gcmon_hook()
+        with hook:
+            pass
+        hook.teardown({"name": "bm:odd name"})
+
+        assert {m.mark.bench for m in sink.wait_for(2)} == {"bm_odd_name"}
+
+
+class TestRegionNumbering:
+    def test_a_second_hook_instance_continues_the_numbering(self, sink: Sink) -> None:
+        first = gcmon_hook()
+        with first:
+            pass
+        first.teardown({"name": "bm_base64"})
+        assert sink.wait_for(2)
+
+        second = gcmon_hook()
+        with second:
+            pass
+        second.teardown({"name": "bm_base64"})
+
+        regions = [m.mark.region for m in sink.wait_for(4)]
+        assert regions[2] == regions[0] + 1, "the second instance restarted the count and reused a mark name"
+
+    def test_each_hook_counts_its_own_regions_from_one(self, sink: Sink) -> None:
+        """Where the phase count restarts is where pyperf started a new phase."""
+        warmups = gcmon_hook()
+        with warmups:
+            pass
+        warmups.teardown({"name": "bm_base64"})
+
+        values = gcmon_hook()
+        for _ in range(3):
+            with values:
+                pass
+        values.teardown({"name": "bm_base64"})
+
+        # Each hook has its own connection, and the server reads one message
+        # per connection per pass, so arrival order interleaves the two. A
+        # reader sorts by timestamp (ADR-0011) and so does this.
+        marks = sorted(sink.wait_for(8), key=lambda m: m.ts)
+
+        assert [m.mark.phase_region for m in marks] == [1, 1, 1, 1, 2, 2, 3, 3]
+
+        # Absolute values depend on what the process counted before this.
+        regions = [m.mark.region for m in marks]
+        opened = regions[0]
+        assert regions == [opened + n // 2 for n in range(8)]
+
+    def test_a_region_that_never_closed_takes_no_number(self, sink: Sink) -> None:
+        """The landed regions have no gaps in their numbering."""
+        first = gcmon_hook()
+        with first:
+            pass
+        first.teardown({"name": "bm_base64"})
+        started_at = sink.wait_for(2)[0].mark.region
+
+        abandoned = gcmon_hook()
+        abandoned.__enter__()
+        abandoned.teardown({"name": "bm_base64"})
+
+        third = gcmon_hook()
+        with third:
+            pass
+        third.teardown({"name": "bm_base64"})
+
+        regions = [m.mark.region for m in sink.wait_for(4)]
+        assert regions[2] == started_at + 1
+
+    def test_regions_of_one_instance_are_numbered_in_order(self, sink: Sink) -> None:
+        hook = gcmon_hook()
+        for _ in range(3):
+            with hook:
+                pass
+        hook.teardown({"name": "bm_base64"})
+
+        regions = [m.mark.region for m in sink.wait_for(6)]
+        assert regions == sorted(regions)
+        assert regions[0] == regions[1] < regions[2] == regions[3] < regions[4] == regions[5]
+
+
+class TestTheMarksInATrace:
+    """What the operator opens: marks as instants on the worker's own process."""
+
+    def test_the_marks_reach_a_perfetto_trace_on_the_worker_s_process(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """teardown combines events from multiple temp files."""
-        _mock_popen, _mock_process = mock_popen_process
+        from perfetto.trace_processor import TraceProcessor, TraceProcessorConfig
 
-        hook = gcmon_hook(temp_dir=tmp_path, pid=12345)
+        from gcmon.exporters.perfetto_exporter import PerfettoExporter
 
-        # Simulate multiple benchmark runs
-        with hook:
-            temp_file_0 = hook._temp_files[0]
-            _write_jsonl(temp_file_0, _make_jsonl_event())
+        class CountingExporter(PerfettoExporter):
+            """The trace the operator opens, plus a way to wait for it."""
 
-        with hook:
-            temp_file_1 = hook._temp_files[0]
-            _write_jsonl(
-                temp_file_1,
-                _make_jsonl_event(
-                    tid=1,
-                    iid=1,
-                    ts_start=2_000_000_000,
-                    ts_stop=2_005_000_000,
-                    collections=3,
-                    collected=30,
-                    uncollectable=1,
-                    candidates=8,
-                    heap_size=25000,
-                    duration=0.008,
-                ),
+            instants = 0
+
+            @override
+            def add_instant_event(self, pid: int, item: TInstantMsg) -> None:
+                super().add_instant_event(pid, item)
+                self.instants += 1
+
+        path = tmp_path / "marks.pftrace"
+        exporter = CountingExporter(output_path=path, flush_threshold=1000)
+        server = ControlServer(exporter)
+        server.start()
+        try:
+            monkeypatch.setenv(CONTROL_ADDRESS_ENV, server.address)
+            hook = gcmon_hook()
+            with hook:
+                pass
+            hook.teardown({"name": "bm_base64"})
+            deadline = time.monotonic() + 5
+            while exporter.instants < 2 and time.monotonic() < deadline:
+                time.sleep(0.01)
+        finally:
+            server.close()
+            exporter.close()
+
+        tp = TraceProcessor(trace=str(path), config=TraceProcessorConfig(load_timeout=300))
+        try:
+            rows = list(
+                tp.query(
+                    "SELECT s.name AS name FROM slice s "
+                    "JOIN process_track pt ON s.track_id = pt.id "
+                    "JOIN process p ON pt.upid = p.upid "
+                    f"WHERE p.pid = {os.getpid()} AND s.dur = 0 AND s.name LIKE 'gcmon:%' "
+                    "ORDER BY s.ts"
+                )
             )
+        finally:
+            tp.close()
 
-        metadata: dict[str, Any] = {"name": "test_benchmark"}
+        marks = [parse_mark(row.name) for row in rows]
+        assert len(marks) == 2, f"expected one region's pair of marks, got {[row.name for row in rows]}"
+        assert marks[0] is not None and marks[1] is not None
+        assert marks[0].side == Side.BEGIN
+        assert marks[1].side == Side.END
+        assert marks[0].bench == marks[1].bench == "bm_base64"
+        assert marks[0].region == marks[1].region
+
+
+class TestAnUnfinishedRegion:
+    def test_a_region_whose_exit_never_ran_lands_nothing(self, sink: Sink) -> None:
+        hook = gcmon_hook()
+
+        hook.__enter__()
+        hook.teardown({"name": "bm_base64"})
+
+        assert sink.wait_for(1, timeout=0.5) == [], "half a region reached the trace"
+
+    def test_a_finished_region_before_an_unfinished_one_still_lands(self, sink: Sink) -> None:
+        hook = gcmon_hook()
+
+        with hook:
+            pass
+        hook.__enter__()
+        hook.teardown({"name": "bm_base64"})
+
+        assert _sides(sink.wait_for(2)) == [Side.BEGIN, Side.END]
+
+
+class TestTheHookDoesNothingElse:
+    def test_the_hook_spawns_no_process(self, sink: Sink, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The monitor is the operator's, started once over the whole suite."""
+        import subprocess
+
+        def refuse(*args: object, **kwargs: object) -> None:
+            raise AssertionError("the hook spawned a process")
+
+        monkeypatch.setattr(subprocess, "Popen", refuse)
+
+        hook = gcmon_hook()
+        with hook:
+            pass
+        hook.teardown({"name": "bm_base64"})
+
+        assert len(sink.wait_for(2)) == 2
+
+    def test_the_hook_writes_no_file(self, sink: Sink, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+
+        hook = gcmon_hook()
+        with hook:
+            pass
+        hook.teardown({"name": "bm_base64"})
+        assert len(sink.wait_for(2)) == 2
+
+        assert list(tmp_path.iterdir()) == []
+
+    def test_teardown_adds_no_key_to_the_metadata(self, sink: Sink) -> None:
+        hook = gcmon_hook()
+        with hook:
+            pass
+
+        metadata: dict[str, object] = {"name": "bm_base64", "loops": 4}
         hook.teardown(metadata)
 
-        # Verify combined metrics
-        assert "gc_pause_gen_0_p99" in metadata
-        assert isinstance(metadata["gc_pause_gen_0_p99"], (int, float))
-        assert "gc_heap_size_p99" in metadata
-
-        # Verify combined trace file was created in tmp_path
-        combined_file = tmp_path / "out.jsonl"
-        assert combined_file.exists()
-
-        # Verify combined file has correct JSONL format
-        combined_data = assert_valid_jsonl_format(combined_file)
-        assert len(combined_data) >= 1  # at least 1 event
-
-        # Both temp files should be removed
-        assert not temp_file_0.exists()
-        assert not temp_file_1.exists()
+        assert metadata == {"name": "bm_base64", "loops": 4}
 
 
-class TestTeardownReplaysLossAndCumulativeCounters:
-    """What the monitor folded live has to come back off the file.
+# A target that collects on demand. The one in ``tests/test_events_reader``
+# fills its rings while the interpreter starts and then goes quiet, which
+# proves a ring can be read but says nothing about when a record was stamped.
+_COLLECTING_TARGET = """
+import gc, time
 
-    The hook meets a session only as JSONL, so a loss record it skips is a
-    session that publishes full coverage and a sampled sum labelled exact.
-    The cumulative counters need no record of their own: ``collections`` and
-    ``duration`` on every GC record are the target's own cumulative totals.
-    """
-
-    LOST = _make_jsonl_loss(lost_count=2, lost_pause_ns=7_000_000)
-
-    def observed(self) -> list[dict[str, Any]]:
-        """Two gen-0 records of 5 ms each, three collections apart."""
-        return [
-            _make_jsonl_event(collections=5, duration=0.005),
-            _make_jsonl_event(collections=8, ts_start=1_020_000_000, ts_stop=1_025_000_000, duration=0.020),
-        ]
-
-    def metadata(self, tmp_path: Path, *lines: dict[str, Any]) -> dict[str, Any]:
-        hook = gcmon_hook(temp_dir=tmp_path, pid=12345)
-        temp_file = tmp_path / "gcmon_12345_0.jsonl"
-        hook._temp_files = [temp_file]
-        _write_jsonl(temp_file, *lines)
-
-        metadata: dict[str, Any] = {}
-        hook.teardown(metadata)
-        return metadata
-
-    def test_the_count_covers_what_the_poll_missed(self, tmp_path: Path, mock_env_output: None) -> None:
-        metadata = self.metadata(tmp_path, *self.observed(), self.LOST)
-
-        assert metadata["gc_pause_gen_0_count"] == 4
-        assert metadata["gc_pause_count"] == 4
-
-    def test_the_sum_covers_the_pause_nobody_saw(self, tmp_path: Path, mock_env_output: None) -> None:
-        metadata = self.metadata(tmp_path, *self.observed(), self.LOST)
-
-        assert metadata["gc_pause_gen_0_sum"] == pytest.approx(17.0)
-
-    def test_coverage_reports_the_share_that_was_read(self, tmp_path: Path, mock_env_output: None) -> None:
-        metadata = self.metadata(tmp_path, *self.observed(), self.LOST)
-
-        assert metadata["gc_pause_gen_0_coverage"] == pytest.approx(0.5)
-
-    def test_a_session_that_lost_nothing_reports_full_coverage(self, tmp_path: Path, mock_env_output: None) -> None:
-        metadata = self.metadata(tmp_path, *self.observed())
-
-        assert metadata["gc_pause_gen_0_coverage"] == 1.0
-        assert metadata["gc_pause_gen_0_count"] == 2
-        assert metadata["gc_pause_gen_0_sum"] == pytest.approx(10.0)
-
-    def test_the_counters_come_from_the_newest_record_of_the_ring(self, tmp_path: Path, mock_env_output: None) -> None:
-        """The whole history the target reports, not the monitored part."""
-        metadata = self.metadata(tmp_path, *self.observed(), self.LOST)
-
-        assert metadata["gc_pause_gen_0_lifetime_count"] == 8
-        assert metadata["gc_pause_gen_0_lifetime_sum"] == pytest.approx(20.0)
-
-    def test_records_out_of_order_do_not_walk_the_counters_backwards(
-        self, tmp_path: Path, mock_env_output: None
-    ) -> None:
-        """Cumulative totals only ever grow, so the highest counter wins
-        however the lines happen to be ordered."""
-        newest, oldest = self.observed()[1], self.observed()[0]
-
-        metadata = self.metadata(tmp_path, newest, oldest)
-
-        assert metadata["gc_pause_gen_0_lifetime_count"] == 8
-
-    def test_the_advisory_reads_the_whole_sample_not_a_file_prefix(
-        self,
-        tmp_path: Path,
-        mock_env_output: None,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """Loss is summed and applied after the records, so a run that ends
-        well covered does not warn on the strength of a loss line that
-        happened to be written before most of them."""
-        records = [
-            _make_jsonl_event(
-                collections=n,
-                ts_start=1_000_000_000 + n * 10_000_000,
-                ts_stop=1_005_000_000 + n * 10_000_000,
-            )
-            for n in range(1, 21)
-        ]
-
-        metadata = self.metadata(tmp_path, _make_jsonl_loss(lost_count=1, lost_pause_ns=5_000_000), *records)
-
-        assert metadata["gc_pause_gen_0_coverage"] > 0.9
-        assert "of collections observed" not in caplog.text
+while True:
+    a = {}
+    b = {"a": a}
+    a["b"] = b
+    del a, b
+    gc.collect()
+    time.sleep(0.01)
+"""
 
 
-class TestLossIsNeverReplayedAsACollection:
-    """The one record type `_replay` must keep out of the sample.
-
-    `_replay` asks `is_gc_stats` before `is_loss`; every other call site in
-    the codebase asks the other way round. That stays harmless only while the
-    two guards are disjoint. A loss record claimed by `is_gc_stats` would be
-    folded in as a collection here and nowhere else, inflating the very
-    sample the loss it carries exists to correct, and the inflated sum would
-    still be published labelled exact. All that stands between the hook and
-    that is which field each guard reaches for, which is far too load-bearing
-    to leave resting on nobody having noticed.
-    """
-
-    LOST = _make_jsonl_loss(lost_count=2, lost_pause_ns=7_000_000)
-
-    def capture(self) -> list[dict[str, Any]]:
-        """Two gen-0 records of 5 ms and 20 ms, and one loss record."""
-        return [
-            _make_jsonl_event(collections=5, duration=0.005),
-            _make_jsonl_event(collections=8, ts_start=1_020_000_000, ts_stop=1_025_000_000, duration=0.020),
-            self.LOST,
-        ]
-
-    @pytest.mark.parametrize(
-        "line, claimant, impostor",
-        [
-            (_make_jsonl_event(), is_gc_stats, is_loss),
-            (_make_jsonl_loss(lost_count=2, lost_pause_ns=7_000_000), is_loss, is_gc_stats),
-        ],
-        ids=["gc-record", "loss-record"],
+@contextmanager
+def _collecting_target(timeout: float = 20.0) -> Generator[tuple[RemoteEventsReader, int]]:
+    """A live process writing GC records, and a reader already attached."""
+    proc = subprocess.Popen(
+        [target_executable(), "-c", _COLLECTING_TARGET],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
-    def test_exactly_one_guard_claims_each_record(
-        self,
-        tmp_path: Path,
-        line: dict[str, Any],
-        claimant: Callable[[object], bool],
-        impostor: Callable[[object], bool],
-    ) -> None:
-        """Guards that cannot both fire are what make the order immaterial.
-
-        A loss record carries a `ts_start` and a `ts_stop` of its own, so a
-        guard resting on either would claim both types.
-        """
-        (item,) = _parse_jsonl(tmp_path, line)[12345]
-
-        assert claimant(item)
-        assert not impostor(item)
-
-    def test_replay_does_not_fold_a_loss_record_into_the_sample(self, tmp_path: Path) -> None:
-        stats = _RecordingStats()
-
-        _replay(stats, _parse_jsonl(tmp_path, *self.capture()))
-
-        assert [item for item in stats.updated if is_loss(item)] == []
-        assert len(stats.updated) == 2
-        assert stats.losses == [(12345, 0, 0, 2, 7_000_000)]
-
-    def test_the_guard_order_does_not_change_what_gets_folded(self, tmp_path: Path) -> None:
-        """Same capture, both branch orders, same statistics."""
-        parsed = _parse_jsonl(tmp_path, *self.capture())
-        as_written, reversed_order = _RecordingStats(), _RecordingStats()
-
-        _replay(as_written, parsed)
-        _replay_asking_is_loss_first(reversed_order, parsed)
-
-        assert as_written.updated == reversed_order.updated
-        assert as_written.losses == reversed_order.losses
-        assert to_metrics(as_written) == to_metrics(reversed_order)
-
-    def test_a_capture_of_nothing_but_loss_replays_and_still_counts_it(self, tmp_path: Path) -> None:
-        """Nothing was sampled, so there is no pause to describe, but the
-        collections nobody saw happened all the same."""
-        stats = _RecordingStats()
-
-        _replay(stats, _parse_jsonl(tmp_path, self.LOST))
-
-        assert stats.updated == []
-        assert stats.count() == 0
-        assert stats.pause_totals(12345, 0, 0).lost_count == 2
-        assert stats.pause_totals_by_gen()[0].exact_count == 2
-        assert stats.pause_totals_by_gen()[0].coverage == 0.0
-        assert to_metrics(stats)["pause_count"] == 2
-
-    def test_a_loss_only_capture_publishes_nothing_rather_than_zeroes(
-        self,
-        tmp_path: Path,
-        mock_env_output: None,
-    ) -> None:
-        """`teardown` gates on having sampled something, so a session that
-        read no record at all stays out of the benchmark's metadata."""
-        assert _teardown_metadata(tmp_path, "loss-only", self.LOST) == {}
-
-    def test_loss_before_the_records_gives_the_same_metrics_as_loss_after(
-        self,
-        tmp_path: Path,
-        mock_env_output: None,
-    ) -> None:
-        """Loss is summed and applied once the whole sample is folded, so
-        where its record sits in the file cannot move a number."""
-        records = self.capture()[:-1]
-
-        after = _teardown_metadata(tmp_path, "after", *records, self.LOST)
-        before = _teardown_metadata(tmp_path, "before", self.LOST, *records)
-
-        assert before == after
-        assert after["gc_pause_gen_0_coverage"] == pytest.approx(0.5)
-        assert after["gc_pause_gen_0_sum"] == pytest.approx(17.0)
+    reader = RemoteEventsReader()
+    try:
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                reader.read(proc.pid)
+                break
+            except TargetUnavailable:
+                if time.monotonic() >= deadline:
+                    raise AssertionError(f"target {proc.pid} never became readable") from None
+                time.sleep(0.05)
+        yield reader, proc.pid
+    finally:
+        proc.kill()
+        proc.wait()
 
 
-class TestReplayKeepsTheInterpretersApart:
-    """A loss record names the interpreter it belongs to, so `_replay` keys on
-    it. A capture read back from JSONL has to report what the live run
-    reported, and the live run reports per ring.
+class TestTheClockBehindTheMarks:
+    """A mark and a GC record have to land on one timeline.
+
+    The hook stamps a mark with ``time.monotonic_ns()``; CPython stamps a
+    record from its own clock. Nothing downstream notices if those two stop
+    being the same clock, and the marks land in the wrong place.
     """
 
-    def capture(self) -> list[dict[str, Any]]:
-        """Interpreter 0 read everything it ran; interpreter 1 read one of
-        ten."""
-        return [
-            _make_jsonl_event(iid=0, collections=5),
-            _make_jsonl_event(iid=1, collections=10, ts_start=1_030_000_000, ts_stop=1_031_000_000),
-            _make_jsonl_loss(iid=1, lost_count=9, lost_pause_ns=9_000_000),
-        ]
+    def test_a_record_carries_the_clock_a_mark_is_stamped_from(self) -> None:
+        with _collecting_target() as (reader, pid):
+            before = time.monotonic_ns()
+            time.sleep(0.25)
+            records = reader.read(pid)
+            after = time.monotonic_ns()
 
-    def _replayed(self, tmp_path: Path) -> StreamingStats:
-        stats = StreamingStats()
-        _replay(stats, _parse_jsonl(tmp_path, *self.capture()))
-        return stats
-
-    def test_the_loss_lands_on_the_interpreter_that_lost_it(self, tmp_path: Path) -> None:
-        stats = self._replayed(tmp_path)
-
-        assert stats.pause_totals(12345, 0, 0).lost_count == 0
-        assert stats.pause_totals(12345, 1, 0).lost_count == 9
-
-    def test_each_interpreter_reports_its_own_coverage(self, tmp_path: Path) -> None:
-        stats = self._replayed(tmp_path)
-
-        assert stats.pause_totals(12345, 0, 0).coverage == 1.0
-        assert stats.pause_totals(12345, 1, 0).coverage == pytest.approx(0.1)
-
-    def test_the_run_still_folds_to_one_answer(self, tmp_path: Path) -> None:
-        """`Total` and the benchmark metrics stay run-wide, which is the scope
-        they were released with."""
-        totals = self._replayed(tmp_path).pause_totals_by_gen()[0]
-
-        assert (totals.sampled_count, totals.lost_count) == (2, 9)
-
-
-class TestAggregateGcStats:
-    """Test the metric projection over a replayed session."""
-
-    def test_empty_no_metadata(self) -> None:
-        assert to_metrics(StreamingStats()) == {"pause_count": 0}
-
-    def test_single_event_single_pid(self) -> None:
-        ss = StreamingStats()
-        ss.update(100, _make_event())
-        result = to_metrics(ss)
-        assert result["pause_gen_0_p99"] > 0
-        assert result["heap_size_p99"] == 20000
-
-    def test_multiple_events_all_gen0(self) -> None:
-        ss = StreamingStats()
-        for i in range(3):
-            ss.update(
-                100,
-                _make_event(
-                    iid=i,
-                    ts_start=1_000_000_000 + i * 100_000_000,
-                    ts_stop=1_005_000_000 + i * 100_000_000,
-                    heap_size=20000 + i * 5000,
-                ),
-            )
-        result = to_metrics(ss)
-        assert "pause_gen_0_p99" in result
-        assert "pause_gen_1_p99" not in result
-        assert "pause_gen_2_p99" not in result
-
-    def test_multiple_pids_heap_p99(self) -> None:
-        ss = StreamingStats()
-        for pid in [100, 200, 300]:
-            ss.update(pid, _make_event(heap_size=pid * 100))
-        assert to_metrics(ss)["heap_size_p99"] == 29800
-
-    def test_per_generation_p99(self) -> None:
-        ss = StreamingStats()
-        for gen in range(3):
-            ss.update(100, _make_event(gen=gen, iid=gen, ts_stop=1_005_000_000 + gen * 5_000_000))
-        result = to_metrics(ss)
-        for gen in range(3):
-            assert f"pause_gen_{gen}_p99" in result
-
-
-class TestGcMonitorHookFactory:
-    """Test gcmon_hook factory function."""
-
-    def test_factory_returns_new_hook_each_time(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        """Factory returns a new hook instance each time."""
-        hook1 = gcmon_hook(temp_dir=tmp_path, pid=12345)
-        hook2 = gcmon_hook(temp_dir=tmp_path, pid=12345)
-        assert hook1 is not hook2
-
-    def test_hook_uses_default_temp_dir(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        mock_popen_process: tuple[Mock, Mock],
-        tmp_path: Path,
-    ) -> None:
-        """gcmon_hook() without temp_dir uses GCMON_PYPERF_HOOK_TEMP_DIR env var."""
-        temp_base = tmp_path / "hook_temp"
-        temp_base.mkdir()
-        monkeypatch.setenv("GCMON_PYPERF_HOOK_TEMP_DIR", str(temp_base))
-        monkeypatch.setenv("GCMON_PYPERF_HOOK_OUTPUT", str(tmp_path / "out.jsonl"))
-        hook = gcmon_hook(pid=12345)
-        assert str(hook._temp_dir.name).startswith(str(temp_base))
-        hook.teardown({})
-
-
-class TestGCMonitorHookSharedOutput:
-    """Test GCMonitorHook with shared output file (GCMON_PYPERF_HOOK_OUTPUT)."""
-
-    def test_multiple_runs_write_to_shared_output_file(
-        self,
-        tmp_path: Path,
-        mock_env_output: None,
-    ) -> None:
-        """Test multiple pyperf runs writing to same output file via env var.
-
-        When GCMON_PYPERF_HOOK_OUTPUT is set, multiple GCMonitorHook
-        instances will write to the same output file. This tests that the
-        combine logic correctly handles this case.
-        """
-
-        # Create first hook instance (first pyperf run)
-        hook1 = gcmon_hook(temp_dir=tmp_path, pid=12345)
-
-        # Mock the temp file for first run
-        temp_file_1 = tmp_path / "gcmon_run_0_12345.jsonl"
-        hook1._temp_files = [temp_file_1]
-
-        # Write test events from first run
-        _write_jsonl(temp_file_1, _make_jsonl_event(tid=1))
-
-        metadata1: dict[str, Any] = {"name": "benchmark_run1"}
-        hook1.teardown(metadata1)
-
-        # Create second hook instance (second pyperf run)
-        hook2 = gcmon_hook(temp_dir=tmp_path, pid=12345)
-
-        # Mock the temp file for second run
-        temp_file_2 = tmp_path / "gcmon_run_1_12345.jsonl"
-        hook2._temp_files = [temp_file_2]
-
-        # Write test events from second run
-        _write_jsonl(
-            temp_file_2,
-            _make_jsonl_event(
-                tid=1,
-                ts_start=2_000_000_000,
-                ts_stop=2_008_000_000,
-                collections=3,
-                collected=30,
-                uncollectable=1,
-                candidates=8,
-                heap_size=25000,
-                duration=0.008,
-            ),
+        newest = max(record.ts_stop for record in records)
+        assert before < newest < after, (
+            "a GC record is not stamped from the clock a mark is stamped from: "
+            f"{newest} is outside the window [{before}, {after}] it was read in"
         )
 
-        # Second run also writes to shared output
-        metadata2: dict[str, Any] = {"name": "benchmark_run2"}
-        hook2.teardown(metadata2)
 
-        # Verify shared output file exists
-        shared_output = tmp_path / "out.jsonl"
-        assert shared_output.exists()
+class TestNoMonitorIsARefusal:
+    """A hook that only annotates has nothing to do without a monitor.
 
-        # Verify combined file has correct JSONL format
-        combined_data = assert_valid_jsonl_format(shared_output)
-        assert len(combined_data) >= 1  # at least 1 event
+    pyperf catches its own ``HookError``, so the run stops on the first worker
+    rather than finishing a suite that recorded nothing.
+    """
 
-        # Verify metadata from second run
-        assert "gc_pause_gen_0_p99" in metadata2
+    def test_no_control_address_refuses_the_run(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(CONTROL_ADDRESS_ENV, raising=False)
 
-        # Cleanup temp files
-        temp_file_1.unlink(missing_ok=True)
-        temp_file_2.unlink(missing_ok=True)
-        shared_output.unlink(missing_ok=True)
+        with pytest.raises(Exception) as caught:
+            gcmon_hook()
 
+        assert "gcmon run" in str(caught.value)
 
-class TestGCMonitorHookBenchNameSubstitution:
-    """Test GCMonitorHook with {bench_name} substitution in output path."""
+    def test_an_address_nobody_is_listening_on_refuses_the_run(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(CONTROL_ADDRESS_ENV, _make_address("nobody-is-listening"))
+        monkeypatch.setenv("GCMON_PYPERF_HOOK_CONTROL_TIMEOUT", "0.2")
 
-    @pytest.mark.parametrize(
-        "bench_name, pattern, expected",
-        [
-            ("my_benchmark", "gcmon_{bench_name}.json", "gcmon_my_benchmark.json"),
-            ("my-benchmark.with/special:chars", "gc_{bench_name}.json", "gc_my-benchmark_with_special_chars.json"),
-        ],
-    )
-    def test_bench_name_substitution(
-        self,
-        bench_name: str,
-        pattern: str,
-        expected: str,
-        tmp_path: Path,
-    ) -> None:
-        """Test {bench_name} substitution in GCMON_PYPERF_HOOK_OUTPUT."""
-        output_pattern = str(tmp_path / pattern)
-        with patch.dict("os.environ", {"GCMON_PYPERF_HOOK_OUTPUT": output_pattern}):
-            hook = gcmon_hook(temp_dir=tmp_path, pid=12345)
-            temp_file = tmp_path / "gcmon_12345_0_50.jsonl"
-            hook._temp_files = [temp_file]
-            _write_jsonl(temp_file, _make_jsonl_event(tid=1))
-            metadata: dict[str, Any] = {"name": bench_name}
-            hook.teardown(metadata)
-            expected_output = tmp_path / expected
-            assert expected_output.exists()
-            data = assert_valid_jsonl_format(expected_output)
-            assert len(data) > 0
-            assert "gc_pause_gen_0_p99" in metadata
-            expected_output.unlink(missing_ok=True)
-            temp_file.unlink(missing_ok=True)
+        with pytest.raises(Exception) as caught:
+            gcmon_hook()
 
-    def test_bench_name_substitution_multiple_benchmarks(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        """Test multiple teardown calls with different benchmark names write to different files."""
+        assert "gcmon run" in str(caught.value)
 
-        # Set up environment variable with {bench_name} placeholder
-        output_pattern = str(tmp_path / "gc_{bench_name}_trace.json")
+    def test_the_refusal_is_the_type_pyperf_catches(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from pyperf._hooks import HookError
 
-        benchmark_configs = [
-            {"name": "benchmark_alpha", "collections": 5, "collected": 50},
-            {"name": "benchmark_beta", "collections": 10, "collected": 100},
-            {"name": "benchmark_gamma", "collections": 15, "collected": 150},
-        ]
+        monkeypatch.delenv(CONTROL_ADDRESS_ENV, raising=False)
 
-        with patch.dict("os.environ", {"GCMON_PYPERF_HOOK_OUTPUT": output_pattern}):
-            for idx, config in enumerate(benchmark_configs):
-                hook = gcmon_hook(temp_dir=tmp_path, pid=12345)
+        with pytest.raises(HookError):
+            gcmon_hook()
 
-                # Mock temp file
-                temp_file = tmp_path / f"gcmon_12345_{idx}_50.jsonl"
-                hook._temp_files = [temp_file]
+    def test_the_run_still_fails_if_pyperf_moves_the_type(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Losing the refusal would lose the run instead."""
+        monkeypatch.delenv(CONTROL_ADDRESS_ENV, raising=False)
+        monkeypatch.setitem(sys.modules, "pyperf._hooks", None)
 
-                # Write test events with unique data per benchmark
-                _write_jsonl(
-                    temp_file,
-                    _make_jsonl_event(
-                        tid=1,
-                        ts_start=1_000_000_000 + (idx * 1_000_000_000),
-                        ts_stop=1_005_000_000 + (idx * 1_000_000_000),
-                        collections=config["collections"],
-                        collected=config["collected"],
-                    ),
-                )
+        with pytest.raises(Exception) as caught:
+            gcmon_hook()
 
-                # Call teardown with specific benchmark name
-                metadata: dict[str, Any] = {"name": config["name"]}
-                hook.teardown(metadata)
+        assert "gcmon run" in str(caught.value)
 
-                # Verify output file was created with substituted name
-                expected_output = tmp_path / f"gc_{config['name']}_trace.json"
-                assert expected_output.exists(), f"Expected {expected_output} to exist"
+    def test_a_hook_is_built_with_pyperf_absent(self, sink: Sink, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Nothing imports pyperf on the path a working hook takes."""
+        monkeypatch.setitem(sys.modules, "pyperf", None)
+        monkeypatch.setitem(sys.modules, "pyperf._hooks", None)
 
-                # Verify file contains correct data
-                data = assert_valid_jsonl_format(expected_output)
-                assert len(data) > 0
-
-                # Verify metadata was populated correctly
-                assert "gc_pause_gen_0_p99" in metadata
-
-                # Cleanup temp file
-                temp_file.unlink(missing_ok=True)
-
-        # Verify all three output files exist
-        for config in benchmark_configs:
-            expected_output = tmp_path / f"gc_{config['name']}_trace.json"
-            assert expected_output.exists()
-            expected_output.unlink(missing_ok=True)
-
-    def test_bench_name_substitution_combine_with_existing(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        """Test that existing file is combined with new data when using {bench_name} substitution."""
-
-        # Set up environment variable with {bench_name} placeholder
-        output_pattern = str(tmp_path / "gc_{bench_name}.json")
-
-        with patch.dict("os.environ", {"GCMON_PYPERF_HOOK_OUTPUT": output_pattern}):
-            # First run
-            hook1 = gcmon_hook(temp_dir=tmp_path, pid=12345)
-            temp_file_1 = tmp_path / "gcmon_12345_0_50.jsonl"
-            hook1._temp_files = [temp_file_1]
-
-            _write_jsonl(temp_file_1, _make_jsonl_event(tid=1))
-
-            metadata1: dict[str, Any] = {"name": "shared_bench"}
-            hook1.teardown(metadata1)
-
-            # Second run with same benchmark name
-            hook2 = gcmon_hook(temp_dir=tmp_path, pid=12345)
-            temp_file_2 = tmp_path / "gcmon_12345_1_50.jsonl"
-            hook2._temp_files = [temp_file_2]
-
-            _write_jsonl(
-                temp_file_2,
-                _make_jsonl_event(
-                    tid=1,
-                    ts_start=2_000_000_000,
-                    ts_stop=2_008_000_000,
-                    collections=3,
-                    collected=30,
-                    uncollectable=1,
-                    candidates=8,
-                    heap_size=25000,
-                    duration=0.008,
-                ),
-            )
-
-            metadata2: dict[str, Any] = {"name": "shared_bench"}
-            hook2.teardown(metadata2)
-
-            # Verify combined output file exists
-            expected_output = tmp_path / "gc_shared_bench.json"
-            assert expected_output.exists()
-
-            # Verify combined file has events from second run
-            data = assert_valid_jsonl_format(expected_output)
-            assert len(data) >= 1  # Event from second run
-
-            # Verify second run metadata was populated
-            assert "gc_pause_gen_0_p99" in metadata2
-
-            # Cleanup
-            expected_output.unlink(missing_ok=True)
-            temp_file_1.unlink(missing_ok=True)
-            temp_file_2.unlink(missing_ok=True)
+        assert isinstance(gcmon_hook(), GCMonitorHook)
 
 
 class TestGetEnvControlTimeout:

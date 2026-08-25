@@ -58,6 +58,11 @@ def run_monitoring_loop(
             )
 
             stack.enter_context(monitor)
+            # Closed here rather than by the context above, which unwinds
+            # last: stopping the monitor closes the exporter, and a control
+            # server still draining would land its clients' last messages in a
+            # closed one. Idempotent, so the context above is then a no-op.
+            stack.callback(control_server.close)
 
             run_policy = RunnerFactory(options.duration)
 

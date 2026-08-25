@@ -1,38 +1,51 @@
-"""Pyperf hook that runs gcmon against the benchmark process.
-
-The hook spawns a ``gcmon monitor`` subprocess writing JSONL, and folds
-the lines it wrote into pyperf's metadata once the benchmark ends.
-"""
+"""Pyperf hook that marks where each benchmark ran."""
 
 import logging
 import os
-import re
-import shutil
-import subprocess
-import sys
-import tempfile
-from collections.abc import Mapping, Sequence
+import time
 from functools import partial
-from pathlib import Path
 from typing import Any
 
 from ..control.control_client import ControlClient, connect_with_retry
-from ..control.control_server import _make_address
-from ..exporters.jsonl_io import read_jsonl
-from ..model.protocol import TGCStatsInfo, TItem, is_gc_stats, is_loss
-from ..stats.streaming_stats import StreamingStats
-from ..support.process_terminator import log_process_output, terminate_process
-from .metrics import to_metrics
+from ..control.control_server import CONTROL_ADDRESS_ENV
+from ..model.marks import Side, format_mark
 
-GRACEFUL_TIMEOUT = 5.0
-FORCE_TIMEOUT = 2.0
-
-ENV_PYPERF_HOOK_OUTPUT = "GCMON_PYPERF_HOOK_OUTPUT"
-ENV_PYPERF_HOOK_TEMP_DIR = "GCMON_PYPERF_HOOK_TEMP_DIR"
 ENV_PYPERF_HOOK_VERBOSE = "GCMON_PYPERF_HOOK_VERBOSE"
 ENV_PYPERF_HOOK_CONTROL_TIMEOUT = "GCMON_PYPERF_HOOK_CONTROL_TIMEOUT"
 
 logger = logging.getLogger("gcmon")
+
+_regions = 0
+"""Regions counted across the process, not within one hook."""
+
+
+def _next_region() -> int:
+    global _regions
+    _regions += 1
+    return _regions
+
+
+NO_MONITOR = (
+    f"gcmon: no monitor is listening on {CONTROL_ADDRESS_ENV}. Start one over "
+    f"the whole run: `gcmon run -o suite.pftrace -s my_benchmark.py "
+    f"--hook=gcmon --inherit-environ={CONTROL_ADDRESS_ENV}`, or -m for a "
+    "module. pyperf carries the address through to its workers from there."
+)
+
+
+def _hook_error() -> type[Exception]:
+    """The exception pyperf's loader catches to print one line and exit 1.
+
+    ``pyperf.__all__`` does not carry ``HookError``. Reaching into the private
+    module is the only way to it, and a move of that module leaves the run
+    failing on ``RuntimeError`` instead.
+    """
+    try:
+        from pyperf._hooks import HookError
+    except Exception:
+        return RuntimeError
+    refusal: type[Exception] = HookError
+    return refusal
 
 
 def _get_env_pyperf_hook_verbose() -> bool:
@@ -50,245 +63,63 @@ def _get_env_pyperf_hook_control_timeout() -> float:
     return 10.0
 
 
-def _get_env_pyperf_hook_temp_dir() -> str | None:
-    """Where the temp JSONL goes, or ``None`` for the system default."""
-    return os.environ.get(ENV_PYPERF_HOOK_TEMP_DIR) or None
-
-
-def _get_env_pyperf_hook_output(bench_name: str, pid: int) -> Path:
-    """Where the combined JSONL goes.
-
-    ``GCMON_PYPERF_HOOK_OUTPUT`` overrides the default and may carry
-    ``{bench_name}`` and ``{pid}`` placeholders.
-    """
-    env_path = os.environ.get(ENV_PYPERF_HOOK_OUTPUT)
-    if env_path:
-        env_path = env_path.format(bench_name=bench_name, pid=pid)
-        return Path(env_path)
-    return Path(f"gcmon_{bench_name}_combined_{pid}.jsonl")
-
-
-def _replay(stats: StreamingStats, parsed: Mapping[int, Sequence[TItem]]) -> None:
-    """Rebuild a session's statistics from the records it wrote.
-
-    The monitor folds loss and the cumulative counters as it polls, but the
-    hook meets the session only as a file, so both have to come back off it.
-    Loss rides in records of its own. The counters ride on every GC record,
-    whose ``collections`` and ``duration`` are the target's cumulative totals,
-    so the newest record of each ring carries what the monitor observed live.
-
-    Loss is summed per ``(pid, iid, gen)`` before it goes in: one record covers
-    one interpreter's poll interval and names every generation active in it, so
-    its entries sum rather than its records.
-
-    Order between the two guards does not matter, since no record answers to
-    both. Were they ever to overlap, a loss record would fold in here as a
-    collection and inflate the very numbers it carries to correct.
-    """
-    lost: dict[tuple[int, int, int], tuple[int, int]] = {}
-    newest: dict[tuple[int, int, int], TGCStatsInfo] = {}
-
-    for pid, items in parsed.items():
-        for item in items:
-            if is_gc_stats(item):
-                stats.update(pid, item)
-                ring = (pid, item.iid, item.gen)
-                if ring not in newest or item.collections > newest[ring].collections:
-                    newest[ring] = item
-            elif is_loss(item):
-                for entry in item.gens:
-                    ring = (pid, item.iid, entry.gen)
-                    seen_count, seen_pause = lost.get(ring, (0, 0))
-                    lost[ring] = (seen_count + entry.lost_count, seen_pause + entry.lost_pause_ns)
-
-    for (pid, iid, gen), record in newest.items():
-        stats.observe_cumulative(pid, iid, gen, record.collections, record.duration)
-
-    for (pid, iid, gen), (count, pause_ns) in lost.items():
-        if count or pause_ns:
-            stats.record_loss(pid, iid, gen, count, pause_ns)
-
-
 class GCMonitorHook:
-    """Pyperf hook for GC monitoring via external gcmon process.
+    """Pyperf hook that marks the benchmark in a running monitor's trace."""
 
-    The hook spawns a `gcmon` CLI process that reads the benchmark
-    process's memory directly. That process writes one JSONL file per run
-    under a temp directory; the hook concatenates them and puts the
-    statistics it reads back into pyperf's metadata.
-
-    Usage:
-        # Entry point registration in pyproject.toml
-        [project.entry-points."pyperf.hook"]
-        gcmon = "gcmon.pyperf.hook:gcmon_hook"
-
-        # Then use in CLI
-        pyperf run --hook=gcmon ...
-    """
-
-    def __init__(self, temp_dir: tempfile.TemporaryDirectory[str], pid: int | None = None) -> None:
-        self._process: subprocess.Popen[bytes] | None = None
-        self._temp_files: list[Path] = []
-        self._temp_dir = temp_dir
-        self._pid: int = pid or os.getpid()
-        self._control_name = f"pyperf-hook-{self._pid}"
-        self._control_address = _make_address(self._control_name)
-
-        self._run_monitor()
+    def __init__(self) -> None:
+        self._marks: list[tuple[int, int, int, int]] = []
+        self._phase_regions = 0
+        self._enter_ts: int | None = None
         self._control_client = ControlClient(
-            self._control_address,
             connection_factory=partial(
                 connect_with_retry,
                 timeout=_get_env_pyperf_hook_control_timeout(),
             ),
         )
-
-    def _run_monitor(self) -> None:
-        cmd = self._build_command()
-
-        try:
-            creationflags = 0
-            if sys.platform == "win32":
-                # Windows: Create new process group for proper signal handling
-                creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
-
-            self._process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                creationflags=creationflags,
-            )
-
-        except Exception as e:
-            raise RuntimeError(
-                "Failed to run gcmon module: " + str(e) + ". Ensure gcmon is installed: pip install gcmon"
-            ) from e
-
-        verbose = _get_env_pyperf_hook_verbose()
-        if verbose:
-            logger.debug("Started: %s", cmd)
-
-    def _close_monitor(self) -> None:
-        if self._process is None:
-            return
-
-        verbose = _get_env_pyperf_hook_verbose()
-        try:
-            stdout_data, _ = terminate_process(
-                process=self._process,
-                graceful_timeout=GRACEFUL_TIMEOUT,
-                force_timeout=FORCE_TIMEOUT,
-            )
-
-            if verbose:
-                log_process_output(
-                    process=self._process,
-                    stdout_data=stdout_data,
-                )
-        except Exception as e:
-            if verbose:
-                logger.warning("Failed to exit from gcmon hook: %s", e)
-        finally:
-            if verbose and self._process:
-                logger.debug("Stopped gcmon process: %s", self._process)
-            self._process = None
+        # Before a benchmark is running, and outside anything pyperf times.
+        if self._control_client._ensure_connected() is None:
+            raise _hook_error()(NO_MONITOR)
 
     def __enter__(self) -> GCMonitorHook:
-        """Tell the monitor to start, immediately before the benchmark runs."""
-        self._control_client.start_monitoring()
+        """Open a region, immediately before the benchmark runs."""
+        self._enter_ts = time.monotonic_ns()
         return self
 
     def __exit__(self, *args: object) -> None:
-        """Tell it to stop, immediately after."""
-        self._control_client.stop_monitoring()
-
-    def teardown(self, metadata: dict[str, Any]) -> None:
-        """Combine the temp JSONL files and hand pyperf the statistics.
-
-        Pyperf calls this once the hook is done with a process.
-        """
-        self._control_client.close()
-        self._close_monitor()
-
-        if not self._temp_files:
+        """Close it, immediately after."""
+        enter_ts = self._enter_ts
+        if enter_ts is None:
             return
 
-        bench_name = re.sub(r"[^a-zA-Z0-9_-]", "_", metadata.get("name", ""))
-        output_path = _get_env_pyperf_hook_output(bench_name, self._pid)
+        self._enter_ts = None
+        self._phase_regions += 1
+        self._marks.append((_next_region(), self._phase_regions, enter_ts, time.monotonic_ns()))
 
-        try:
-            # Bytes straight through, so nothing here parses a line.
-            with open(output_path, "wb") as out:
-                for temp_file in self._temp_files:
-                    if temp_file.exists():
-                        with open(temp_file, "rb") as f:
-                            shutil.copyfileobj(f, out)
-                        out.write(b"\n")
+    def _send_marks(self, bench_name: str) -> None:
+        """Land every region that finished."""
+        for region, phase_region, enter_ts, exit_ts in self._marks:
+            self._control_client.instant_msg(format_mark(bench_name, region, phase_region, Side.BEGIN), ts=enter_ts)
+            self._control_client.instant_msg(format_mark(bench_name, region, phase_region, Side.END), ts=exit_ts)
+        self._marks.clear()
 
-            ss = StreamingStats()
-            if output_path.exists():
-                try:
-                    _replay(ss, read_jsonl(output_path))
-                except Exception as e:
-                    logger.warning("Failed to read combined GC metrics: %s", e)
+    def teardown(self, metadata: dict[str, Any]) -> None:
+        """Land the marks.
 
-            if ss.count():
-                for key, value in to_metrics(ss).items():
-                    metadata[f"gc_{key}"] = value
-
-        except Exception as e:
-            # The benchmark's own numbers outrank ours, so this warns and the
-            # run stands.
-            logger.warning("Failed to aggregate GC metrics: %s", e)
-
-        finally:
-            self._temp_dir.cleanup()
-
-    def _build_command(self) -> list[str]:
-        fd, filename = tempfile.mkstemp(
-            dir=self._temp_dir.name,
-            prefix=f"gcmon_{self._pid}_",
-            suffix=".jsonl",
-        )
-        os.close(fd)
-        filepath = Path(filename)
-        self._temp_files.append(filepath)
-
-        return [
-            sys.executable,
-            "-m",
-            "gcmon",
-            "monitor",
-            str(self._pid),
-            "-vvv",
-            "-o",
-            filepath.as_posix(),
-            "--format",
-            "jsonl",
-            "--flush-threshold",
-            "10",
-            "--control-name",
-            self._control_name,
-        ]
+        Pyperf calls this once it is done with a process, and it is the first
+        point at which ``metadata['name']`` names the benchmark.
+        """
+        self._send_marks(metadata.get("name", ""))
+        self._control_client.close()
 
 
-def gcmon_hook(temp_dir: str | Path | None = None, pid: int | None = None) -> GCMonitorHook:
+def gcmon_hook() -> GCMonitorHook:
+    """The entry point, called by pyperf with no arguments."""
     _setup_logging()
-    temp_dir_obj = tempfile.TemporaryDirectory(dir=temp_dir or _get_env_pyperf_hook_temp_dir())
-    try:
-        return GCMonitorHook(temp_dir=temp_dir_obj, pid=pid)
-    except Exception:
-        temp_dir_obj.cleanup()
-        raise
+    return GCMonitorHook()
 
 
 def _setup_logging() -> None:
-    """Configure the `gcmon` logger for the pyperf hook entry point.
-
-    Attaches a stderr handler if the logger has none and takes its level
-    from ``GCMON_PYPERF_HOOK_VERBOSE``. Only the entry point calls this, so
-    a test that builds a ``GCMonitorHook`` leaves global logging alone.
-    """
+    """Configure the `gcmon` logger for the pyperf hook entry point."""
     level = logging.DEBUG if _get_env_pyperf_hook_verbose() else logging.WARNING
     logger.setLevel(level)
 

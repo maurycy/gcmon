@@ -62,6 +62,14 @@ _Avoid_: sample, entry, datapoint
 One thing gcmon wrote into a trace. A record becomes one or more events.
 _Avoid_: record (for the trace side), slice (that is one shape of event)
 
+**Mark**, **marker**: One instant a workload wrote into a trace to say where
+it was, under either spelling. An **event** is what gcmon wrote from a record;
+a mark is what the workload wrote itself. A name starts `gcmon:` and the
+workload fills in the rest. The pyperf hook spells its half
+`<benchmark>:<n>:<i>:begin` or `:end`; the two numbers and the two sides are
+that hook's, not every mark's.
+_Avoid_: annotation, label, event (that is gcmon's side)
+
 **Batch**:
 The events one flush writes, compressed into a single packet in the trace. It
 is the unit a killed run loses: whole batches reach the file, and the one
@@ -159,8 +167,7 @@ started, monitored window included. Always written with the qualifier: bare
 **lifetime** means the `Processes`-track span above. The source names the
 counters underneath rather than the interval (`CumulativeCounters`,
 `StreamingStats.observe_cumulative`, `cumulative_totals_by_gen`), so the bare
-word is left to the span everywhere outside this prose and the
-`pause_gen_N_lifetime_*` pyperf keys.
+word is left to the span everywhere outside this prose.
 _Avoid_: lifetime (bare), cumulative total (the counters underneath are
 cumulative, the interval is not), since-start count
 
