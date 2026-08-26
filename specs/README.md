@@ -24,7 +24,7 @@ This file holds the open set and the order to take it in. The other two:
 | [0024](0024-cpython-report-remote-readable-gc-stats.md) | Report (upstream) | S | Five findings on `_remote_debugging.get_gc_stats` to file upstream with CPython; no gcmon change |
 | [0025](0025-control-server-accept-loop-survives-transient-errors.md) | Bug (**availability**) | XS | One transient accept error and the control server refuses every later connection, saying nothing |
 | [0027](0027-thread-descriptor-tid-for-interpreter-zero.md) | Bug (reporting) | XS | The main interpreter's `thread.tid` is the pid, so a SQL query has to special-case interpreter zero to read ids |
-| [0030](0030-exporter-hygiene-batch.md) | Feature (cleanup) | XS | Four one-file hazards in the exporter package: rank dict, builtin shadow, two undocumented threading contracts |
+| [0030](0030-exporter-hygiene-batch.md) | Feature (cleanup) | S | Three one-file hazards in the exporter package: rank dict, builtin shadow, one undocumented threading contract |
 | [0033](0033-loss-counter-track.md) | Feature (enhancement) | S | The loss row shows where gcmon went blind but not how much it missed; a bar losing 1 record looks like one losing 40 |
 | [0035](0035-derive-every-gc-sub-phase-from-one-table.md) | Feature (cleanup) | L | gcmon writes CPython's eight optional GC sub-phases out by hand in six places; adding the ninth means six edits, and nothing fails if you miss one |
 | [0036](0036-one-exporter-method-per-record-kind.md) | Feature (cleanup) | M | `EventsExporter` has grown one method per record kind, three of them no-ops, and the CLI keeps a hand-maintained list of which formats handle RSS at all |

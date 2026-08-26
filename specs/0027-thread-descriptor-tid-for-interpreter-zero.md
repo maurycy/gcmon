@@ -29,17 +29,17 @@ subinterpreter id happens to equal the pid.
 tid=pid if iid == 0 else iid,
 ```
 
-Every other tid gcmon publishes is derived from `iid` alone and carries no
-pid: `RSS_TID` is `-1` (ADR-0013), the loss track uses
-`loss_tid(iid) == -2 - iid` (ADR-0015), and the same `build_track_descriptor`
-call names the thread `f"Thread {iid}"` in the argument above the `tid`, which
-therefore disagrees with the name set beside it. The `iid == 0` branch is the
-only place in the codebase where a tid is a pid.
+It is the only tid gcmon publishes. A loss row is a plain custom track with no
+`thread` sub-message at all, and RSS is a counter on the process track
+([ADR-0024](../docs/adr/0024-an-event-names-the-track-it-is-drawn-on.md)), so
+the interpreter descriptor is the last place a tid is written. The same
+`build_track_descriptor` call names the thread `f"Thread {iid}"` in the
+argument above the `tid`, which therefore disagrees with the name set beside
+it.
 
 The likely intent is to mimic Linux, where the main thread's tid equals the
-pid. But gcmon's tids are not OS thread ids at all: they are interpreter ids
-in a synthetic namespace, and two of the three sentinel values are negative
-numbers no OS would issue.
+pid. But gcmon's tid is not an OS thread id: it is an interpreter id in a
+synthetic namespace.
 
 ## 3. Scope
 
@@ -99,8 +99,6 @@ either direction.
 - Renaming the concept. `tid` is Perfetto's field name; gcmon's own vocabulary
   already calls the value an **iid**, and the mapping between them is
   deliberate.
-- The `RSS_TID` and `loss_tid` sentinels. They are settled by ADR-0013 and
-  ADR-0015 and are what makes the `iid == 0` case look out of place.
 - Documenting the tid convention in
   [docs/perfetto-sql.md](../docs/perfetto-sql.md). Worth doing either way, but
   it belongs with whichever outcome section 4 reaches, not ahead of it.
