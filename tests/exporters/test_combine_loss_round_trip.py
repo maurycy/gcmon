@@ -33,21 +33,21 @@ from perfetto.trace_processor import TraceProcessor
 from gcmon.exporters.combine import combine_files
 from gcmon.exporters.jsonl_io import read_jsonl, write_jsonl
 from gcmon.model.protocol import TItem, is_loss
-from gcmon.model.trace_event import loss_tid
+from gcmon.model.trace_event import LossTrack
 from tests.exporters.loss_row import (
     IID,
     PID,
     POLL_TIMES,
-    Slice,
+    SliceRow,
     ingest,
     loss_slices,
     three_generations,
 )
 from tests.helpers import create_mock_loss_item, open_trace_processor
 
-LOSS_TID = loss_tid(IID)
+LOSS_ROW = LossTrack(PID, IID)
 
-LIVE_ROW: list[Slice] = [
+LIVE_ROW: list[SliceRow] = [
     ("GC Loss(0,1,2)", 1_000_000, 10_000_000, 0),
     ("GC Loss(0,1,2)", 10_000_000, 20_000_000, 0),
 ]
@@ -75,7 +75,7 @@ def _combined(tmp_path: Path, source: Path, name: str = "combined") -> Iterator[
         yield tp
 
 
-def _loss_row(tp: TraceProcessor) -> list[Slice]:
+def _loss_row(tp: TraceProcessor) -> list[SliceRow]:
     """Every slice on the loss track, as `(name, ts_start, ts_stop, depth)`.
 
     A span opened while another is still open lands at depth 1 here, and
@@ -124,7 +124,7 @@ class TestTheCombinedRowIsTheLiveRow:
     """The drawing, rebuilt offline, against the drawing made live."""
 
     def test_the_row_comes_back_flat(self, tmp_path: Path) -> None:
-        """The claim JSONL could quietly drop. Depth is the processor's, so a
+        """The claim JSONL could drop. Depth is the processor's, so a
         file whose spans were emitted out of order nests here, and would have
         passed a check that only counted two loss slices."""
         with _combined(tmp_path, _capture(tmp_path)) as tp:
@@ -139,8 +139,8 @@ class TestTheCombinedRowIsTheLiveRow:
             assert _loss_row(tp) == LIVE_ROW
 
     def test_consecutive_spans_still_meet(self, tmp_path: Path) -> None:
-        """Which is the part that has to survive: the intervals tile, so the
-        second span opens exactly where the first closes and nowhere else."""
+        """The intervals tile: the second span opens where the first closes
+        and nowhere else."""
         with _combined(tmp_path, _capture(tmp_path)) as tp:
             first, second = _loss_row(tp)
 
@@ -149,7 +149,7 @@ class TestTheCombinedRowIsTheLiveRow:
     def test_the_two_paths_agree(self, tmp_path: Path) -> None:
         """Live and offline, one capture, resolved by two independent walks:
         one over the converter's objects, one over the trace on disk."""
-        live = loss_slices(ingest(*three_generations()))[(PID, LOSS_TID)]
+        live = loss_slices(ingest(*three_generations()))[LOSS_ROW]
 
         with _combined(tmp_path, _capture(tmp_path)) as tp:
             assert _loss_row(tp) == live
@@ -242,14 +242,14 @@ class TestTheWalksCanFail:
         """The baseline the combined row is compared against. If the converter
         drew a nested row live, `test_the_two_paths_agree` would pass on two
         wrong rows."""
-        row = loss_slices(ingest(*three_generations()))[(PID, LOSS_TID)]
+        row = loss_slices(ingest(*three_generations()))[LOSS_ROW]
 
         assert [depth for _name, _s, _e, depth in row] == [0, 0]
 
     def test_the_walks_are_reading_something(self) -> None:
         """Both resolvers return an empty row for a track that carries no
         slices, so an empty walk is indistinguishable from a clean one."""
-        row = loss_slices(ingest(*three_generations()))[(PID, LOSS_TID)]
+        row = loss_slices(ingest(*three_generations()))[LOSS_ROW]
 
         assert len(row) == 2
 
@@ -274,3 +274,15 @@ def test_a_shuffled_file_still_draws_a_flat_row(tmp_path: Path) -> None:
     with _combined(tmp_path, _shuffled_capture(tmp_path), "shuffled") as tp:
         assert _misplaced_ends(tp) == 0
         assert _loss_row(tp) == LIVE_ROW
+
+
+def test_the_converter_emits_a_shuffled_capture_in_time_order(tmp_path: Path) -> None:
+    """The same claim one level down, where it is cheap.
+
+    `loss_slices` walks the converter's output in emission order, so it fails
+    on a row emitted out of order as well as on one that overlaps. The test
+    above is what decides -- it asks the trace processor -- but it costs
+    seconds, and a sort that stopped working should not depend on a single
+    trace load to be noticed.
+    """
+    assert loss_slices(read_jsonl(_shuffled_capture(tmp_path))[PID])[LOSS_ROW] == LIVE_ROW

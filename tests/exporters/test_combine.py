@@ -7,7 +7,7 @@ import msgspec
 import pytest
 from perfetto.protos.perfetto.trace.perfetto_trace_pb2 import TrackEvent
 
-from gcmon.exporters.combine import _normalize_trace_timestamps, combine_files
+from gcmon.exporters.combine import _normalize_trace_timestamps, _starts_at, combine_files
 from gcmon.exporters.jsonl_io import (
     convert_jsonl_to_trace_format,
     normalize_jsonl_timestamps,
@@ -16,12 +16,14 @@ from gcmon.exporters.jsonl_io import (
 )
 from gcmon.model.data import LossMsg
 from gcmon.model.trace_event import (
+    Counter,
     EventArgs,
+    Instant,
+    InterpreterTrack,
+    LossTrack,
+    ProcessTrack,
+    Slice,
     TraceEvent,
-    begin_event,
-    counter_event,
-    loss_tid,
-    process_meta,
 )
 from tests.data_helpers import create_instant_msg
 from tests.exporters.conftest import make_inc_jsonl_record
@@ -74,26 +76,18 @@ class TestNormalizeTraceTimestamps:
             "uncollectable": 0,
             "candidates": 5,
         }
-        e1 = begin_event(pid=1, tid=1, name="e1", cat="c", ts_ns=5_000_000, args=args)
-        e2 = counter_event(
-            pid=1,
-            tid=1,
-            name="c1",
-            ts_ns=3_000_000,
-            args={"collected": 10, "uncollectable": 0, "candidates": 5, "heap_size": 100},
+        e1 = Slice(InterpreterTrack(1, 1), name="e1", cat="c", ts_start=5_000_000, ts_stop=5_001_000, args=args)
+        e2 = Counter(
+            InterpreterTrack(1, 1),
+            metric="collected",
+            display_name="c1 collected",
+            ts=3_000_000,
+            value=10,
         )
-        e3 = process_meta(pid=1, name="p")
-        events: list[TraceEvent] = [e1, e2, e3]
+        events: list[TraceEvent] = [e1, e2]
         _normalize_trace_timestamps(events)
-        assert e1.ts == 2_000_000  # 5_000_000 - 3_000_000
+        assert e1.ts_start == 2_000_000  # 5_000_000 - 3_000_000
         assert e2.ts == 0  # 3_000_000 - 3_000_000
-        assert e3.name == "process_name"  # metadata preserved
-
-    def test_no_timestamp_events_is_noop(self) -> None:
-        events: list[TraceEvent] = [process_meta(pid=1, name="p")]
-        _normalize_trace_timestamps(events)
-        assert len(events) == 1
-        assert events[0].name == "process_name"
 
     def test_single_event_ts_becomes_zero(self) -> None:
         args: EventArgs = {
@@ -105,10 +99,10 @@ class TestNormalizeTraceTimestamps:
             "uncollectable": 0,
             "candidates": 5,
         }
-        e1 = begin_event(pid=1, tid=1, name="e1", cat="c", ts_ns=1_000_000, args=args)
+        e1 = Slice(InterpreterTrack(1, 1), name="e1", cat="c", ts_start=1_000_000, ts_stop=1_001_000, args=args)
         events: list[TraceEvent] = [e1]
         _normalize_trace_timestamps(events)
-        assert e1.ts == 0
+        assert e1.ts_start == 0
 
     def test_empty_events_is_noop(self) -> None:
         events: list[TraceEvent] = []
@@ -125,16 +119,39 @@ class TestNormalizeTraceTimestamps:
             "uncollectable": 0,
             "candidates": 5,
         }
-        e1 = begin_event(pid=1, tid=1, name="e1", cat="c", ts_ns=10_000_000, args=args)
-        e2 = begin_event(pid=1, tid=1, name="e2", cat="c", ts_ns=12_000_000, args=args)
-        e3 = begin_event(pid=2, tid=1, name="e3", cat="c", ts_ns=5_000_000, args=args)
-        e4 = begin_event(pid=2, tid=1, name="e4", cat="c", ts_ns=7_000_000, args=args)
+        e1 = Slice(InterpreterTrack(1, 1), name="e1", cat="c", ts_start=10_000_000, ts_stop=10_001_000, args=args)
+        e2 = Slice(InterpreterTrack(1, 1), name="e2", cat="c", ts_start=12_000_000, ts_stop=12_001_000, args=args)
+        e3 = Slice(InterpreterTrack(2, 1), name="e3", cat="c", ts_start=5_000_000, ts_stop=5_001_000, args=args)
+        e4 = Slice(InterpreterTrack(2, 1), name="e4", cat="c", ts_start=7_000_000, ts_stop=7_001_000, args=args)
         events: list[TraceEvent] = [e1, e2, e3, e4]
         _normalize_trace_timestamps(events)
-        assert e1.ts == 0  # pid=1: 10_000_000 - 10_000_000
-        assert e2.ts == 2_000_000  # pid=1: 12_000_000 - 10_000_000
-        assert e3.ts == 0  # pid=2: 5_000_000 - 5_000_000
-        assert e4.ts == 2_000_000  # pid=2: 7_000_000 - 5_000_000
+        assert e1.ts_start == 0  # pid=1: 10_000_000 - 10_000_000
+        assert e2.ts_start == 2_000_000  # pid=1: 12_000_000 - 10_000_000
+        assert e3.ts_start == 0  # pid=2: 5_000_000 - 5_000_000
+        assert e4.ts_start == 2_000_000  # pid=2: 7_000_000 - 5_000_000
+
+    def test_every_kind_of_event_is_shifted(self) -> None:
+        """Every timestamp on every member of the union moves.
+
+        The normalizer used to select events by `ph`, and a kind added later
+        would have been left behind holding raw ones. A `Slice` is the case
+        that can still go half-done: it carries two absolute timestamps, and
+        shifting only the one it starts at would stretch every span back to
+        the old origin without failing anything else.
+        """
+        pause = Slice(InterpreterTrack(1, 0), name="GC Pause(0)", cat="gc", ts_start=8_000, ts_stop=9_000, args={})
+        counter = Counter(InterpreterTrack(1, 0), metric="collected", display_name="G0 collected", ts=8_000, value=1)
+        rss = Counter(ProcessTrack(1), metric="rss", display_name="rss", ts=6_000, value=4096)
+        mark = Instant(ProcessTrack(1), name="benchmark", ts=5_000)
+        loss = Slice(LossTrack(1, 0), name="GC Loss(0)", cat="gc.loss", ts_start=5_000, ts_stop=7_000, args={})
+        events: list[TraceEvent] = [pause, counter, rss, mark, loss]
+
+        _normalize_trace_timestamps(events)
+
+        assert [_starts_at(e) for e in events] == [3_000, 3_000, 1_000, 0, 0]
+        assert (pause.ts_stop, loss.ts_stop) == (4_000, 2_000), (
+            "a `Slice` carries an absolute end, so both of its timestamps have to move"
+        )
 
     def test_negative_timestamps(self) -> None:
         args: EventArgs = {
@@ -146,12 +163,12 @@ class TestNormalizeTraceTimestamps:
             "uncollectable": 0,
             "candidates": 5,
         }
-        e1 = begin_event(pid=1, tid=1, name="e1", cat="c", ts_ns=-100, args=args)
-        e2 = begin_event(pid=1, tid=1, name="e2", cat="c", ts_ns=-500, args=args)
+        e1 = Slice(InterpreterTrack(1, 1), name="e1", cat="c", ts_start=-100, ts_stop=900, args=args)
+        e2 = Slice(InterpreterTrack(1, 1), name="e2", cat="c", ts_start=-500, ts_stop=500, args=args)
         events: list[TraceEvent] = [e1, e2]
         _normalize_trace_timestamps(events)
-        assert e1.ts == 400  # -100 - (-500)
-        assert e2.ts == 0
+        assert e1.ts_start == 400  # -100 - (-500)
+        assert e2.ts_start == 0
 
 
 class TestCombineFiles:
@@ -263,7 +280,6 @@ class TestJsonlLossRoundTrip:
 
         assert json.loads(path.read_text(encoding="utf-8")) == {
             "pid": 42,
-            "tid": loss_tid(1),
             "iid": 1,
             "ts_start": 5_000,
             "ts_stop": 6_000,
@@ -293,16 +309,18 @@ class TestJsonlLossRoundTrip:
         path = tmp_path / "loss.jsonl"
         write_jsonl(path, {42: [self._msg(lost_from=413, lost_count=19)]})
 
-        args = [e.args for e in convert_jsonl_to_trace_format(path) if e.ph == "B"]
+        args = [e.args for e in convert_jsonl_to_trace_format(path) if isinstance(e, Slice)]
 
         assert [a["gen0"]["lost_collections"] for a in args] == ["413..431"]  # type: ignore[index]
 
-    def test_written_on_the_loss_track(self, tmp_path: Path) -> None:
+    def test_written_naming_the_interpreter_that_lost_the_records(self, tmp_path: Path) -> None:
         path = tmp_path / "loss.jsonl"
 
         write_jsonl(path, {42: [self._msg(lost_count=76)]})
 
-        assert json.loads(path.read_text(encoding="utf-8"))["tid"] == loss_tid(1)
+        record = json.loads(path.read_text(encoding="utf-8"))
+        assert record["iid"] == 1
+        assert "tid" not in record
 
     def test_normalize_shifts_a_loss_span(self) -> None:
         """It is neither a GC record nor an instant, so without a branch of its

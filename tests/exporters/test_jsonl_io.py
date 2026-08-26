@@ -14,14 +14,14 @@ from gcmon.exporters.jsonl_io import (
     read_jsonl,
     write_jsonl,
 )
+from gcmon.model.data import GCStatsInfo, LossMsg
 from gcmon.model.protocol import has_incremental
-from gcmon.model.trace_event import (
-    loss_tid,
-)
+from gcmon.model.trace_event import Counter, InterpreterTrack, Slice
 from tests.data_helpers import create_instant_msg
 from tests.exporters.conftest import make_inc_item, make_inc_jsonl_record
 from tests.helpers import (
     JsonlRecord,
+    assert_valid_perfetto_trace,
     create_jsonl_record,
     create_mock_stats_item,
 )
@@ -97,6 +97,58 @@ class TestReadJsonl:
         path.write_text("not valid json\n", encoding="utf-8")
         with pytest.raises(msgspec.DecodeError):
             read_jsonl(path)
+
+    def test_a_capture_carrying_the_old_tid_field_still_reads(self, tmp_path: Path) -> None:
+        """Captures written before `tid` left carry it on every GC and loss
+        line. `from_mapping` rebuilds a record from its own fields and has
+        never looked at `tid`, which is why the field could go at all; a test
+        keeps that a decision rather than an accident."""
+        path = tmp_path / "old.jsonl"
+        gc_line = {**create_jsonl_record(pid=42, iid=1), "tid": 1}
+        loss_line = {
+            "pid": 42,
+            "tid": -3,
+            "iid": 1,
+            "ts_start": 5_000,
+            "ts_stop": 6_000,
+            "gens": [{"gen": 0, "observed_count": 4, "lost_from": 413, "lost_count": 5, "lost_pause_ns": 8_100_000}],
+        }
+        path.write_bytes(msgspec.json.encode(gc_line) + b"\n" + msgspec.json.encode(loss_line) + b"\n")
+
+        items = read_jsonl(path)
+
+        gc_record, loss_record = items[42]
+        assert isinstance(gc_record, GCStatsInfo)
+        assert isinstance(loss_record, LossMsg)
+        assert gc_record.iid == 1
+        assert loss_record.iid == 1
+
+    def test_an_old_capture_combines_into_the_same_trace_as_a_new_one(self, tmp_path: Path) -> None:
+        """The extra field survives the whole `combine` path, not just the
+        reader: a capture with `tid` and the same capture without it draw the
+        same trace.
+
+        Compared packet by packet rather than byte by byte. `combine_files`
+        builds its own encoder, whose `trusted_packet_sequence_id` is `id(self)`
+        masked, so two runs never agree on those bytes.
+        """
+        old = tmp_path / "old.jsonl"
+        new = tmp_path / "new.jsonl"
+        record = create_jsonl_record(pid=42, iid=1)
+        old.write_bytes(msgspec.json.encode({**record, "tid": 1}) + b"\n")
+        new.write_bytes(msgspec.json.encode(record) + b"\n")
+
+        combine_files([old], tmp_path / "old.pftrace", output_format="perfetto")
+        combine_files([new], tmp_path / "new.pftrace", output_format="perfetto")
+
+        def packets(path: Path) -> list[str]:
+            decoded: list[str] = []
+            for packet in assert_valid_perfetto_trace(path):
+                packet.ClearField("trusted_packet_sequence_id")
+                decoded.append(str(packet))
+            return decoded
+
+        assert packets(tmp_path / "old.pftrace") == packets(tmp_path / "new.pftrace")
 
     def test_a_file_opening_with_an_array_is_reported_as_a_chrome_trace(self, tmp_path: Path) -> None:
         """The one shape a JSONL reader can name rather than choke on: a
@@ -221,9 +273,8 @@ class TestConvertJsonlToTraceFormat:
 
         events = convert_jsonl_to_trace_format(path)
         assert len(events) > 0
-        assert any(e.ph == "M" for e in events)  # metadata
-        assert any(e.ph == "B" for e in events)  # pause begin
-        assert any(e.ph == "C" for e in events)  # counter
+        assert any(isinstance(e, Slice) for e in events)  # the pause
+        assert any(isinstance(e, Counter) for e in events)  # counter
 
     def test_empty_file_returns_empty_list(self, tmp_path: Path) -> None:
         path = tmp_path / "empty.jsonl"
@@ -236,27 +287,25 @@ class TestConvertJsonlToTraceFormat:
         record = make_inc_jsonl_record(pid=1, ts_start=1000, ts_stop=5000)
         path.write_bytes(msgspec.json.encode(record) + b"\n")
         events = convert_jsonl_to_trace_format(path)
-        pause_events = [e for e in events if e.ph == "B"]
-        assert any("Mark Alive" in e.name for e in pause_events)
-        assert any("Fill increment" in e.name for e in pause_events)
-        assert any("Deduce Unreachable" in e.name for e in pause_events)
-        assert any("Handle Weakrefs" in e.name for e in pause_events)
-        assert any("Finalize Garbage" in e.name for e in pause_events)
-        assert any("Handle Resurrected" in e.name for e in pause_events)
-        assert any("Clear Weakrefs" in e.name for e in pause_events)
-        assert any("Delete Garbage" in e.name for e in pause_events)
+        spans = [e for e in events if isinstance(e, Slice)]
+        assert any("Mark Alive" in e.name for e in spans)
+        assert any("Fill increment" in e.name for e in spans)
+        assert any("Deduce Unreachable" in e.name for e in spans)
+        assert any("Handle Weakrefs" in e.name for e in spans)
+        assert any("Finalize Garbage" in e.name for e in spans)
+        assert any("Handle Resurrected" in e.name for e in spans)
+        assert any("Clear Weakrefs" in e.name for e in spans)
+        assert any("Delete Garbage" in e.name for e in spans)
 
-    def test_multiple_pids_generates_metadata(self, tmp_path: Path) -> None:
+    def test_multiple_pids_each_get_their_own_tracks(self, tmp_path: Path) -> None:
         path = tmp_path / "multi.jsonl"
         lines = [
-            msgspec.json.encode(create_jsonl_record(pid=1)),
-            msgspec.json.encode(create_jsonl_record(pid=2)),
+            msgspec.json.encode(create_jsonl_record(pid=1, iid=0)),
+            msgspec.json.encode(create_jsonl_record(pid=2, iid=0)),
         ]
         path.write_bytes(b"\n".join(lines) + b"\n")
         events = convert_jsonl_to_trace_format(path)
-        process_metas = [e for e in events if e.name == "process_name"]
-        assert len(process_metas) == 2
-        assert {e.pid for e in process_metas} == {1, 2}
+        assert {e.track for e in events} == {InterpreterTrack(1, 0), InterpreterTrack(2, 0)}
 
 
 class TestAnOldFormatLossRecord:
@@ -265,7 +314,7 @@ class TestAnOldFormatLossRecord:
     That gcmon flattened three generations into `lost_gen_0`..`lost_gen_2` and
     wrote no `lost_count`, which is the field `from_mapping` now discriminates
     on. Such a line therefore falls through to the GC-record branch, and the
-    danger is that it lands there quietly: an interval gcmon was blind in would
+    danger is that it lands there: an interval gcmon was blind in would
     be read back as a collection it observed, and counted into `--stats` and
     drawn on an interpreter's own row as a `GC Pause`.
 
@@ -279,7 +328,7 @@ class TestAnOldFormatLossRecord:
     def _line(self, **kw: int) -> dict[str, int]:
         return {
             "pid": 42,
-            "tid": loss_tid(1),
+            "tid": -3,
             "iid": 1,
             "ts_start": 5_000,
             "ts_stop": 6_000,
@@ -327,7 +376,7 @@ class TestAnOldFormatLossRecord:
         was observed in."""
         line = {
             "pid": 42,
-            "tid": loss_tid(1),
+            "tid": -3,
             "iid": 1,
             "gen": 1,
             "ts_start": 5_000,

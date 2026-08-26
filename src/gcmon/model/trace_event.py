@@ -1,58 +1,62 @@
-"""The events every output format is built from, and the factories that build them.
+"""The events every output format is built from.
 
 One converter fills these and every encoder reads them (ADR-0007). `ts` is
-nanoseconds (ADR-0009).
+nanoseconds (ADR-0009). Every event names the `Track` it is drawn on, and the
+encoder derives every other row of the trace from those.
 """
-
-from typing import Literal
 
 import msgspec
 
 __all__ = [
-    "LOSS_TID_BASE",
-    "RSS_TID",
     "ArgGroup",
-    "BeginEvent",
-    "CounterEvent",
-    "EndEvent",
+    "Counter",
     "EventArgs",
-    "InstantEvent",
-    "NameInfo",
-    "ProcessMeta",
-    "ThreadMeta",
+    "Instant",
+    "InterpreterTrack",
+    "LossTrack",
+    "ProcessTrack",
+    "Slice",
     "TraceEvent",
-    "begin_event",
-    "counter_event",
-    "end_event",
-    "instant_event",
-    "loss_iid",
-    "loss_tid",
-    "process_meta",
-    "thread_meta",
+    "Track",
 ]
 
-# These numbers are what they are because the Chrome format, which this shape
-# came from, identified a track by `(pid, tid)` alone: a row belonging to no
-# interpreter had to take a tid no interpreter would claim. gcmon names none of
-# these rows with `thread_meta`, so Perfetto leaves them off its thread list.
-#
-# RSS belongs to the process, with no interpreter behind it.
-RSS_TID: int = -1
 
-# Loss belongs to an interpreter and gets a row of its own, per ADR-0015. One
-# row holds every poll: a poll draws a single span there whatever went blind in
-# it, and consecutive polls tile the timeline, so no two spans overlap.
-LOSS_TID_BASE: int = -2
+class ProcessTrack(msgspec.Struct, frozen=True):
+    """The process's own row: its marks, and its RSS.
+
+    Nothing here belongs to an interpreter, so nothing here names one.
+    """
+
+    pid: int
 
 
-def loss_tid(iid: int) -> int:
-    """The tid carrying interpreter *iid*'s loss track: -2, -3, ..."""
-    return LOSS_TID_BASE - iid
+class InterpreterTrack(msgspec.Struct, frozen=True):
+    """Interpreter *iid*'s row, carrying its collections.
+
+    Drawn as a Perfetto thread track and labelled ``Thread {iid}``. That is
+    the wire's vocabulary, not gcmon's: an interpreter is not an OS thread,
+    and the descriptor says thread only because that is what makes the UI
+    draw a row under the process.
+    """
+
+    pid: int
+    iid: int
 
 
-def loss_iid(tid: int) -> int:
-    """The interpreter behind a loss tid. A `TraceEvent` carries no `iid`."""
-    return LOSS_TID_BASE - tid
+class LossTrack(msgspec.Struct, frozen=True):
+    """Interpreter *iid*'s loss row, drawn beside its collections per
+    ADR-0015.
+
+    One row holds every poll: a poll draws a single span there whatever went
+    blind in it, and consecutive polls tile the timeline, so no two spans
+    overlap.
+    """
+
+    pid: int
+    iid: int
+
+
+type Track = ProcessTrack | InterpreterTrack | LossTrack
 
 
 type ArgGroup = dict[str, int | str]
@@ -62,143 +66,46 @@ type ArgGroup = dict[str, int | str]
 type EventArgs = dict[str, int | str | ArgGroup]
 
 
-class NameInfo(msgspec.Struct):
-    name: str
+class Slice(msgspec.Struct):
+    """One span on *track*, between two absolute timestamps.
 
+    The one event whose timestamp is not called `ts`. See ADR-0024 for
+    the encoder expanding this into the BEGIN/END pair the wire format
+    has.
 
-class BeginEvent(msgspec.Struct):
-    name: str
-    cat: str
-    ph: Literal["B"]
-    ts: int
-    pid: int
-    tid: int
-    args: EventArgs
+    Not frozen: `combine` shifts both ends in place, and it holds every
+    event of every capture when it does.
+    """
 
-
-class EndEvent(msgspec.Struct):
+    track: Track
     name: str
     cat: str
-    ph: Literal["E"]
-    ts: int
-    pid: int
-    tid: int
-
-
-class InstantEvent(msgspec.Struct):
-    name: str
-    ph: Literal["I"]
-    s: Literal["p"]
-    ts: int
-    pid: int
-
-
-class CounterEvent(msgspec.Struct):
-    name: str
-    ph: Literal["C"]
-    ts: int
-    pid: int
-    tid: int
-    args: dict[str, int | float]
-
-
-class ProcessMeta(msgspec.Struct):
-    name: Literal["process_name"]
-    ph: Literal["M"]
-    pid: int
-    args: NameInfo
-
-
-class ThreadMeta(msgspec.Struct):
-    name: Literal["thread_name"]
-    ph: Literal["M"]
-    pid: int
-    tid: int
-    args: NameInfo
-
-
-TraceEvent = BeginEvent | EndEvent | CounterEvent | ProcessMeta | ThreadMeta | InstantEvent
-
-
-def process_meta(pid: int, name: str) -> ProcessMeta:
-    return ProcessMeta(
-        name="process_name",
-        ph="M",
-        pid=pid,
-        args=NameInfo(name=name),
-    )
-
-
-def thread_meta(pid: int, tid: int, name: str) -> ThreadMeta:
-    return ThreadMeta(
-        name="thread_name",
-        ph="M",
-        pid=pid,
-        tid=tid,
-        args=NameInfo(name=name),
-    )
-
-
-def begin_event(
-    pid: int,
-    tid: int,
-    name: str,
-    cat: str,
-    ts_ns: int,
-    args: EventArgs,
-) -> BeginEvent:
+    ts_start: int
+    ts_stop: int
     # The slice owns *args*: every caller builds the dict for this one event
     # and drops it, so the event keeps it rather than copying it. A capture
     # holds one of these per phase of every collection, and the copy was the
     # largest single cost of converting one.
-    return BeginEvent(
-        name=name,
-        cat=cat,
-        ph="B",
-        ts=ts_ns,
-        pid=pid,
-        tid=tid,
-        args=args,
-    )
+    args: EventArgs
 
 
-def end_event(
-    pid: int,
-    tid: int,
-    name: str,
-    cat: str,
-    ts_ns: int,
-) -> EndEvent:
-    return EndEvent(
-        name=name,
-        cat=cat,
-        ph="E",
-        ts=ts_ns,
-        pid=pid,
-        tid=tid,
-    )
+class Instant(msgspec.Struct):
+    track: ProcessTrack
+    name: str
+    ts: int
+    # A default rather than a required field, since the two producers of an
+    # instant have nothing to put here: a `TInstantMsg` is a type, a name and
+    # a `ts`. Built per instant rather than shared, so the encoder can take
+    # ownership of it the way it takes a slice's.
+    args: EventArgs = msgspec.field(default_factory=dict)
 
 
-def instant_event(
-    pid: int,
-    name: str,
-    ts_ns: int,
-) -> InstantEvent:
-    return InstantEvent(
-        name=name,
-        ph="I",
-        s="p",
-        pid=pid,
-        ts=ts_ns,
-    )
+class Counter(msgspec.Struct):
+    track: Track
+    metric: str
+    display_name: str
+    ts: int
+    value: int | float
 
 
-def counter_event(pid: int, tid: int, name: str, ts_ns: int, args: dict[str, int | float]) -> CounterEvent:
-    return CounterEvent(
-        name=name,
-        ph="C",
-        ts=ts_ns,
-        pid=pid,
-        tid=tid,
-        args=args,
-    )
+type TraceEvent = Slice | Instant | Counter

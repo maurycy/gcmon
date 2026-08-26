@@ -139,7 +139,7 @@ class MockExporter(EventsExporter):
     def add_loss_event(self, pid: int, item: TLossMsg) -> None:
         """Record a loss window the monitor's arithmetic produced.
 
-        Deliberately does not set ``_event_added``: a caller blocking on
+        Does not set ``_event_added``: a caller blocking on
         ``wait_for_event`` is waiting for a GC record, and releasing it on a
         loss record would let it wake and assert against an empty ``events``.
         """
@@ -301,7 +301,6 @@ def create_mock_incremental_item(
 
 def create_jsonl_record(
     pid: int = 123,
-    tid: int = 1,
     gen: int = 0,
     iid: int = 1,
     ts_start: int = 1_000_000,
@@ -315,7 +314,6 @@ def create_jsonl_record(
 ) -> dict[str, int | float]:
     return {
         "pid": pid,
-        "tid": tid,
         "gen": gen,
         "iid": iid,
         "ts_start": ts_start,

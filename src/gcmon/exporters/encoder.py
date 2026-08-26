@@ -14,7 +14,7 @@ from functools import partial
 from pathlib import Path
 from typing import NamedTuple, Protocol
 
-from ..model.trace_event import ProcessMeta, TraceEvent
+from ..model.trace_event import TraceEvent
 from .perfetto_format import (
     PerfettoTrackState,
     TraceField,
@@ -88,6 +88,7 @@ class ProtobufEventEncoder:
         )
         self._has_written: bool = False
         self._codec: Codec = codec if codec is not None else _CODEC
+        self._cmdline_read: set[int] = set()
 
     @staticmethod
     def _default_cmdline_provider(pid: int) -> list[str]:
@@ -105,8 +106,16 @@ class ProtobufEventEncoder:
             return None
 
     def _ensure_cmdline(self, pid: int) -> None:
-        if self._track_state.get_cmdline(pid) is not None:
+        """Read *pid*'s command line, once per trace.
+
+        Once, and not once per pid per batch: a pid whose command line
+        cannot be read -- it has already exited, or psutil is missing --
+        would otherwise cost a failed read and a warning on every flush
+        for the rest of the run.
+        """
+        if pid in self._cmdline_read:
             return
+        self._cmdline_read.add(pid)
         cmdline = self._collect_cmdline(pid)
         if cmdline is not None:
             self._track_state.set_cmdline(pid, cmdline)
@@ -128,11 +137,9 @@ class ProtobufEventEncoder:
         ``Processes``-track span accumulator: *pids* are the processes
         gcmon read GC state out of at *ts_ns*.
 
-        Kept off the ``EventEncoder`` protocol, since a liveness
-        observation is neither a ``TraceEvent`` nor bytes. The caller is
-        ``PerfettoExporter``, which holds a typed handle to this class;
-        see ADR-0011. Writes nothing: the observations reach the file at
-        ``close()``.
+        Kept off the ``EventEncoder`` protocol: a liveness observation is
+        neither a ``TraceEvent`` nor bytes. See ADR-0011. Writes nothing;
+        the observations reach the file at ``close()``.
         """
         for pid in pids:
             self._track_state.update_process_lifetime(pid, ts_ns)
@@ -152,9 +159,10 @@ class ProtobufEventEncoder:
         if not events:
             return
         assert self._path is not None, "open() must be called before write_events()"
+        # Ahead of the convert pass, which puts the command line on the
+        # process descriptor it may be about to write.
         for event in events:
-            if isinstance(event, ProcessMeta) and not self._track_state.has_pid(event.pid):
-                self._ensure_cmdline(event.pid)
+            self._ensure_cmdline(event.track.pid)
         descriptors, packets = convert_trace_events_to_perfetto(
             list(events),
             self._track_state,

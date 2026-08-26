@@ -1,8 +1,8 @@
-"""Does the trace processor draw loss spans where we think it does?
+"""Does the trace processor draw loss spans where gcmon means them to go?
 
 Two claims that nothing at the wire level can settle. First, that a loss span
 lands on a row of its own rather than among the collections, which is the whole
-point of the sentinel tid and of a track descriptor Perfetto could ignore.
+point of the `LossTrack` and of a track descriptor Perfetto could ignore.
 Second, that consecutive poll intervals come back as neighbours on that row
 rather than as one span inside another. Both ask trace processor directly, and
 are marked ``fuzz`` for the cost.
@@ -23,7 +23,7 @@ from gcmon.exporters.perfetto_format import convert_trace_events_to_perfetto
 from gcmon.exporters.perfetto_track_state import PerfettoTrackState
 from gcmon.exporters.trace_converter import convert_item_to_trace_format, convert_loss_to_trace_format
 from gcmon.model.data import GCStatsInfo, LossMsg
-from gcmon.model.trace_event import TraceEvent, process_meta, thread_meta
+from gcmon.model.trace_event import TraceEvent
 from tests.helpers import create_mock_loss_item, open_trace_processor
 
 pytestmark = pytest.mark.fuzz
@@ -123,8 +123,6 @@ def _consecutive_intervals() -> list[LossMsg]:
 def _events(*losses: LossMsg) -> list[TraceEvent]:
     """A collection, the gap the losses sit in, then the next collection."""
     events: list[TraceEvent] = [
-        process_meta(PID, f"Process {PID}"),
-        thread_meta(PID, IID, f"Thread {IID}"),
         *convert_item_to_trace_format(PID, _pause(1_000, 2_000, 1)),
     ]
     for loss in losses:
@@ -134,7 +132,7 @@ def _events(*losses: LossMsg) -> list[TraceEvent]:
 
 
 def test_a_loss_span_lands_on_its_own_track(tmp_path: Path) -> None:
-    """The sentinel tid has to survive as a real, named row: the descriptor is
+    """A `LossTrack` has to survive as a real, named row: the descriptor is
     emitted off the slices, and nothing else in the trace refers to it."""
     misplaced, slices = _load(_events(_loss(2_000, 9_000, 500)), tmp_path, "own_track")
 
