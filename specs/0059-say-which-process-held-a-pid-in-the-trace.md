@@ -4,7 +4,8 @@
 - **Kind:** feature (enhancement)
 - **Effort:** M
 - **Origin:** design session 2026-08-23 on comparing two tracefiles; a reader
-  of a trace cannot make the distinction the live table already makes
+  of a trace cannot make the distinction the live table already makes.
+  Measured on a pyperformance trace 2026-08-28, section 1
 - **Respects:**
   [ADR-0010](../docs/adr/0010-process-identity-cmdline-and-start-marker.md)
   (cmdline as a debug annotation on the process slice),
@@ -28,6 +29,14 @@ the first process to the last observation of the second. Someone opening the
 file months later cannot tell a recycled pid from one long-lived process, and
 the span they read covers an interval in which the process they think they are
 looking at did not exist.
+
+A 4840 s pyperformance run over 1862 processes puts numbers on it. On 133 of
+them the `start_timestamp_ns` on the process descriptor falls more than a
+second before the process's first event, on 90 more than a minute, and on one
+1021 s before it. The clipping then pulls a crossing span's end back, and 133
+spans end before the process they name produced anything. Pid 44952 kept its
+width instead: a 954 s span over a process whose events cover 0.73 s, so an
+operator zooming to that span reads a process with no events and no counters.
 
 The distinction exists only in memory, on `StreamingStats`, and it is gone the
 moment the run ends. No file gcmon writes carries it.
@@ -102,6 +111,19 @@ from both processes continue to share the process track, and a reader
 attributes each to a process by which span its timestamp falls in. If someone
 later measures what the trace processor does, splitting the track is a
 separate spec with an answer to point at.
+
+**The process descriptor keeps the first epoch on both its fields.**
+`_emit_process_descriptor` reads `start_timestamp_ns` from
+`PerfettoTrackState.get_process_lifetime_start_ts` and `sibling_order_rank`
+from `get_process_track_ranks`, and once the span key widens neither call has
+an epoch to name. The track is not split, so it covers every process that held
+the pid: the first of them is when it opens, and ranking on that same
+timestamp leaves process order unchanged. A run with no reuse writes what it
+writes today, per story 5.
+
+The consequence is that a recycled pid keeps a process track stamped before
+its later occupant existed. The `Processes` track carries that distinction
+instead.
 
 **JSONL is left alone.** A capture carries no epoch and no exit record, so
 `combine` cannot recover one, and a trace built offline will collapse what a
