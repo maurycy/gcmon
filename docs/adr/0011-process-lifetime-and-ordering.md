@@ -14,7 +14,7 @@
   one per process and the liveness stamp moved to the end of the poll phase
   2026-08-31, see [ADR-0025](0025-create-every-process-in-one-place.md); the
   process track was split per process and the collapse question measured
-  2026-08-31)
+  2026-09-01)
 
 ## Context
 

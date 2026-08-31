@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-08-15 (the epoch moved onto a `Process` the monitor creates
   2026-08-31, see [ADR-0025](0025-create-every-process-in-one-place.md); the
-  track keys it cites became per process 2026-08-31, see
+  track keys it cites became per process 2026-09-01, see
   [ADR-0011](0011-process-lifetime-and-ordering.md))
 
 ## Context

@@ -4,7 +4,7 @@
 - **Date:** 2026-06-08 (`Start Process` marker added 2026-06-27; collection
   moved to the monitor and became once per process 2026-08-31, see
   [ADR-0025](0025-create-every-process-in-one-place.md); the descriptor and
-  the marker became per process 2026-08-31, see
+  the marker became per process 2026-09-01, see
   [ADR-0011](0011-process-lifetime-and-ordering.md))
 
 ## Context

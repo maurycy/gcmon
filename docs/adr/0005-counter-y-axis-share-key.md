@@ -1,7 +1,7 @@
 # ADR-0005: Use the metric name itself as `CounterDescriptor.y_axis_share_key`
 
 - **Status:** Accepted
-- **Date:** 2026-06-28 (the track key became per process 2026-08-31, see
+- **Date:** 2026-06-28 (the track key became per process 2026-09-01, see
   [ADR-0011](0011-process-lifetime-and-ordering.md))
 
 ## Context

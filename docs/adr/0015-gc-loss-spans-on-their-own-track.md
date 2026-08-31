@@ -1,7 +1,7 @@
 # ADR-0015: Draw reconstructed GC loss on a per-interpreter track, one span per poll interval
 
 - **Status:** Accepted
-- **Date:** 2026-08-05 (the track key became per process 2026-08-31, see
+- **Date:** 2026-08-05 (the track key became per process 2026-09-01, see
   [ADR-0011](0011-process-lifetime-and-ordering.md))
 
 ## Context
