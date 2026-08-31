@@ -5,17 +5,22 @@
 - **Kind:** feature (enhancement)
 - **Effort:** M
 - **Origin:** spec 0059, retired, see [RETIRED.md](RETIRED.md); it separated
-  the spans and left every other row merged. The measurement in section 4 was
-  taken 2026-08-31
+  the spans and left every other row merged
 - **Respects:**
   [ADR-0002](../docs/adr/0002-perfetto-track-uuid-and-hierarchy.md) (uuid
   allocation and explicit parenting),
   [ADR-0003](../docs/adr/0003-gc-metrics-group-track.md) (the counter group
-  hangs off a process track),
+  hangs off a process track; this spec amends it),
+  [ADR-0005](../docs/adr/0005-counter-y-axis-share-key.md) (a shared y axis
+  cannot cross a process; this spec amends it),
   [ADR-0010](../docs/adr/0010-process-identity-cmdline-and-start-marker.md)
   (the cmdline pair and the `Start Process` marker; this spec amends it),
   [ADR-0011](../docs/adr/0011-process-lifetime-and-ordering.md) (the
   `Processes` track, its spans and process ordering; this spec amends it),
+  [ADR-0015](../docs/adr/0015-gc-loss-spans-on-their-own-track.md) (the
+  `GC Loss` row and its flatness; this spec amends it),
+  [ADR-0016](../docs/adr/0016-the-ring-is-the-statistics-unit.md) (the keys
+  the trace side draws on; this spec amends it),
   [ADR-0024](../docs/adr/0024-an-event-names-the-track-it-is-drawn-on.md) (an
   event names its `Track` and the encoder derives the rest),
   [ADR-0025](../docs/adr/0025-create-every-process-in-one-place.md) (a
@@ -23,38 +28,34 @@
 
 ## 1. Problem statement
 
-An operator opening a trace of a worker tree reads `Process 12345` and
-`Process 12345#2` on the `Processes` track and knows the pid was handed on.
-Every other row in the trace merges the two.
+A pid handed on in a worker tree names two processes, and one row tells them
+apart: an operator reads `Process 12345` and `Process 12345#2` on the
+`Processes` track. Every other row merges them into a single `Process 12345`
+process track. Its thread row interleaves both processes' pauses, its
+`GC Loss` row tiles both their blind intervals, its counters step from one
+process's values to the other's with nothing marking where, and its
+`start_timestamp_ns` and `Start Process` marker are the first process's, so
+the row is stamped before the second process existed and the UI orders it
+there.
 
-There is a single `Process 12345` group. Its `Thread 0` row draws both
-processes' pauses in one line of slices. Its `G0 collected` counter steps from
-one process's values to the other's with nothing marking where. Its
-`start_timestamp_ns` is the first process's, so the row is stamped before the
-second one existed and the UI orders it on that. The `Start Process` marker
-went out for the first process alone.
-
-The command line goes further and names the wrong program. gcmon reads one per
-process and puts the right one on each span, but the group carries only the
-first process's, on both `ProcessDescriptor.cmdline` and the track's
-`description`. One trace then holds two answers: the `#2` span names the
-program that process ran, the group above it names its predecessor's, and
-nothing says which to believe.
-
-In SQL a per-process aggregate cannot be `GROUP BY upid`, because one `upid`
-covers both. It has to join through the `Processes` track and compare each
-event's timestamp against a span.
+The command line is wrong rather than merged: gcmon reads one per process and
+draws the right one on each span, so the `#2` span and the track above it name
+different programs. In SQL one `upid` covers both, so a per-process aggregate
+joins through the `Processes` track on a timestamp range instead of grouping.
 
 ## 2. Solution
 
-Each process gets its own rows. A pid held twice draws two process groups,
-`Process 12345` and `Process 12345#2`, each carrying the thread rows, counter
-rows, `Start Process` marker, command line and start time of the process it
-names. A span on the `Processes` track and the group of the same name describe
-the same process, and `GROUP BY upid` is per process.
+Each process gets its own rows. A pid held twice draws two process tracks,
+`Process 12345` and `Process 12345#2`, each carrying the thread row, the loss
+row, the counter group and counter rows, the `Start Process` marker, the
+command line and the start time of the process it names. A span on the
+`Processes` track and the process track of the same name describe the same
+process, and `GROUP BY upid` is per process.
 
-A run in which no pid was reused writes the trace it writes today, byte for
-byte.
+Each process draws only the rows its own events name. If the second process
+never ran a gen-2 collection, `G2 collected` appears under the first alone.
+
+Where no pid was reused there is nothing to split, and the trace is unchanged.
 
 ## 3. User stories
 
@@ -64,11 +65,11 @@ byte.
 2. As someone reading a pause row, I want one per process, so that two
    processes' collections are not interleaved into a history neither of them
    had.
-3. As someone reading a process group, I want its start time to be its own, so
+3. As someone reading a process track, I want its start time to be its own, so
    that the row is not stamped before the process existed and the UI does not
    order it as though it were.
-4. As someone reading a command line, I want the group and the span above it
-   to agree, so that a trace holds one answer rather than two.
+4. As someone reading a command line, I want the process track and the span
+   above it to agree, so that a trace holds one answer rather than two.
 5. As someone querying a trace from SQL, I want two `upid`s for a pid held
    twice, so that a per-process aggregate is a `GROUP BY` rather than a join
    through the `Processes` track on a timestamp range.
@@ -79,89 +80,94 @@ byte.
 
 ## 4. Implementation decisions
 
-**The trace processor splits every row a pid shares, given two descriptors.**
-[ADR-0011](../docs/adr/0011-process-lifetime-and-ordering.md) leaves this
-unmeasured. Measured against the `trace_processor` the suite pins in
-`tests.perfetto_prebuilt` (v58.2): two process descriptors on pid 4242 at
-different `start_timestamp_ns`, each with a `Thread 0` descriptor carrying the
-`(pid, tid)` pair gcmon writes for interpreter zero, and a `G0 collected`
-counter track.
-
-```
-process    upid=1 pid=4242 start_ts=1000      upid=2 pid=4242 start_ts=9000
-thread     utid=1 tid=4242 upid=1             utid=2 tid=4242 upid=2
-counter    track=2 "G0 collected" upid=1      track=5 "G0 collected" upid=2
-slices     GC Pause A -> utid=1               GC Pause B -> utid=2
-counters   ts=1000 value=7   track=2          ts=9000 value=99  track=5
-args       upid=1 description="python3 -m a"  upid=2 description="python3 -m b"
-stats      no non-info row raised
-```
-
-Interpreter zero takes `tid = pid`
-([spec 0027](0027-thread-descriptor-tid-for-interpreter-zero.md)), so both
-thread descriptors carry `(4242, 4242)`. The trace processor resolves the
-thread through its `upid` rather than that pair, so nothing needs a synthetic
-pid or a synthetic tid.
+**The records carry the decision; this spec implements it.**
+[ADR-0011](../docs/adr/0011-process-lifetime-and-ordering.md) reverses "the
+Perfetto process track is not split", takes the measurement it left open, and
+records that the epoch cannot reach a `process` row as a column of its own.
+[ADR-0010](../docs/adr/0010-process-identity-cmdline-and-start-marker.md)
+gains the per-process descriptor and marker. ADR-0003, ADR-0005, ADR-0015 and
+ADR-0016 each state a track key as `(pid, iid)` and become `(process, iid)`.
+Section 7 has the order.
 
 **The encoder stops dropping the epoch from its keys.** Every event already
 names a `Process`
 ([ADR-0025](../docs/adr/0025-create-every-process-in-one-place.md)), and
 `PerfettoTrackState` throws that half away before filing anything.
 `_shared_row` rewrites a `Track` to epoch 1 for `has_track`, `get_track_uuid`,
-the counter tracks and the counter group; `get_process_track_uuid`,
+the counter tracks and the counter group. `get_process_track_uuid`,
 `has_process_descriptor` and `has_start_process_marker` key on the bare pid.
-Deleting `_shared_row` and keying those seven on the process is the change. A
-uuid then belongs to a process, and the thread and counter tracks parent to
-the group of the process that produced them with no further rule. The span
-accumulator already keys this way.
+Two more pin the epoch without going through `_shared_row`:
+`get_process_lifetime_start_ts` reads `Process(pid, 1)`, and
+`get_process_track_ranks` filters on `pid_epoch == 1`. Deleting `_shared_row`
+and keying those nine on the process is the change. A uuid then belongs to a
+process, and the thread, loss and counter tracks parent to the process track
+of the process that produced them with no further rule. The span accumulator
+already keys this way.
 
-Rejected: **resolving the epoch inside the encoder**, through an
-`epoch_at(pid, ts)` on the track state answered from the span accumulator.
-There is nothing to resolve. The monitor decided which process a record
-belongs to before the record reached an exporter, so a slice belongs to the
-process its `ts_start` was filed under, and a collection that began before a
-process exited belongs to that process.
+**Each descriptor carries its own process's name, start and rank.**
+`_emit_process_descriptor` names the process track from the `Process` itself,
+so a process track and its span match as strings. The `pid` field stays the
+operating system's pid, the field a query filters on. `start_timestamp_ns`
+comes from that process's own span rather than the pid's first.
+`get_process_track_ranks` returns a rank per process, ordered by start
+timestamp and then by process, so a successor sorts on its own first
+observation.
 
-**Each descriptor carries its own process's name, start, rank, command line
-and marker.** `_emit_process_descriptor` names the group `Process 12345#2`
-from the `Process` itself, so a group and its span match as strings. The `pid`
-field stays the operating system's pid, which is what the trace processor
-groups on. `start_timestamp_ns` comes from that process's own span rather than
-the pid's first, and `get_process_track_ranks` returns a rank per process,
-ordered by start timestamp and then pid and epoch, so a successor sorts on its
-own first observation. This reverses ADR-0011's "not split, and stamped and
-ranked from the first process to hold the pid", which stood only because
-nobody had measured.
+**One spelling of the name.** `perfetto_format` builds it from a pid and
+`perfetto_process_lifetime` from a `Process`. Both become one
+`process_track_name` in `perfetto_process_lifetime`, which `perfetto_format`
+already imports from. The two strings have to be equal for a process track and
+its span to name one process, and `docs/perfetto-sql.md` joins on that
+equality.
+
+**The command line needs no change of its own.** `set_cmdline` and
+`get_cmdline` key on the `Process` already (ADR-0025). The wrong command line
+reaches the trace because the successor's descriptor is never emitted, and
+emitting it is the whole of story 4.
 
 **A run with no reuse stays byte-identical.** With one process per pid,
-`_shared_row` is already the identity on every key it rewrites, uuid
-allocation order is unchanged, and `Process 12345#2` is `Process 12345` on the
-first epoch.
+`_shared_row` is the identity on every key it rewrites, the two sites that pin
+epoch 1 pin the only epoch there is, uuid allocation order is unchanged, and
+`Process 12345#2` is `Process 12345` on the first epoch.
 
-Rejected: **keeping one group and annotating the counter with the epoch.** It
-leaves the counter line stepping between two processes and asks every reader
-to de-interleave it, which is the work splitting does once.
+**What the rest of the header constrains.**
 
-Rejected: **fixing the command line alone**, leaving the group merged. It is
-the cheap half of story 4 and it strands 1, 2, 3 and 5; the same key does all
-of them.
+- ADR-0002: uuids stay allocated in first-reference order and every child
+  names its parent, which the split keeps by allocating one more parent.
+- ADR-0003: the counter group is non-OS-scoped and hangs off a process track,
+  so a second group hangs off the second process track.
+- ADR-0005: a shared y axis needs a shared parent, and after the split two
+  processes on one pid no longer have one.
+- ADR-0015: the loss row holds one span per poll and has to stay flat.
+  Splitting it leaves each poll on the row of the process it polled, so no
+  span holds across a handover.
+- ADR-0024: an event names its `Track` and the encoder derives the rest, which
+  is the rule `_shared_row` breaks.
+- ADR-0025: the monitor decided which process a record belongs to before the
+  record reached an exporter, so nothing here resolves an epoch.
 
 **`combine` is unaffected.** Offline conversion creates no process and builds
-every pid a first process
-([ADR-0024](../docs/adr/0024-an-event-names-the-track-it-is-drawn-on.md)), so
-every key reduces to what it is today.
+every pid a first process (`trace_converter`, ADR-0024), so every key reduces
+to what it is today.
+
+The rejected alternatives live in ADR-0011: resolving the epoch inside the
+encoder, keeping one process track and annotating the counter with the epoch,
+writing a synthetic pid for a successor, and fixing the command line alone.
 
 ## 5. Seams and testing decisions
 
 - **Seam:** a trace-processor SQL assertion over `process`, `thread` and
-  `counter_track`. It is the highest seam that can observe the change, and per
-  CONVENTIONS rule 6 it asserts what the trace means rather than that the
-  bytes round-tripped: a byte assertion passes on two descriptors the trace
+  `counter_track`, and the golden trace in
+  `tests/fixtures/monitored_run_perfetto_trace.txt`. Per CONVENTIONS rule 6
+  the SQL asserts what the trace means rather than that the bytes
+  round-tripped: a byte assertion passes on two descriptors the trace
   processor merged back into one.
 - **New seam needed:** one fixture.
   `tests/exporters/test_perfetto_exporter_integration.py` builds a trace per
   shape it needs to observe and drives the real processor over it; this wants
   one more, a run that hands a pid on, beside the crossing and liveness ones.
+  `proc`, `interpreter_track` and `loss_track` in `tests/helpers.py` already
+  take a `pid_epoch`, so the fixture needs no new helper.
 - **What makes a good test here:** query `upid` and assert each process's
   slices and counters hang off its own, and that the two `start_ts` differ.
   Counting rows alone passes on two descriptors the processor collapsed, and
@@ -172,19 +178,28 @@ every key reduces to what it is today.
   `start_timestamp_ns`.
 - **Cases:**
   1. A pid held twice gives two `upid`s, each with its own `start_ts`, its own
-     thread track and its own counter tracks, with the counter values apart.
+     thread row and its own counter tracks, with the counter values apart.
   2. Each `Start Process` marker, `ProcessDescriptor.cmdline` and
-     `description` belongs to the process it is drawn under, and a group's
-     command line equals the one on its own `Processes` span.
-  3. The pin inverts. `TestTwoProcessesOnOnePidShareTheirRows` asserts a
+     `description` belongs to the process it is drawn under, and a process
+     track's command line equals the one on its own `Processes` span. This
+     case lands in the trace-processor fixture and not the golden one:
+     `test_monitored_run_trace` builds a registry with no cmdline provider, so
+     no packet in the golden trace carries a command line.
+  3. Each process track is ranked on its own first observation.
+  4. The pin inverts. `TestTwoProcessesOnOnePidShareTheirRows` asserts a
      shared uuid for the thread track, the counter group and a counter; each
-     becomes a distinct one, in the commit that splits them. Its
+     becomes a distinct one, and the loss row joins them. Its
      `test_two_interpreters_are_still_two_rows` control stays as it is.
-  4. Regression guard: a run with no reuse writes a byte-identical trace, and
-     JSONL output is byte-identical with the change and without.
   5. `tests/fixtures/monitored_run_perfetto_trace.txt` moves, because that run
      hands pid 33512 on. The diff is the feature and gets read, not
-     regenerated.
+     regenerated: no packet is deleted, no packet is modified except in
+     `track_uuid`, and every added packet is one of `Process 33512#2`'s
+     descriptors or its `Start Process` marker. The `Processes` track is
+     allocated last, so its uuid moves too. The diff carries story 6: the pid
+     nobody reused is described first, and nothing already numbered moves.
+  6. JSONL output is byte-identical, and needs no test to say so.
+     `jsonl_exporter` imports nothing from any `perfetto_` module, so the
+     change cannot reach it.
 
 ## 6. Out of scope
 
@@ -192,28 +207,29 @@ every key reduces to what it is today.
   `combine` could not honour one; spec 0059 accepted that divergence and this
   adds nothing to it.
 - **Reading a command line for a process gcmon never polled.** psutil has
-  nothing to answer with, which is what
+  nothing to answer with, and
   [ADR-0010](../docs/adr/0010-process-identity-cmdline-and-start-marker.md)
-  already accepts.
+  already accepts that.
 - **Applying a rank to a descriptor already emitted.**
   [ADR-0011](../docs/adr/0011-process-lifetime-and-ordering.md) records why
   emission stays idempotent, and splitting the rows does not change it.
-- **Merging the two groups in the UI under one collapsible parent.** Perfetto
-  groups by `upid`, and this spec asks for two.
+- **Merging the two process tracks in the UI under one collapsible parent.**
+  Perfetto groups by `upid`, and this spec asks for two.
 - **[0027](0027-thread-descriptor-tid-for-interpreter-zero.md).** Interpreter
-  zero keeps `tid = pid`, which section 4 shows does not block the split.
+  zero keeps `tid = pid`, which the measurement in ADR-0011 shows does not
+  block the split.
 
 ## 7. Further notes
 
-Landing this amends two records.
-[ADR-0010](../docs/adr/0010-process-identity-cmdline-and-start-marker.md)
-gains the per-process descriptor and marker, where it now carries the
-per-process read alone.
-[ADR-0011](../docs/adr/0011-process-lifetime-and-ordering.md) loses the
-decision that the process track is not split, which section 4 measures, and
-its ranking becomes per process.
+The records move first, in one commit, ahead of any code: ADR-0011 and
+ADR-0010 for the two decisions, ADR-0003, ADR-0005, ADR-0015 and ADR-0016 for
+the key they each state. CONVENTIONS rule 10 sets that order.
 
-Two pages move with it: `docs/formats.md`, whose command-line section says the
-process track names the first process to hold the pid, and
-`docs/perfetto-sql.md`, which tells a reader to join `Processes` slices to
-`p.pid` many-to-one. Both become one-to-one, and the CHANGELOG gains a line.
+Two pages and the glossary move after the code. `docs/formats.md`'s
+command-line section says the two copies on the process track name the first
+process to hold the pid. `docs/perfetto-sql.md` warns that a join to `p.pid`
+is many-to-one; after the split `p.pid` matches a process row per process, so
+the warning becomes "scope by `upid`", and the page gains the key that pairs a
+span with its process track: their names are equal. `CONTEXT.md` has no entry
+for either container and gains two, a process track and a counter group,
+naming each other. The CHANGELOG gains a line.
