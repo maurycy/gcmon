@@ -255,7 +255,13 @@ class MonitoredRun:
         return perfetto_packets(self.trace)
 
     def text(self) -> str:
-        return "".join(f"--- packet {index} ---\n{packet}" for index, packet in enumerate(self.packets()))
+        """The whole trace as text, one stanza per packet.
+
+        The stanzas are unnumbered: a packet inserted anywhere renumbers
+        every packet after it, and the change disappears into the
+        renumbering.
+        """
+        return "".join(f"--- packet ---\n{packet}" for packet in self.packets())
 
     def pid_by_track(self) -> dict[int, int]:
         """Every descriptor carries the pid, on `ProcessDescriptor` or on

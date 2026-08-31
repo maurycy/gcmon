@@ -17,7 +17,7 @@ from .perfetto_builders import (
 from .perfetto_proto import TrackEventType
 from .perfetto_track_state import PerfettoTrackState, ProcessSpan
 
-__all__ = ["finalize_perfetto_packets"]
+__all__ = ["finalize_perfetto_packets", "process_track_name"]
 
 
 class ClippedSpan(NamedTuple):
@@ -25,8 +25,7 @@ class ClippedSpan(NamedTuple):
     observed.
 
     Clipping moves ``start_ts`` / ``end_ts`` and leaves ``real_start_ts``
-    / ``real_end_ts`` alone, so where the two disagree the observed pair
-    is the truth (ADR-0011).
+    / ``real_end_ts`` alone (ADR-0011).
     """
 
     process: Process
@@ -39,6 +38,11 @@ class ClippedSpan(NamedTuple):
 # Name of the shared top-level Perfetto track that shows one
 # TYPE_SLICE_BEGIN / TYPE_SLICE_END pair per process.
 _PROCESS_LIFETIME_TRACK_NAME: str = "Processes"
+
+
+def process_track_name(process: Process) -> str:
+    """What *process* is called (ADR-0011)."""
+    return f"Process {process}"
 
 
 def _emit_process_lifetime_track_descriptor(
@@ -64,17 +68,10 @@ def _emit_process_lifetime_slice(
     the sequence, so a zero-length span with its END first reads as
     ``dur = -1``.
 
-    The BEGIN carries ``pid_epoch``, *real_start_ts* and *real_end_ts*, plus
-    a ``cmdline`` annotation where the process has one. All three go on
-    **every** slice, so a consumer never has to check whether a clip
-    happened; where they and the drawn ``ts`` / ``dur`` disagree, they are
-    the truth.
-
-    The name carries the epoch as a ``#N`` suffix from the second process
-    on a pid, and the END repeats it: END matching is by name, so two
-    spans on one pid would otherwise close each other (ADR-0011)."""
+    The END repeats the name: matching is by name, so two spans on one pid
+    would otherwise close each other (ADR-0011)."""
     track_uuid = state.get_or_create_process_lifetime_track_uuid()
-    name = f"Process {span.process}"
+    name = process_track_name(span.process)
     debug_annotations: list[bytes] = []
     cmdline = state.get_cmdline(span.process)
     if cmdline:

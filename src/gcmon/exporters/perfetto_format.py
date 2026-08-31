@@ -35,6 +35,7 @@ from .perfetto_builders import (
 from .perfetto_process_lifetime import (
     _record_process_lifetime,
     finalize_perfetto_packets,
+    process_track_name,
 )
 from .perfetto_proto import (
     ChildTracksOrdering,
@@ -113,15 +114,8 @@ def _emit_root_descriptor(
 ) -> list[bytes]:
     """Build the root ``TrackDescriptor`` (``uuid = 0``), once per trace.
 
-    Its ``process_ordering`` and ``thread_ordering`` hints are what make the
-    Perfetto UI honor ``sibling_order_rank`` on top-level process and thread
-    tracks. It carries no ``name`` and no ``process``, ``thread`` or
-    ``counter`` sub-message, so the trace processor draws no row for it.
-
-    The UI reads the hints only on the canary channel of ``ui.perfetto.dev``
-    (Flags -> Release channel -> Canary), and a trace processor older than
-    0.57 ignores them and falls back to its own ordering. gcmon writes them
-    whatever the reader, so a trace stays forward-compatible.
+    It carries no ``name`` and no ``process``, ``thread`` or ``counter``
+    sub-message, so the trace processor draws no row for it (ADR-0011).
     """
     if state.has_root_descriptor():
         return []
@@ -149,10 +143,10 @@ def _emit_process_descriptor(
     ``process_ordering = PROCESS_ORDERING_EXPLICIT``; see
     ``_emit_root_descriptor``.
 
-    *start_timestamp_ns* goes on the ``process`` sub-message. It is the
-    pid's first event in nanoseconds, the same timestamp the rank comes from.
+    *start_timestamp_ns* goes on the ``process`` sub-message. It is
+    *process*'s first event in nanoseconds, the same timestamp the rank comes
+    from.
     """
-    pid = process.pid
     if state.has_process_descriptor(process):
         return []
     state.mark_process_descriptor(process)
@@ -160,8 +154,8 @@ def _emit_process_descriptor(
     cmdline = state.get_cmdline(process)
     desc = build_track_descriptor(
         proc_uuid,
-        f"Process {pid}",
-        pid=pid,
+        process_track_name(process),
+        pid=process.pid,
         child_ordering=ChildTracksOrdering.EXPLICIT,
         sibling_order_rank=sibling_order_rank,
         cmdline=cmdline,
@@ -179,7 +173,9 @@ def _emit_start_process_marker(
 ) -> list[bytes]:
     """Emit a single dur=0 ``Start Process`` marker on the process track.
 
-    Idempotent per pid, and stamped with the first event that pid produced.
+    Idempotent per process, and stamped with the first event that process
+    produced.
+
     The Perfetto UI hides a track holding no events, and with it the process
     track's ``description``, the joined cmdline. One marker keeps the
     description visible however few ``Instant`` the caller sent.
@@ -253,11 +249,8 @@ def _emit_counter_group_descriptor(
 ) -> tuple[int, list[bytes]]:
     """Build *track*'s GC Metrics grouping track descriptor.
 
-    The trace processor ignores ``child_ordering`` and ``sibling_order_rank``
-    on an OS-scoped process or thread track and honors them on a plain custom
-    one. So the group carries no ``process`` or ``thread`` field, the counter
-    tracks hang off the group, and the group hangs off the process track
-    (ADR-0003).
+    It carries no ``process`` or ``thread`` field: the trace processor honors
+    ordering on a plain custom track and not on an OS-scoped one (ADR-0003).
     """
     if state.has_counter_group_track(track):
         return state.get_or_create_counter_group_track_uuid(track), []
@@ -322,21 +315,21 @@ def _emit_track_descriptors(
     track: Track,
     state: PerfettoTrackState,
     sequence_id: int,
-    ranks: dict[int, int],
+    ranks: dict[Process, int],
 ) -> list[bytes]:
     """Every descriptor *track* needs that has not gone out yet, parent
     first.
 
-    The pid's process descriptor whichever kind of track this is, then the
-    track's own where it has one of its own to write. A ``ProcessTrack`` has
-    none: the process descriptor *is* its descriptor.
+    The process descriptor whichever kind of track this is, then the track's
+    own where it has one of its own to write. A ``ProcessTrack`` has none: the
+    process descriptor *is* its descriptor.
     """
     process = track.process
     descriptors = _emit_process_descriptor(
         process,
         state,
         sequence_id,
-        sibling_order_rank=ranks.get(process.pid),
+        sibling_order_rank=ranks.get(process),
         start_timestamp_ns=state.get_process_lifetime_start_ts(process),
     )
     if isinstance(track, InterpreterTrack):
@@ -362,12 +355,12 @@ def convert_trace_events_to_perfetto(
     emits the root descriptor.
 
     Each process descriptor carries a ``sibling_order_rank`` and a
-    ``process.start_timestamp_ns``, both taken from the pid's first event.
-    *state* accumulates those across batches, and the pre-pass below folds
-    this batch in before the main loop, so a pid described in this batch is
-    ranked against the events of it. Both fields are always present: a
-    descriptor goes out only for a pid that named a track, which is a pid
-    the pre-pass has folded in.
+    ``process.start_timestamp_ns``, both taken from that process's first
+    event. *state* accumulates those across batches, and the pre-pass below
+    folds this batch in before the main loop, so a process described in this
+    batch is ranked against the events of it. Both fields are always present:
+    a descriptor goes out only for a process that named a track, which is a
+    process the pre-pass has folded in.
 
     ``Processes``-track slices go out at trace close instead, from
     ``finalize_perfetto_packets``.
@@ -459,7 +452,7 @@ def _maybe_emit_start_process_marker(
     sequence_id: int,
     packets: list[bytes],
 ) -> None:
-    """Place *pid*'s ``Start Process`` marker at *ts*, if it has not gone
+    """Place *process*'s ``Start Process`` marker at *ts*, if it has not gone
     out yet.
 
     Takes the timestamp rather than the event: a `Slice` keeps its in

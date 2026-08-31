@@ -17,6 +17,11 @@ count is `debug.gen0.lost_count`.
 
 gcmon traces use the standard Perfetto schema:
 
+- **`process`**: one row per process that drew a row of its own, plus a
+  synthetic `pid = 0` entry the trace processor adds
+  - `upid`, the trace processor's own key and the one to group by; `pid`, the
+    operating system's, which two processes share where one was handed on;
+    `name` (`"Process 12345"`); `start_ts`
 - **`slice`**: GC pauses and sub-steps
   - `name` (`"GC Pause(0)"`), `ts` and `dur` in nanoseconds, `arg_set_id`
 - **`counter`**: counter samples
@@ -36,7 +41,10 @@ gcmon traces use the standard Perfetto schema:
 
 ## Example: Replicating the Stats Table
 
-SQL reproduces the [`--stats` table](statistics.md):
+SQL reproduces the [`--stats` table](statistics.md). `gc.loss` is left out: a
+loss span's width is an interval gcmon went blind for rather than a pause it
+measured, so the two share no distribution
+([GC Loss slices](formats.md#gc-loss-slices)).
 
 ```sql
 -- GC pause statistics
@@ -51,7 +59,7 @@ name,
     ROUND(PERCENTILE(dur, 95) / 1e6, 4) AS P95_dur_ms,
     ROUND(PERCENTILE(dur, 99) / 1e6, 4) AS P99_dur_ms
 FROM slice
-WHERE category IS NOT NULL
+WHERE category IS NOT NULL AND category != 'gc.loss'
 GROUP BY name
 ORDER BY IF(parent_id IS NULL, 0, 1), name
 ```
@@ -61,9 +69,9 @@ ORDER BY IF(parent_id IS NULL, 0, 1), name
 Under `--rss`, samples land in the `counter` table on a track named `rss`:
 
 ```sql
--- RSS values per PID (requires --rss)
+-- RSS values per process (requires --rss)
 SELECT
-    p.pid,
+    p.name,
     (c.ts - p.start_ts) / 1e9 AS sec_from_start,
     ROUND(c.value / 1e6, 2) AS rss_mb
 FROM counter c
@@ -83,19 +91,18 @@ are reachable from SQL.
 The process track's `description` holds the space-joined command line:
 
 ```sql
--- Command line per PID, from the process track description
-SELECT p.pid, a.string_value AS cmdline
+-- Command line per process, from the process track description
+SELECT p.name, a.string_value AS cmdline
 FROM args a
 JOIN process_track pt ON a.arg_set_id = pt.source_arg_set_id
 JOIN process p ON p.upid = pt.upid
 WHERE a.key = 'description'
-ORDER BY p.pid
+ORDER BY p.start_ts
 ```
 
 A `cmdline` debug annotation carries the same string on each slice of the
 `Processes` lifetime track, which pairs it with that process's start and end
-times. On a reused PID the annotation is per process and the description above
-is the first process's:
+times. On a reused PID both are per process, and the two agree:
 
 ```sql
 -- Command line alongside each process's lifetime
@@ -121,10 +128,36 @@ could draw; `real_start_ts` and `real_end_ts` are what gcmon observed, and
 every slice carries them whether it was cut or not.
 
 Every monitored process gets one slice, a process that never collected
-included. A reused PID has one slice per process, so a join to `p.pid` is
-many-to-one; `pid_epoch` tells them apart, and the name carries it too, as
-`Process 12345#2` from the second process on. A `dur = 0` slice is one
-observed at a single instant, or cut down to nothing.
+included. A process known from liveness alone drew no row of its own and has
+no `process` entry at all, so this track is the only place it appears.
+
+**Scope by `upid`.** A reused PID has one entry per process, and a join on
+`p.pid` matches every process that held it, returning each result once per
+process. `pid_epoch` tells them apart, and so does the name, `Process 12345#2`
+from the second process on. A `dur = 0` slice is one observed at a single
+instant, or cut down to nothing.
+
+A slice and the process it describes carry **the same name**. That is the
+pairing: `p.pid` matches both processes and the epoch reaches no column of its
+own. Start from the span and left-join the process, so one with a span and no
+entry keeps its row:
+
+```sql
+-- Each process's observed lifetime beside the pauses it recorded
+SELECT
+    span.name,
+    COUNT(gc.id) AS pauses,
+    EXTRACT_ARG(span.arg_set_id, 'debug.real_end_ts')
+        - EXTRACT_ARG(span.arg_set_id, 'debug.real_start_ts') AS observed_dur
+FROM slice span
+JOIN track spant ON span.track_id = spant.id AND spant.name = 'Processes'
+LEFT JOIN process p ON p.name = span.name
+LEFT JOIN thread th ON th.upid = p.upid
+LEFT JOIN thread_track tt ON tt.utid = th.utid
+LEFT JOIN slice gc ON gc.track_id = tt.id AND gc.name GLOB 'GC Pause*'
+GROUP BY span.id
+ORDER BY span.ts
+```
 
 Processes still alive when monitoring stops share an end timestamp and nest,
 and the trace processor closes at most **512** nested slices. Past that they
