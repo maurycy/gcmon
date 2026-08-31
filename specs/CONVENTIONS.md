@@ -101,6 +101,10 @@ third, and drop the link. Keep the summary, in the past tense if it read as a
 complaint, and point at whatever survived: an ADR, the spec that replaced it,
 or nothing.
 
+**Cap the summary at 40 words**: the complaint, what it is today, and the
+pointer. The mechanism, the argument and the numbers one run produced belong
+to the ADR the row points at, and git has the file that was deleted.
+
 Retiring one spec is therefore three edits: delete the file, cut its row from
 `README.md` including any mention in the suggested order, and paste it into
 `RETIRED.md` with its outcome. If the work settled something durable, write an
