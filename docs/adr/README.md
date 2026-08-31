@@ -59,55 +59,30 @@ module is neither.
 
 ## Index
 
-| # | Decision |
-|---|---|
-| [0001](0001-hand-rolled-perfetto-protobuf-encoder.md) | Hand-roll the Perfetto protobuf encoder; keep `perfetto` out of the runtime dependency tree |
-| [0002](0002-perfetto-track-uuid-and-hierarchy.md) | Allocate track UUIDs sequentially and parent every track explicitly |
-| [0003](0003-gc-metrics-group-track.md) | Parent per-generation counters to a non-OS-scoped `GC Metrics` group track |
-| [0004](0004-toplevel-shared-counters.md) | Emit `heap_size` and `rss` as single top-level counters, outside the `GC Metrics` group (superseded by 0024) |
-| [0005](0005-counter-y-axis-share-key.md) | Use the metric name itself as `CounterDescriptor.y_axis_share_key` |
-| [0006](0006-begin-end-slice-pairs.md) | Represent durations as Begin/End pairs in both backends (superseded by 0024) |
-| [0007](0007-shared-trace-converter-pipeline.md) | Convert GC stats to `TraceEvent` once, in a shared pipeline |
-| [0008](0008-buffered-exporter-and-encoder-protocol.md) | Split exporters into a buffering base class and a pluggable `EventEncoder` |
-| [0009](0009-nanoseconds-canonical-time-unit.md) | Store `TraceEvent.ts` in nanoseconds; convert at the encoder |
-| [0010](0010-process-identity-cmdline-and-start-marker.md) | Carry process cmdline in two places, and force the process track to render |
-| [0011](0011-process-lifetime-and-ordering.md) | Show process lifetimes on one shared track, ordered by first event |
-| [0012](0012-trace-output-formats.md) | Support Perfetto output in `combine`, and dual output only in live mode (superseded by 0021) |
-| [0013](0013-rss-sampling.md) | Sample RSS in a standalone `RssSampler`, on a `tid = -1` sentinel track |
-| [0014](0014-perfetto-integration-test-strategy.md) | Validate traces against the real trace processor; deselect slow suites by marker |
-| [0015](0015-gc-loss-spans-on-their-own-track.md) | Draw reconstructed GC loss on a per-interpreter track, one span per poll interval |
-| [0016](0016-the-ring-is-the-statistics-unit.md) | Report statistics per ring, and drop the per-process row from the `--stats` table |
-| [0017](0017-monitor-owns-the-pid-lifecycle.md) | Give the monitor every piece of per-pid state, and leave the loop the clock |
-| [0018](0018-stats-requires-a-view-and-keeps-no-bare-alias.md) | Require a value on `--stats`, and keep no bare alias |
-| [0019](0019-schedule-tick-starts-on-a-fixed-grid.md) | Schedule tick starts on a fixed grid, and skip the positions a slow tick misses |
-| [0020](0020-attach-to-a-process-once.md) | Attach to a process once, and let go the moment a read fails |
-| [0021](0021-write-one-trace-format.md) | Write one trace format, and read only JSONL back |
-| [0022](0022-compress-each-batch-of-packets.md) | Compress each batch into one `TracePacket.zstd_compressed_packets` field |
-| [0023](0023-the-pyperf-hook-annotates-and-does-not-drive.md) | Mark the benchmark from the pyperf hook, and drive nothing |
-| [0024](0024-an-event-names-the-track-it-is-drawn-on.md) | An event names the track it is drawn on, and the encoder derives the rest |
-| [0025](0025-create-every-process-in-one-place.md) | Create every process in one place, and carry it instead of a pid |
-
-## Reading order
-
-ADRs 0001–0005 are about the Perfetto wire format and track layout, and build
-on each other in that order, and 0022 is about how those packets reach the
-file. 0006–0009 cover the internal event model, which one encoder now reads,
-and 0024 is what that model became once it had one reader: it supersedes 0004
-and 0006 and amends 0007 and 0013. 0010–0013, 0015 and 0016 and 0018 are
-individual features, and 0021 is what became of 0012. 0014 explains how any of
-it is verified. 0017, 0019 and 0025 are about the monitoring loop rather than
-about what reaches a trace: 0017 divides per-pid state from the clock, 0019
-says what the loop does with that clock, and 0025 is what a pid is once two
-processes have held one; it amends 0010, 0011, 0013, 0016, 0017 and 0024. 0023
-is about the pyperf hook, which is an entry point rather than a part of the
-loop.
-
----
-
-*These records were extracted from a set of implementation specs that lived in
-a git-ignored working directory. Those specs were forward-looking plans with
-step-by-step instructions. The part worth keeping, meaning the decisions and
-their rationale, is here under version control, and the original specs were
-removed once extracted. What remained of that folder was re-verified and
-rewritten on 2026-08-05, and `specs/` is now tracked; see
-[its retired-spec record](../../specs/RETIRED.md#provenance).*
+| # | Decision | Status | Modules |
+|---|---|---|---|
+| [0001](0001-hand-rolled-perfetto-protobuf-encoder.md) | Hand-roll the Perfetto protobuf encoder; keep `perfetto` out of the runtime dependency tree | Accepted | exporters |
+| [0002](0002-perfetto-track-uuid-and-hierarchy.md) | Allocate track UUIDs sequentially and parent every track explicitly | Accepted | exporters |
+| [0003](0003-gc-metrics-group-track.md) | Parent per-generation counters to a non-OS-scoped `GC Metrics` group track | Accepted | exporters |
+| [0004](0004-toplevel-shared-counters.md) | Emit `heap_size` and `rss` as single top-level counters, outside the `GC Metrics` group | Superseded by 0024 | exporters |
+| [0005](0005-counter-y-axis-share-key.md) | Use the metric name itself as `CounterDescriptor.y_axis_share_key` | Accepted | exporters |
+| [0006](0006-begin-end-slice-pairs.md) | Represent durations as Begin/End pairs in both backends | Superseded by 0024 | exporters, model |
+| [0007](0007-shared-trace-converter-pipeline.md) | Convert GC stats to `TraceEvent` once, in a shared pipeline | Accepted | exporters, model, monitoring |
+| [0008](0008-buffered-exporter-and-encoder-protocol.md) | Split exporters into a buffering base class and a pluggable `EventEncoder` | Accepted | exporters |
+| [0009](0009-nanoseconds-canonical-time-unit.md) | Store `TraceEvent.ts` in nanoseconds; convert at the encoder | Accepted | exporters, model, support |
+| [0010](0010-process-identity-cmdline-and-start-marker.md) | Carry process cmdline in two places, and force the process track to render | Accepted | exporters, monitoring |
+| [0011](0011-process-lifetime-and-ordering.md) | Show process lifetimes on one shared track, ordered by first event | Accepted | exporters, monitoring |
+| [0012](0012-trace-output-formats.md) | Support Perfetto output in `combine`, and dual output only in live mode | Superseded by 0021 | cli, exporters |
+| [0013](0013-rss-sampling.md) | Sample RSS in a standalone `RssSampler`, on a `tid = -1` sentinel track | Accepted | cli, exporters, monitoring |
+| [0014](0014-perfetto-integration-test-strategy.md) | Validate traces against the real trace processor; deselect slow suites by marker | Accepted | tests |
+| [0015](0015-gc-loss-spans-on-their-own-track.md) | Draw reconstructed GC loss on a per-interpreter track, one span per poll interval | Accepted | exporters, model, monitoring, stats |
+| [0016](0016-the-ring-is-the-statistics-unit.md) | Report statistics per ring, and drop the per-process row from the `--stats` table | Accepted | monitoring, pyperf, stats |
+| [0017](0017-monitor-owns-the-pid-lifecycle.md) | Give the monitor every piece of per-pid state, and leave the loop the clock | Accepted | monitoring |
+| [0018](0018-stats-requires-a-view-and-keeps-no-bare-alias.md) | Require a value on `--stats`, and keep no bare alias | Accepted | cli, stats |
+| [0019](0019-schedule-tick-starts-on-a-fixed-grid.md) | Schedule tick starts on a fixed grid, and skip the positions a slow tick misses | Accepted | cli, model, monitoring, stats |
+| [0020](0020-attach-to-a-process-once.md) | Attach to a process once, and let go the moment a read fails | Accepted | monitoring |
+| [0021](0021-write-one-trace-format.md) | Write one trace format, and read only JSONL back | Accepted | cli, exporters |
+| [0022](0022-compress-each-batch-of-packets.md) | Compress each batch into one `TracePacket.zstd_compressed_packets` field | Accepted | exporters |
+| [0023](0023-the-pyperf-hook-annotates-and-does-not-drive.md) | Mark the benchmark from the pyperf hook, and drive nothing | Accepted | model, pyperf |
+| [0024](0024-an-event-names-the-track-it-is-drawn-on.md) | An event names the track it is drawn on, and the encoder derives the rest | Accepted | exporters, model |
+| [0025](0025-create-every-process-in-one-place.md) | Create every process in one place, and carry it instead of a pid | Accepted | cli, control, exporters, model, monitoring |
