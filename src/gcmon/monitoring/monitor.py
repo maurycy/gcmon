@@ -17,9 +17,11 @@ from ..model.loss import (
     RingKey,
 )
 from ..model.poll_status import PollStatus
+from ..model.process import Process
 from ..model.protocol import TGCStatsInfo
 from ..stats.streaming_stats import StreamingStats
 from .events_reader import EventsReader, TargetUnavailable
+from .process_registry import ProcessRegistry
 from .target_process import TargetProcess
 from .wait_policy import WaitPolicy, WaitPolicyFactory
 
@@ -46,14 +48,14 @@ class PidState(msgspec.Struct):
 class PollReport(msgspec.Struct):
     """What one tick of monitoring found.
 
-    ``live_pids`` answered :attr:`PollStatus.OK`. For a process that never
+    ``live`` answered :attr:`PollStatus.OK`. For a process that never
     collects, a successful read is the only evidence gcmon has that it existed,
     which is what liveness reporting rests on (ADR-0011).
 
     ``keep_running`` is false once no wait policy wants the run to go on.
     """
 
-    live_pids: frozenset[int]
+    live: frozenset[Process]
     keep_running: bool
 
 
@@ -67,6 +69,7 @@ class EventsMonitor:
         reader: EventsReader,
         wait_policy_factory: WaitPolicyFactory,
         is_pid_enabled: Callable[[int], bool] | None = None,
+        registry: ProcessRegistry | None = None,
     ) -> None:
         """
         *reader* reads a process's records.
@@ -77,6 +80,9 @@ class EventsMonitor:
         *is_pid_enabled* is the control plane's per-pid verdict: ``False`` means
         the control server has suppressed that pid and it must not be polled.
         ``None`` means no control plane.
+
+        *registry* creates the `Process` every record is filed under, one per
+        run. A caller with none gets one of its own.
         """
         self._process = process
         self._exporter = exporter
@@ -87,6 +93,9 @@ class EventsMonitor:
         self._wait_policy_factory = wait_policy_factory
         self._is_pid_enabled = is_pid_enabled
         self._stats = stats
+        self._processes = registry if registry is not None else ProcessRegistry()
+        # The latest clock instant this tick has reached. See :meth:`tick`.
+        self._tick_read_ns = 0
         self._coverage_warned = False
 
     def tick(self, now_ns: int, stop: Callable[[], bool]) -> PollReport:
@@ -108,9 +117,14 @@ class EventsMonitor:
         # policy gives up on it and the branch below never runs. None means the
         # listing failed, so prune only when it worked.
         if child_pids is not None:
-            self._retain(set(children))
+            self._retain(set(children), now_ns)
 
-        live: set[int] = set()
+        # Liveness is stamped no earlier than the reads that prove these
+        # processes alive, so two alive in one tick share an end
+        # (ADR-0011).
+        self._tick_read_ns = now_ns
+
+        live: set[Process] = set()
         keep_running = False
         for pid in children:
             if stop():
@@ -123,24 +137,30 @@ class EventsMonitor:
             if policy is None:
                 policy = self._policies[pid] = self._wait_policy_factory()
 
-            rc = self._poll(pid)
+            # A pid enters the registry when it is about to be polled, not
+            # when the listing names it: a suppressed pid produces no
+            # records and needs no process. The exporter is handed the
+            # command line as part of the creation, see ADR-0025.
+            process = self._processes.current(pid) or self._processes.create(pid, self._exporter.add_process_cmdline)
+
+            rc = self._poll(process)
             keep_waiting = policy.wait(rc)
             keep_running = keep_running or keep_waiting
             if rc == PollStatus.OK:
-                live.add(pid)
+                live.add(process)
             elif not keep_waiting:
                 # The policy stays behind. A fresh one answers True until its
                 # own startup timeout expires, holding the run open.
-                self._forget(pid)
+                self._forget(pid, now_ns)
 
-        live_pids = frozenset(live)
+        live_processes = frozenset(live)
 
         # After the poll phase, one batched call, skipped on an empty set.
         # ADR-0011 argues all three.
-        if live_pids:
-            self._exporter.add_process_liveness(live_pids, now_ns)
+        if live_processes:
+            self._exporter.add_process_liveness(live_processes, self._tick_read_ns)
 
-        return PollReport(live_pids=live_pids, keep_running=keep_running)
+        return PollReport(live=live_processes, keep_running=keep_running)
 
     def _get_child_pids(self) -> list[int] | None:
         """Every descendant of the target, or ``None`` when the read failed.
@@ -156,7 +176,8 @@ class EventsMonitor:
             )
             return None
 
-    def _poll(self, pid: int) -> PollStatus:
+    def _poll(self, process: Process) -> PollStatus:
+        pid = process.pid
 
         if not self._enabled:
             logger.warning(
@@ -169,8 +190,9 @@ class EventsMonitor:
             ts_read_start = time.monotonic_ns()
             records = self._reader.read(pid)
             ts_read_stop = time.monotonic_ns()
+            self._tick_read_ns = ts_read_stop
             self._stats.record_read_time(ts_read_stop - ts_read_start)
-            self._ingest(pid, records, ts_read_start)
+            self._ingest(process, records, ts_read_start)
 
             return PollStatus.OK
         except TargetUnavailable as exc:
@@ -183,16 +205,21 @@ class EventsMonitor:
             logger.warning("Monitor for PID %s (child PID=%s) encountered error", self._process.pid, pid, exc_info=exc)
             return PollStatus.FAIL
 
-    def _forget(self, pid: int) -> None:
+    def _forget(self, pid: int, ts: int) -> None:
         """Drop the cursors and the attachment held for *pid*, so a reused pid
         inherits no counter, no poll instant and no debug offsets from the
         process before it. The policy stays; see :meth:`tick`.
         """
         self._pids.pop(pid, None)
         self._reader.forget(pid)
-        self._stats.materialize(pid)
+        process = self._processes.current(pid)
+        if process is not None:
+            # Settle before retiring: the rings file under the process that
+            # earned them, and a retirement takes it out of the registry.
+            self._stats.materialize(process)
+            self._processes.retire(pid, ts)
 
-    def _retain(self, pids: Set[int]) -> None:
+    def _retain(self, pids: Set[int], ts: int) -> None:
         """Drop the state of every pid outside *pids*, all of it at once.
 
         A cursor outliving its policy, or the reverse, is the disagreement
@@ -205,9 +232,10 @@ class EventsMonitor:
         for pid in self._policies.keys() - pids:
             del self._policies[pid]
         self._reader.retain(pids)
-        self._stats.retain(pids)
+        self._stats.retain({process for process in self._processes.live() if process.pid in pids})
+        self._processes.retain(pids, ts)
 
-    def _ingest(self, pid: int, records: Sequence[TGCStatsInfo], ts_poll: int) -> None:
+    def _ingest(self, process: Process, records: Sequence[TGCStatsInfo], ts_poll: int) -> None:
         """Emit the records in *records* not seen yet.
 
         Every poll returns the whole ring buffer, so ``collections`` is what
@@ -216,6 +244,7 @@ class EventsMonitor:
         *ts_poll* is when this read began. It closes the interval the previous
         poll opened, see ADR-0015.
         """
+        pid = process.pid
         state = self._pids.setdefault(pid, PidState())
         ts_prev_poll = state.ts_last_poll
         state.ts_last_poll = ts_poll
@@ -237,9 +266,9 @@ class EventsMonitor:
 
             gen_loss = accumulator.ingest(unseen)
             gens_by_iid.setdefault(iid, []).append(gen_loss)
-            self._stats.observe_cumulative(pid, iid, gen, accumulator.last_collections, accumulator.last_duration)
+            self._stats.observe_cumulative(process, iid, gen, accumulator.last_collections, accumulator.last_duration)
             if gen_loss.lost_count:
-                self._stats.record_loss(pid, iid, gen, gen_loss.lost_count, gen_loss.lost_pause_ns)
+                self._stats.record_loss(process, iid, gen, gen_loss.lost_count, gen_loss.lost_pause_ns)
             fresh.extend(unseen)
 
         for iid, gens in gens_by_iid.items():
@@ -249,16 +278,22 @@ class EventsMonitor:
             # A first poll seeds every ring it touches, and seeding opens no
             # gap, so no interval reaches here on one.
             assert ts_prev_poll is not None
-            self._exporter.add_loss_event(pid, LossMsg(iid=iid, ts_start=ts_prev_poll, ts_stop=ts_poll, gens=gens))
+            self._exporter.add_loss_event(process, LossMsg(iid=iid, ts_start=ts_prev_poll, ts_stop=ts_poll, gens=gens))
 
         # We want to keep exported events in the time order
         for record in sorted(fresh, key=lambda record: (record.iid, record.ts_start)):
-            self._exporter.add_event(pid, record)
-            self._stats.update(pid, record)
+            # A pid pruned from the tree loses its read cursor, so whatever
+            # claims it next re-reads records its predecessor produced
+            # (ADR-0025).
+            # TODO: .at is not efficient here
+            owner = self._processes.at(pid, record.ts_start)
+            assert owner is not None, "tick creates this pid's process before polling it"
+            self._exporter.add_event(owner, record)
+            self._stats.update(owner, record)
 
-        self._warn_low_coverage(pid)
+        self._warn_low_coverage(process)
 
-    def _warn_low_coverage(self, pid: int) -> None:
+    def _warn_low_coverage(self, process: Process) -> None:
         """Say once per run that gcmon is reading too little of its target.
 
         What to do about it is not said here: it turns on whether the loop is
@@ -268,7 +303,7 @@ class EventsMonitor:
         if self._coverage_warned:
             return
 
-        low = self._stats.low_coverage(pid)
+        low = self._stats.low_coverage(process)
         if low is None:
             return
 
@@ -278,7 +313,7 @@ class EventsMonitor:
             "PID %s interpreter %s generation %s: only %s%% of collections observed so far. Counts "
             "and sums are reconstructed and exact; percentiles cover only what was sampled and read "
             "high.",
-            pid,
+            process.pid,
             iid,
             gen,
             # Truncated: 89.6% would read as "90%", the floor this fires

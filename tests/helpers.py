@@ -14,8 +14,12 @@ from perfetto.trace_processor import TraceProcessor, TraceProcessorConfig
 
 from gcmon.exporters.exporter import EventsExporter
 from gcmon.model.data import GCStatsInfo, GenLoss, LossMsg
+from gcmon.model.process import Process
 from gcmon.model.protocol import TGCStatsInfo, TInstantMsg, TLossMsg
+from gcmon.model.trace_event import InterpreterTrack, LossTrack, ProcessTrack
 from gcmon.monitoring.events_reader import EventsReader
+from gcmon.monitoring.monitor import EventsMonitor
+from gcmon.monitoring.process_registry import ProcessRegistry
 from tests.perfetto_prebuilt import trace_processor_bin
 
 zstd: ModuleType | None
@@ -47,9 +51,59 @@ __all__ = [
     "create_mock_incremental_item",
     "create_mock_loss_item",
     "create_mock_stats_item",
+    "interpreter_track",
+    "loss_track",
+    "monitored",
     "open_trace_processor",
     "perfetto_packets",
+    "polled",
+    "proc",
+    "process_track",
 ]
+
+
+def proc(pid: int, pid_epoch: int = 1) -> Process:
+    """A `Process` for a test that cares about the pid and not the epoch."""
+    return Process(pid, pid_epoch)
+
+
+def process_track(pid: int, pid_epoch: int = 1) -> ProcessTrack:
+    """The process's own row, for a test that names a pid rather than a
+    process. One place to change when a `Process` gains a field."""
+    return ProcessTrack(proc(pid, pid_epoch))
+
+
+def interpreter_track(pid: int, iid: int, pid_epoch: int = 1) -> InterpreterTrack:
+    """Interpreter *iid*'s row on *pid*. See :func:`process_track`."""
+    return InterpreterTrack(proc(pid, pid_epoch), iid)
+
+
+def loss_track(pid: int, iid: int, pid_epoch: int = 1) -> LossTrack:
+    """Interpreter *iid*'s loss row on *pid*. See :func:`process_track`."""
+    return LossTrack(proc(pid, pid_epoch), iid)
+
+
+def monitored(*pids: int) -> ProcessRegistry:
+    """A registry holding a live process per pid, as the monitor's first
+    poll leaves it.
+
+    A control-plane message names a process gcmon monitors or has
+    monitored, and nothing but the monitor creates one, so a server under
+    test is given the processes its clients will name.
+    """
+    registry = ProcessRegistry()
+    for pid in pids:
+        registry.create(pid)
+    return registry
+
+
+def polled(monitor: EventsMonitor, pid: int) -> Process:
+    """The process *monitor* polls *pid* as, created if it has none yet.
+
+    `EventsMonitor.tick` creates one before each poll; a test driving the
+    poll on its own goes through here so the registry agrees with it.
+    """
+    return monitor._processes.current(pid) or monitor._processes.create(pid)
 
 
 def no_records(pid: int) -> Sequence[TGCStatsInfo]:
@@ -124,41 +178,41 @@ class MockExporter(EventsExporter):
         self._event_added = threading.Event()
 
     @override
-    def add_event(self, pid: int, item: TGCStatsInfo) -> None:
+    def add_event(self, process: Process, item: TGCStatsInfo) -> None:
         """Add an event to the exporter.
 
         Args:
-            pid: Process ID.
+            process: The process the record came from.
             item: The stats item to add.
         """
         self.events.append(item)
-        self.events_by_pid.setdefault(pid, []).append(item)
+        self.events_by_pid.setdefault(process.pid, []).append(item)
         self._event_added.set()  # Signal that event was added
 
     @override
-    def add_loss_event(self, pid: int, item: TLossMsg) -> None:
+    def add_loss_event(self, process: Process, item: TLossMsg) -> None:
         """Record a loss window the monitor's arithmetic produced.
 
         Does not set ``_event_added``: a caller blocking on
         ``wait_for_event`` is waiting for a GC record, and releasing it on a
         loss record would let it wake and assert against an empty ``events``.
         """
-        self.loss_events.append((pid, item))
+        self.loss_events.append((process.pid, item))
 
     @override
-    def add_process_liveness(self, pids: Set[int], ts_ns: int) -> None:
-        """Record one tick's liveness observation."""
-        self.liveness.append((pids, ts_ns))
+    def add_process_liveness(self, processes: Set[Process], ts_ns: int) -> None:
+        """Record one tick's liveness observation, as the pids it named."""
+        self.liveness.append(({process.pid for process in processes}, ts_ns))
 
     @override
-    def add_instant_event(self, pid: int, item: TInstantMsg) -> None:
+    def add_instant_event(self, process: Process, item: TInstantMsg) -> None:
         """Add an instant event to the exporter.
 
         Args:
-            pid: Process ID.
+            process: The process the mark belongs to.
             item: The instant message to add.
         """
-        self.instant_events.append((pid, item))
+        self.instant_events.append((process.pid, item))
         self._event_added.set()
 
     @override

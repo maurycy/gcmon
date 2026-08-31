@@ -6,7 +6,7 @@ and assert on the SQL tables (``slice``, ``args``, ``track``,
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -15,7 +15,7 @@ from perfetto.trace_processor import TraceProcessor
 from gcmon.exporters import PerfettoExporter
 from tests.conftest import DEFAULT_PID
 from tests.data_helpers import create_instant_msg
-from tests.helpers import create_mock_incremental_item, create_mock_stats_item, open_trace_processor
+from tests.helpers import create_mock_incremental_item, create_mock_stats_item, open_trace_processor, proc
 
 _PAUSE_NAME: str = "GC Pause(0)"
 _INSTANT_NAME: str = "GC monitor started"
@@ -77,15 +77,6 @@ _START_PROCESS_MARKER_NAME: str = "Start Process"
 _PROCESS_LIFETIME_TRACK_NAME: str = "Processes"
 
 
-def _fake_cmdline_provider(pid: int) -> list[str] | None:
-    """Returns a known fake cmdline for the two PIDs the trace uses and
-    ``None`` for any other PID, so the encoder's ``None`` path is also
-    exercised by the same callable."""
-    if pid in (DEFAULT_PID, _SECOND_PID):
-        return list(_FAKE_CMDLINE)
-    return None
-
-
 def _process_filter(pid: int) -> str:
     """SQL fragment to scope a query to a single ``pid``.
 
@@ -115,22 +106,17 @@ def _process_filter_instant(pid: int) -> str:
     )
 
 
-def _write_trace(
-    tmp: Path,
-    cmdline_provider: Callable[[int], list[str] | None] = lambda _pid: None,
-) -> Path:
+def _write_trace(tmp: Path, cmdline: tuple[str, ...] | None = None) -> Path:
     path = tmp / "trace.pb"
-    exporter = PerfettoExporter(
-        output_path=path,
-        flush_threshold=1000,
-        cmdline_provider=cmdline_provider,
-    )
+    exporter = PerfettoExporter(output_path=path, flush_threshold=1000)
+    exporter.add_process_cmdline(proc(DEFAULT_PID), cmdline)
+    exporter.add_process_cmdline(proc(_SECOND_PID), cmdline)
     exporter.add_instant_event(
-        DEFAULT_PID,
+        proc(DEFAULT_PID),
         create_instant_msg(name=_INSTANT_NAME, ts=_TS_START - 1_000_000),
     )
     exporter.add_event(
-        DEFAULT_PID,
+        proc(DEFAULT_PID),
         create_mock_stats_item(
             gen=_GEN,
             iid=_IID,
@@ -141,9 +127,9 @@ def _write_trace(
             heap_size=_HEAP_SIZE,
         ),
     )
-    exporter.add_event(DEFAULT_PID, create_mock_incremental_item(gen=1, iid=1))
+    exporter.add_event(proc(DEFAULT_PID), create_mock_incremental_item(gen=1, iid=1))
     exporter.add_event(
-        DEFAULT_PID,
+        proc(DEFAULT_PID),
         create_mock_stats_item(
             gen=_GEN,
             iid=2,
@@ -155,11 +141,11 @@ def _write_trace(
         ),
     )
     exporter.add_instant_event(
-        _SECOND_PID,
+        proc(_SECOND_PID),
         create_instant_msg(name=_INSTANT_NAME, ts=_TS_START - 2_000_000),
     )
     exporter.add_event(
-        _SECOND_PID,
+        proc(_SECOND_PID),
         create_mock_stats_item(
             gen=_GEN,
             iid=0,
@@ -174,18 +160,11 @@ def _write_trace(
     return path
 
 
-def _write_trace_no_instant(
-    tmp: Path,
-    cmdline_provider: Callable[[int], list[str] | None] = lambda _pid: None,
-) -> Path:
+def _write_trace_no_instant(tmp: Path) -> Path:
     path = tmp / "trace.pb"
-    exporter = PerfettoExporter(
-        output_path=path,
-        flush_threshold=1000,
-        cmdline_provider=cmdline_provider,
-    )
+    exporter = PerfettoExporter(output_path=path, flush_threshold=1000)
     exporter.add_event(
-        DEFAULT_PID,
+        proc(DEFAULT_PID),
         create_mock_stats_item(
             gen=_GEN,
             iid=_IID,
@@ -197,7 +176,7 @@ def _write_trace_no_instant(
         ),
     )
     exporter.add_event(
-        _SECOND_PID,
+        proc(_SECOND_PID),
         create_mock_stats_item(
             gen=_GEN,
             iid=0,
@@ -243,7 +222,7 @@ def _write_crossing_trace(tmp: Path) -> Path:
         (DEFAULT_PID, _CROSS_A_STOP),
         (_SECOND_PID, _CROSS_B_STOP),
     ):
-        exporter.add_instant_event(pid, create_instant_msg(name=_INSTANT_NAME, ts=ts))
+        exporter.add_instant_event(proc(pid), create_instant_msg(name=_INSTANT_NAME, ts=ts))
     exporter.close()
     return path
 
@@ -280,7 +259,7 @@ def _write_zero_duration_trace(tmp: Path) -> Path:
         (DEFAULT_PID, _ZERO_CLIPPED_STOP),
         (_SECOND_PID, _ZERO_CROSSER_STOP),
     ):
-        exporter.add_instant_event(pid, create_instant_msg(name=_INSTANT_NAME, ts=ts))
+        exporter.add_instant_event(proc(pid), create_instant_msg(name=_INSTANT_NAME, ts=ts))
     exporter.close()
     return path
 
@@ -309,7 +288,7 @@ def _write_liveness_trace(tmp: Path) -> Path:
     path = tmp / "liveness.pb"
     exporter = PerfettoExporter(output_path=path, flush_threshold=1000)
     exporter.add_event(
-        DEFAULT_PID,
+        proc(DEFAULT_PID),
         create_mock_stats_item(
             gen=_GEN,
             iid=_IID,
@@ -318,7 +297,7 @@ def _write_liveness_trace(tmp: Path) -> Path:
         ),
     )
     for ts in _LIVE_TICKS:
-        exporter.add_process_liveness({DEFAULT_PID, _SECOND_PID}, ts)
+        exporter.add_process_liveness({proc(DEFAULT_PID), proc(_SECOND_PID)}, ts)
     exporter.close()
     return path
 
@@ -336,7 +315,7 @@ def _write_liveness_only_trace(tmp: Path) -> Path:
     path = tmp / "liveness_only.pb"
     exporter = PerfettoExporter(output_path=path, flush_threshold=1000)
     for ts in _LIVE_TICKS:
-        exporter.add_process_liveness({DEFAULT_PID, _SECOND_PID}, ts)
+        exporter.add_process_liveness({proc(DEFAULT_PID), proc(_SECOND_PID)}, ts)
     exporter.close()
     return path
 
@@ -359,7 +338,7 @@ def trace_processor(tmp_path: Path) -> Iterator[TraceProcessor]:
 def trace_processor_with_cmdline(
     tmp_path: Path,
 ) -> Iterator[TraceProcessor]:
-    path = _write_trace(tmp_path, cmdline_provider=_fake_cmdline_provider)
+    path = _write_trace(tmp_path, cmdline=_FAKE_CMDLINE)
     with open_trace_processor(path) as tp:
         yield tp
 
@@ -515,7 +494,7 @@ class TestCounterTracks:
             flush_threshold=1000,
         )
         exporter.add_event(
-            DEFAULT_PID,
+            proc(DEFAULT_PID),
             create_mock_stats_item(
                 gen=0,
                 iid=0,
@@ -1269,14 +1248,14 @@ class TestMultiFlushProcessesTrack:
         exporter = PerfettoExporter(output_path=path, flush_threshold=5)
         try:
             exporter.add_instant_event(
-                pid,
+                proc(pid),
                 create_instant_msg(name=_INSTANT_NAME, ts=0),
             )
             for i in range(n_items):
                 ts_start = 1_000_000 * (i + 1)
                 ts_stop = ts_start + 50_000
                 exporter.add_event(
-                    pid,
+                    proc(pid),
                     create_mock_stats_item(
                         gen=0,
                         iid=i,
@@ -1476,14 +1455,10 @@ _RSS_TS_3: int = 2_500_000_000
 
 def _write_trace_with_rss(tmp: Path) -> Path:
     path = tmp / "trace_with_rss.pb"
-    exporter: PerfettoExporter = PerfettoExporter(
-        output_path=path,
-        flush_threshold=1000,
-        cmdline_provider=_fake_cmdline_provider,
-    )
-    exporter.add_rss_sample(_RSS_PID_1, _RSS_VAL_1, _RSS_TS_1)
-    exporter.add_rss_sample(_RSS_PID_2, _RSS_VAL_2, _RSS_TS_2)
-    exporter.add_rss_sample(_RSS_PID_1, _RSS_VAL_3, _RSS_TS_3)
+    exporter: PerfettoExporter = PerfettoExporter(output_path=path, flush_threshold=1000)
+    exporter.add_rss_sample(proc(_RSS_PID_1), _RSS_VAL_1, _RSS_TS_1)
+    exporter.add_rss_sample(proc(_RSS_PID_2), _RSS_VAL_2, _RSS_TS_2)
+    exporter.add_rss_sample(proc(_RSS_PID_1), _RSS_VAL_3, _RSS_TS_3)
     exporter.close()
     return path
 
@@ -1593,7 +1568,7 @@ class TestRssCounterTrackIntegration:
         path = tmp_path / "trace_combined.pb"
         exporter = PerfettoExporter(output_path=path, flush_threshold=1000)
         exporter.add_event(
-            DEFAULT_PID,
+            proc(DEFAULT_PID),
             create_mock_stats_item(
                 gen=0,
                 iid=0,
@@ -1604,7 +1579,7 @@ class TestRssCounterTrackIntegration:
                 heap_size=_HEAP_SIZE,
             ),
         )
-        exporter.add_rss_sample(DEFAULT_PID, _RSS_VAL_1, _RSS_TS_1)
+        exporter.add_rss_sample(proc(DEFAULT_PID), _RSS_VAL_1, _RSS_TS_1)
         exporter.close()
 
         with open_trace_processor(path) as tp:
@@ -1633,10 +1608,10 @@ class TestTwoInterpretersHeapSizes:
         exporter = PerfettoExporter(output_path=path, flush_threshold=1000)
         for iid, heap_size in ((0, 1_000), (1, 9_000)):
             exporter.add_event(
-                DEFAULT_PID,
+                proc(DEFAULT_PID),
                 create_mock_stats_item(gen=0, iid=iid, heap_size=heap_size, ts_start=_TS_START, ts_stop=_TS_STOP),
             )
-        exporter.add_rss_sample(DEFAULT_PID, _RSS_VAL_1, _RSS_TS_1)
+        exporter.add_rss_sample(proc(DEFAULT_PID), _RSS_VAL_1, _RSS_TS_1)
         exporter.close()
         with open_trace_processor(path) as tp:
             yield tp

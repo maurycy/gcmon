@@ -5,13 +5,14 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 from gcmon.model.data import GCStatsInfo
+from gcmon.model.process import Process
 from gcmon.model.protocol import TGCStatsInfo
 from gcmon.monitoring.events_reader import TargetUnavailable
 from gcmon.monitoring.monitor import EventsMonitor, PollReport
 from gcmon.monitoring.target_process import ExternalProcess
 from gcmon.monitoring.wait_policy import WaitPolicy, WaitPolicyFactory, no_wait_policy
 from gcmon.stats.streaming_stats import StreamingStats
-from tests.helpers import FakeEventsReader, MockExporter, create_mock_stats_item
+from tests.helpers import FakeEventsReader, MockExporter, create_mock_stats_item, polled, proc
 
 
 def _reads(records: Sequence[TGCStatsInfo]) -> Callable[[int], Sequence[TGCStatsInfo]]:
@@ -60,16 +61,16 @@ class TestEventsMonitorExtra:
     def test_poll_updates_stats(
         self, monitor: EventsMonitor, one_record: GCStatsInfo, mock_stats_update: MagicMock
     ) -> None:
-        monitor._poll(12345)
+        monitor._poll(polled(monitor, 12345))
 
-        mock_stats_update.assert_called_once_with(12345, one_record)
+        mock_stats_update.assert_called_once_with(proc(12345), one_record)
 
     def test_poll_skips_invalid_timestamp_event(
         self, monitor: EventsMonitor, exporter: MockExporter, reader: FakeEventsReader
     ) -> None:
         reader.reads = _reads([create_mock_stats_item(ts_start=2_000, ts_stop=1_000)])
 
-        monitor._poll(12345)
+        monitor._poll(polled(monitor, 12345))
 
         assert exporter.events == []
 
@@ -78,7 +79,7 @@ class TestEventsMonitorExtra:
     ) -> None:
         reader.reads = _reads([create_mock_stats_item(ts_start=1_000, ts_stop=1_000)])
 
-        monitor._poll(12345)
+        monitor._poll(polled(monitor, 12345))
 
         assert exporter.events == []
 
@@ -97,8 +98,8 @@ class TestEventsMonitorExtra:
         }
         reader.reads = lambda pid: per_pid[pid]
 
-        monitor._poll(12345)
-        monitor._poll(999)
+        monitor._poll(polled(monitor, 12345))
+        monitor._poll(polled(monitor, 999))
 
         assert [e.ts_start for e in exporter.events] == [5_000, 4_000, 6_000]
 
@@ -107,8 +108,8 @@ class TestEventsMonitorExtra:
     ) -> None:
         reader.reads = _reads([create_mock_stats_item(ts_start=5_000, ts_stop=5_100)])
 
-        monitor._poll(12345)
-        monitor._poll(12345)
+        monitor._poll(polled(monitor, 12345))
+        monitor._poll(polled(monitor, 12345))
 
         assert [e.ts_start for e in exporter.events] == [5_000]
 
@@ -233,7 +234,14 @@ def _drive(
     _reader_of(monitor).reads = read
 
     reports: list[PollReport] = []
-    with patch("gcmon.monitoring.monitor.get_child_pids", side_effect=list(listings)):
+    now_ns = 0
+    # A tick's reads land on the instant it was given, so a test that says
+    # nothing about the clock gets one stamp per tick. `TestProcessLiveness`
+    # drives the reads apart where the spread is the subject.
+    with (
+        patch("gcmon.monitoring.monitor.get_child_pids", side_effect=list(listings)),
+        patch("gcmon.monitoring.monitor.time.monotonic_ns", lambda: now_ns),
+    ):
         for tick, _ in enumerate(listings, start=1):
             now_ns = tick * TICK_NS
             reports.append(monitor.tick(now_ns, stop))
@@ -251,7 +259,7 @@ class TestTheReport:
             rings={12345: [_ring(1)], 999: [_ring(1)]},
         )
 
-        assert reports[0].live_pids == frozenset({12345, 999})
+        assert reports[0].live == frozenset({proc(12345), proc(999)})
 
     def test_a_pid_that_could_not_be_read_is_not_live(self, exporter: MockExporter) -> None:
         """Only ``PollStatus.OK`` is evidence a process was there. A failed
@@ -262,14 +270,14 @@ class TestTheReport:
             rings={12345: [_ring(1)], 999: [TargetUnavailable("no such process")]},
         )
 
-        assert reports[0].live_pids == frozenset({12345})
+        assert reports[0].live == frozenset({proc(12345)})
 
     def test_the_live_set_is_frozen(self, exporter: MockExporter) -> None:
         """Nothing downstream mutates it -- the sampler iterates it and the
         exporter folds it into a min/max -- so it is handed over frozen."""
         reports = _drive(_monitor(exporter), listings=[[]], rings={12345: [_ring(1)]})
 
-        assert isinstance(reports[0].live_pids, frozenset)
+        assert isinstance(reports[0].live, frozenset)
 
     def test_keep_running_while_a_policy_still_waits(self, exporter: MockExporter) -> None:
         reports = _drive(
@@ -308,7 +316,7 @@ class TestTheReport:
         )
 
         assert not reports[0].keep_running
-        assert reports[0].live_pids == frozenset()
+        assert reports[0].live == frozenset()
 
 
 class TestTheControlPlaneVerdict:
@@ -321,7 +329,7 @@ class TestTheControlPlaneVerdict:
             rings={12345: [_ring(1)]},
         )
 
-        assert reports[0].live_pids == frozenset({12345})
+        assert reports[0].live == frozenset({proc(12345)})
         assert 999 not in exporter.events_by_pid
 
 
@@ -337,7 +345,7 @@ class TestTheStopCheck:
             stop=lambda: next(answers),
         )
 
-        assert reports[0].live_pids == frozenset({12345})
+        assert reports[0].live == frozenset({proc(12345)})
         assert 999 not in exporter.events_by_pid
 
 
@@ -547,7 +555,7 @@ class TestProcessLiveness:
             frozenset({12345, 888}),
         ]
 
-    def test_stamped_with_the_instant_the_tick_was_given(self, exporter: MockExporter) -> None:
+    def test_stamped_with_the_instant_the_tick_reached(self, exporter: MockExporter) -> None:
         _drive(
             _monitor(exporter),
             listings=[[], []],
@@ -555,6 +563,23 @@ class TestProcessLiveness:
         )
 
         assert [ts for _pids, ts in exporter.liveness] == [TICK_NS, 2 * TICK_NS]
+
+    def test_stamped_no_earlier_than_the_reads_that_proved_them_alive(self, exporter: MockExporter) -> None:
+        """Two processes alive in one tick have to share an end, so the sweep
+        that draws the `Processes` track sees them nest rather than cross. The
+        opening instant does not do it: reads are sequential, so the pid polled
+        second is observed later, and a long-lived parent would be clipped back
+        to the start of a short child that recycled a pid (ADR-0011)."""
+        monitor = _monitor(exporter)
+        reads = iter([TICK_NS + 10, TICK_NS + 20, TICK_NS + 30, TICK_NS + 40])
+        with (
+            patch("gcmon.monitoring.monitor.get_child_pids", return_value=[999]),
+            patch("gcmon.monitoring.monitor.time.monotonic_ns", side_effect=lambda: next(reads)),
+        ):
+            _reader_of(monitor).reads = lambda pid: [_ring(1)[0]]
+            monitor.tick(TICK_NS, _never_stops)
+
+        assert [ts for _pids, ts in exporter.liveness] == [TICK_NS + 40]
 
     def test_a_pid_that_could_not_be_read_is_not_reported(self, exporter: MockExporter) -> None:
         _drive(
@@ -610,14 +635,14 @@ class _OrderedExporter(MockExporter):
         self.order: list[str] = []
 
     @override
-    def add_event(self, pid: int, item: TGCStatsInfo) -> None:
+    def add_event(self, process: Process, item: TGCStatsInfo) -> None:
         self.order.append("record")
-        super().add_event(pid, item)
+        super().add_event(process, item)
 
     @override
-    def add_process_liveness(self, pids: Set[int], ts_ns: int) -> None:
+    def add_process_liveness(self, processes: Set[Process], ts_ns: int) -> None:
         self.order.append("liveness")
-        super().add_process_liveness(pids, ts_ns)
+        super().add_process_liveness(processes, ts_ns)
 
 
 class TestTheExporterIsNotReachableThroughTheMonitor:
@@ -690,7 +715,7 @@ class TestAPidThePolicyGaveUpOn:
             rings={12345: [TargetUnavailable("gone")], 999: [TargetUnavailable("gone too")]},
         )
 
-        assert reports[0].live_pids == frozenset()
+        assert reports[0].live == frozenset()
         assert not reports[0].keep_running
         assert exporter.liveness == [], "an observation of nothing widens no span"
 
@@ -702,7 +727,7 @@ class TestNoWaitPolicyThroughAWholeTick:
     def test_a_successful_poll_keeps_the_run_open(self, exporter: MockExporter) -> None:
         reports = _drive(_monitor(exporter), listings=[[]], rings={12345: [_ring(1)]})
 
-        assert reports[0].live_pids == frozenset({12345})
+        assert reports[0].live == frozenset({proc(12345)})
         assert reports[0].keep_running
 
     def test_a_failed_poll_ends_it(self, exporter: MockExporter) -> None:
