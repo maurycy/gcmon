@@ -6,7 +6,7 @@ import time
 from _remote_debugging import get_child_pids
 from collections.abc import Callable, Sequence, Set
 from itertools import groupby
-from typing import Self
+from typing import NamedTuple, Self
 
 import msgspec
 
@@ -43,6 +43,18 @@ class PidState(msgspec.Struct):
     # None before the first read. Two polls bound a loss record, so one poll
     # bounds nothing.
     ts_last_poll: int | None = None
+
+
+class PollResult(NamedTuple):
+    """What one poll of one pid did.
+
+    *process* is what the records were filed under, and ``None`` exactly where
+    the read did not return: a pid enters the registry on a read that returned
+    (ADR-0025).
+    """
+
+    status: PollStatus
+    process: Process | None
 
 
 class PollReport(msgspec.Struct):
@@ -97,6 +109,9 @@ class EventsMonitor:
         # The latest clock instant this tick has reached. See :meth:`tick`.
         self._tick_read_ns = 0
         self._coverage_warned = False
+        # Per pid, every reason already reported for not reading it. Keyed on
+        # the pid because a pid gcmon cannot read has no process to key on.
+        self._unreadable: dict[int, set[str]] = {}
 
     def tick(self, now_ns: int, stop: Callable[[], bool]) -> PollReport:
         """Poll the target and every child once, and report what answered.
@@ -137,16 +152,10 @@ class EventsMonitor:
             if policy is None:
                 policy = self._policies[pid] = self._wait_policy_factory()
 
-            # A pid enters the registry when it is about to be polled, not
-            # when the listing names it: a suppressed pid produces no
-            # records and needs no process. The exporter is handed the
-            # command line as part of the creation, see ADR-0025.
-            process = self._processes.current(pid) or self._processes.create(pid, self._exporter.add_process_cmdline)
-
-            rc = self._poll(process)
-            keep_waiting = policy.wait(rc)
+            status, process = self._poll(pid)
+            keep_waiting = policy.wait(status)
             keep_running = keep_running or keep_waiting
-            if rc == PollStatus.OK:
+            if process is not None:
                 live.add(process)
             elif not keep_waiting:
                 # The policy stays behind. A fresh one answers True until its
@@ -176,15 +185,21 @@ class EventsMonitor:
             )
             return None
 
-    def _poll(self, process: Process) -> PollStatus:
-        pid = process.pid
+    def _poll(self, pid: int) -> PollResult:
+        """Read *pid* once and file what it answered.
 
+        A pid enters the registry on a read that returns, not when the listing
+        names it and not on the attempt: a pid gcmon cannot read produces no
+        records and needs no process (ADR-0025). Creating one per attempt spent
+        an epoch and a command-line read on every poll of a pid that never
+        became readable, for as long as it was listed.
+        """
         if not self._enabled:
             logger.warning(
                 "Monitor for PID %s already stopped",
                 pid,
             )
-            return PollStatus.FAIL
+            return PollResult(PollStatus.FAIL, None)
 
         try:
             ts_read_start = time.monotonic_ns()
@@ -192,18 +207,35 @@ class EventsMonitor:
             ts_read_stop = time.monotonic_ns()
             self._tick_read_ns = ts_read_stop
             self._stats.record_read_time(ts_read_stop - ts_read_start)
+
+            process = self._processes.current(pid)
+            if process is None:
+                # The exporter is handed the command line as part of the
+                # creation, see ADR-0025.
+                process = self._processes.create(pid, self._exporter.add_process_cmdline)
             self._ingest(process, records, ts_read_start)
 
-            return PollStatus.OK
+            self._unreadable.pop(pid, None)
+            return PollResult(PollStatus.OK, process)
         except TargetUnavailable as exc:
             # The ordinary end of a run reaches here, so it stays at debug
             # level: a warning would put a traceback on stderr every time a
             # target exits. ADR-0020.
-            logger.debug("Error while polling PID %s (child PID=%s): %s", self._process.pid, pid, exc)
-            return PollStatus.INVALID_PROCESS
+            #
+            # Said once per pid and reason: a target that never becomes readable
+            # is polled again every tick, and the repeat carries nothing the
+            # first line did not. A reason not seen on that pid is a target that
+            # got further, and is reported. A read that returns forgets the pid,
+            # so a process that goes quiet after answering is reported too.
+            reason = str(exc)
+            reported = self._unreadable.setdefault(pid, set())
+            if reason not in reported:
+                reported.add(reason)
+                logger.debug("Error while polling PID %s (child PID=%s): %s", self._process.pid, pid, exc)
+            return PollResult(PollStatus.INVALID_PROCESS, None)
         except Exception as exc:
             logger.warning("Monitor for PID %s (child PID=%s) encountered error", self._process.pid, pid, exc_info=exc)
-            return PollStatus.FAIL
+            return PollResult(PollStatus.FAIL, None)
 
     def _forget(self, pid: int, ts: int) -> None:
         """Drop the cursors and the attachment held for *pid*, so a reused pid
@@ -232,6 +264,8 @@ class EventsMonitor:
         for pid in self._policies.keys() - pids:
             del self._policies[pid]
         self._reader.retain(pids)
+        for pid in self._unreadable.keys() - pids:
+            del self._unreadable[pid]
         self._stats.retain({process for process in self._processes.live() if process.pid in pids})
         self._processes.retain(pids, ts)
 

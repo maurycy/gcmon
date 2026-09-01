@@ -258,7 +258,7 @@ def replay(interval_ms: float, sizes: dict[int, int] = RING_SIZES, skew_ms: floa
 
     with patch("gcmon.monitoring.monitor.time.monotonic_ns", side_effect=lambda: next(ticks)):
         for _ in batches:
-            assert monitor._poll(polled(monitor, PID)) is PollStatus.OK
+            assert monitor._poll(PID).status is PollStatus.OK
 
     return Replay(truth=truth, recorder=recorder, stats=stats, polls=len(batches), wakes=wakes)
 

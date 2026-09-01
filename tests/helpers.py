@@ -98,10 +98,12 @@ def monitored(*pids: int) -> ProcessRegistry:
 
 
 def polled(monitor: EventsMonitor, pid: int) -> Process:
-    """The process *monitor* polls *pid* as, created if it has none yet.
+    """The process *monitor* files *pid*'s records under, created if it has
+    none yet.
 
-    `EventsMonitor.tick` creates one before each poll; a test driving the
-    poll on its own goes through here so the registry agrees with it.
+    `EventsMonitor._poll` creates one on a read that returned (ADR-0025); a
+    test driving `_ingest` past the read goes through here, so the registry
+    agrees with the process it hands in.
     """
     return monitor._processes.current(pid) or monitor._processes.create(pid)
 

@@ -11,9 +11,15 @@ from gcmon.model.protocol import TGCStatsInfo
 from gcmon.monitoring.events_reader import TargetUnavailable
 from gcmon.monitoring.monitor import EventsMonitor
 from gcmon.stats.streaming_stats import StreamingStats
-from tests.helpers import FakeEventsReader, MockExporter, create_mock_stats_item, polled
+from tests.helpers import FakeEventsReader, MockExporter, create_mock_stats_item, proc
 
 NO_RECORDS: list[TGCStatsInfo] = []
+
+
+def _polling_errors(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Every line `_poll` wrote about a read it could not make."""
+    return [r.getMessage() for r in caplog.records if r.getMessage().startswith("Error while polling")]
+
 
 # =============================================================================
 # Local fixtures
@@ -55,9 +61,9 @@ class TestGCMonitor:
         item = create_mock_stats_item(ts_start=1_000_000_000, ts_stop=1_005_000_000)
 
         mock_read.return_value = [item]
-        result = monitor._poll(polled(monitor, 12345))
+        result = monitor._poll(12345)
 
-        assert result == PollStatus.OK
+        assert result.status == PollStatus.OK
         assert len(exporter.events) == 1
 
     def test_poll_duplicate_records(self, exporter: MockExporter, monitor: EventsMonitor, mock_read: MagicMock) -> None:
@@ -68,11 +74,24 @@ class TestGCMonitor:
         item3 = create_mock_stats_item(collections=51, ts_start=2_000_000_000, ts_stop=2_005_000_000)
 
         mock_read.return_value = [item1, item2, item3]
-        monitor._poll(polled(monitor, 12345))
+        monitor._poll(12345)
 
         assert len(exporter.events) == 2
         assert exporter.events[0].ts_start == 1_000_000_000
         assert exporter.events[1].ts_start == 2_000_000_000
+
+    def test_a_poll_answers_with_the_process_it_filed_under(self, monitor: EventsMonitor, mock_read: MagicMock) -> None:
+        """`tick` reports it as live, and asking the registry for it a second
+        time takes the registry's lock again."""
+        mock_read.return_value = [create_mock_stats_item()]
+
+        assert monitor._poll(12345) == (PollStatus.OK, proc(12345))
+
+    def test_a_failed_poll_answers_with_no_process(self, monitor: EventsMonitor, mock_read: MagicMock) -> None:
+        """The other half: nothing was filed, so there is nothing to name."""
+        mock_read.side_effect = TargetUnavailable("PID 12345 is not readable: gone")
+
+        assert monitor._poll(12345) == (PollStatus.INVALID_PROCESS, None)
 
     def test_poll_unreadable_target(self, monitor: EventsMonitor, mock_read: MagicMock) -> None:
         """One case, not five. Which CPython failures mean "unreadable" is the
@@ -80,7 +99,7 @@ class TestGCMonitor:
         monitor decides is what an unreadable target does to a poll."""
         mock_read.side_effect = TargetUnavailable("PID 12345 is not readable: gone")
 
-        assert monitor._poll(polled(monitor, 12345)) == PollStatus.INVALID_PROCESS
+        assert monitor._poll(12345).status == PollStatus.INVALID_PROCESS
 
     def test_poll_of_a_departed_target_writes_no_warning(
         self, monitor: EventsMonitor, mock_read: MagicMock, caplog: pytest.LogCaptureFixture
@@ -91,16 +110,65 @@ class TestGCMonitor:
         mock_read.side_effect = TargetUnavailable("PID 12345 is not readable: [Errno 3] No such process")
 
         with caplog.at_level(logging.DEBUG, logger="gcmon"):
-            assert monitor._poll(polled(monitor, 12345)) == PollStatus.INVALID_PROCESS
+            assert monitor._poll(12345).status == PollStatus.INVALID_PROCESS
 
         assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
         assert any("12345" in r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG)
 
+    def test_an_unreadable_pid_is_reported_once(
+        self, monitor: EventsMonitor, mock_read: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A target that never becomes readable is polled again every tick, and
+        the repeat carries nothing the first line did not. Left in, it is a wall
+        of one line per pid per tick for as long as the run lasts."""
+        mock_read.side_effect = TargetUnavailable("PID 12345 is not readable: Failed to get Python runtime address")
+
+        with caplog.at_level(logging.DEBUG, logger="gcmon"):
+            monitor._poll(12345)
+            monitor._poll(12345)
+
+        assert len(_polling_errors(caplog)) == 1
+
+    def test_a_new_reason_is_reported(
+        self, monitor: EventsMonitor, mock_read: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A target walks through several of these as it starts: it has no
+        runtime address, then one whose interpreter state cannot be read. The
+        second line says it got further, so it is not the repeat above."""
+        mock_read.side_effect = [
+            TargetUnavailable("PID 12345 is not readable: Failed to get Python runtime address"),
+            TargetUnavailable("PID 12345 is not readable: Failed to read interpreter state address"),
+        ]
+
+        with caplog.at_level(logging.DEBUG, logger="gcmon"):
+            for _ in range(2):
+                monitor._poll(12345)
+
+        assert len(_polling_errors(caplog)) == 2
+
+    def test_a_pid_that_answers_between_failures_is_reported_again(
+        self, monitor: EventsMonitor, mock_read: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """What is suppressed is the repeat, not the second failure: a process
+        that answered and then went quiet is a different event from the one that
+        was never readable, and says so even where the reason reads the same."""
+        mock_read.side_effect = [
+            TargetUnavailable("PID 12345 is not readable: No interpreter state found"),
+            NO_RECORDS,
+            TargetUnavailable("PID 12345 is not readable: No interpreter state found"),
+        ]
+
+        with caplog.at_level(logging.DEBUG, logger="gcmon"):
+            for _ in range(3):
+                monitor._poll(12345)
+
+        assert len(_polling_errors(caplog)) == 2
+
     def test_poll_general_exception(self, monitor: EventsMonitor, mock_read: MagicMock) -> None:
         mock_read.side_effect = ValueError("Unexpected error")
-        result = monitor._poll(polled(monitor, 12345))
+        result = monitor._poll(12345)
 
-        assert result == PollStatus.FAIL
+        assert result.status == PollStatus.FAIL
 
     def test_poll_general_exception_is_warned_with_a_traceback(
         self, monitor: EventsMonitor, mock_read: MagicMock, caplog: pytest.LogCaptureFixture
@@ -110,7 +178,7 @@ class TestGCMonitor:
         """
         mock_read.side_effect = ValueError("Unexpected error")
 
-        assert monitor._poll(polled(monitor, 12345)) == PollStatus.FAIL
+        assert monitor._poll(12345).status == PollStatus.FAIL
 
         warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
         assert len(warnings) == 1
@@ -118,7 +186,7 @@ class TestGCMonitor:
 
     def test_poll_after_stop(self, monitor: EventsMonitor) -> None:
         monitor.stop()
-        assert monitor._poll(polled(monitor, 12345)) == PollStatus.FAIL
+        assert monitor._poll(12345).status == PollStatus.FAIL
 
     def test_stop(self, exporter: MockExporter, monitor: EventsMonitor) -> None:
         monitor.stop()
@@ -137,8 +205,8 @@ class TestGCMonitor:
         holds the pid reserved -- so a monitor that has stopped must not still be
         holding one. Leaving it to garbage collection is not the same thing."""
         mock_read.return_value = NO_RECORDS
-        monitor._poll(polled(monitor, 12345))
-        monitor._poll(polled(monitor, 999))
+        monitor._poll(12345)
+        monitor._poll(999)
         assert reader.attached == {12345, 999}
 
         monitor.stop()
@@ -149,7 +217,7 @@ class TestGCMonitor:
         self, monitor: EventsMonitor, mock_read: MagicMock, reader: FakeEventsReader
     ) -> None:
         mock_read.return_value = NO_RECORDS
-        monitor._poll(polled(monitor, 12345))
+        monitor._poll(12345)
 
         monitor.stop()
         monitor.stop()
@@ -166,7 +234,7 @@ class TestGCMonitorReadTime:
         mock_monotonic.side_effect = [1_000_000_000, 1_002_500_000]
         mock_read.return_value = [create_mock_stats_item()]
 
-        assert monitor._poll(polled(monitor, 12345)) == PollStatus.OK
+        assert monitor._poll(12345).status == PollStatus.OK
 
         # 2.5 ms between the two monotonic_ns readings, stored as nanoseconds
         assert stats.read_time.count() == 1
@@ -177,7 +245,7 @@ class TestGCMonitorReadTime:
     ) -> None:
         mock_read.return_value = NO_RECORDS
 
-        assert monitor._poll(polled(monitor, 12345)) == PollStatus.OK
+        assert monitor._poll(12345).status == PollStatus.OK
 
         assert stats.count() == 0
         assert stats.read_time.count() == 1
@@ -188,7 +256,7 @@ class TestGCMonitorReadTime:
         mock_monotonic.side_effect = [1_000_000_000, 1_000_000_750]
         mock_read.return_value = NO_RECORDS
 
-        assert monitor._poll(polled(monitor, 12345)) == PollStatus.OK
+        assert monitor._poll(12345).status == PollStatus.OK
 
         assert stats.read_time.sum() == 750
 
@@ -198,8 +266,8 @@ class TestGCMonitorReadTime:
         mock_monotonic.side_effect = [0, 1_000_000, 5_000_000, 8_000_000]
         mock_read.return_value = NO_RECORDS
 
-        monitor._poll(polled(monitor, 12345))
-        monitor._poll(polled(monitor, 12345))
+        monitor._poll(12345)
+        monitor._poll(12345)
 
         assert stats.read_time.count() == 2
         assert stats.read_time.sum() == 4_000_000
@@ -214,8 +282,8 @@ class TestGCMonitorReadTime:
         mock_read.return_value = NO_RECORDS
 
         first, second = make_monitor(pid=111), make_monitor(pid=222)
-        first._poll(polled(first, 111))
-        second._poll(polled(second, 222))
+        first._poll(111)
+        second._poll(222)
 
         assert stats.read_time.count() == 2
 
@@ -224,7 +292,7 @@ class TestGCMonitorReadTime:
     ) -> None:
         mock_read.side_effect = TargetUnavailable("PID 12345 is not readable: not started yet")
 
-        assert monitor._poll(polled(monitor, 12345)) == PollStatus.INVALID_PROCESS
+        assert monitor._poll(12345).status == PollStatus.INVALID_PROCESS
 
         assert stats.read_time.count() == 0
 
@@ -234,7 +302,7 @@ class TestGCMonitorReadTime:
         mock_read.return_value = NO_RECORDS
         monitor.stop()
 
-        assert monitor._poll(polled(monitor, 12345)) == PollStatus.FAIL
+        assert monitor._poll(12345).status == PollStatus.FAIL
 
         assert stats.read_time.count() == 0
         mock_read.assert_not_called()

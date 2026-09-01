@@ -39,9 +39,13 @@ what gcmon read would put both back in Python. What was read stays with the
 registry that read it, and a caller holding the pair reaches the rings and
 tracks filed under it.
 
-**Only the monitor calls `ProcessRegistry.create`.** The call comes as it is
-about to poll a pid, not when a listing names one. Evidence naming a pid gcmon
-never polled has no process to belong to.
+**Only the monitor calls `ProcessRegistry.create`.** The call comes on a read
+that returned, not when a listing names the pid and not on the attempt.
+Evidence naming a pid gcmon never read has no process to belong to, and a pid
+it cannot read produces none. A process per attempt spends an epoch and a
+`psutil` command-line read on every poll of a pid that never becomes readable,
+for as long as it stays in the tree, and a pid the operating system hands on
+afterwards opens at whatever number those attempts reached.
 
 **Below the registry a pid is an `int`; above it, a `Process`.** The reader,
 the child listing and the `psutil` calls take the number the operating system

@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Callable, Generator, Mapping, Sequence, Set
 from typing import override
 from unittest.mock import MagicMock, Mock, patch
@@ -9,10 +10,11 @@ from gcmon.model.process import Process
 from gcmon.model.protocol import TGCStatsInfo
 from gcmon.monitoring.events_reader import TargetUnavailable
 from gcmon.monitoring.monitor import EventsMonitor, PollReport
+from gcmon.monitoring.process_registry import ProcessRegistry
 from gcmon.monitoring.target_process import ExternalProcess
 from gcmon.monitoring.wait_policy import WaitPolicy, WaitPolicyFactory, no_wait_policy
 from gcmon.stats.streaming_stats import StreamingStats
-from tests.helpers import FakeEventsReader, MockExporter, create_mock_stats_item, polled, proc
+from tests.helpers import FakeEventsReader, MockExporter, create_mock_stats_item, proc
 
 
 def _reads(records: Sequence[TGCStatsInfo]) -> Callable[[int], Sequence[TGCStatsInfo]]:
@@ -61,7 +63,7 @@ class TestEventsMonitorExtra:
     def test_poll_updates_stats(
         self, monitor: EventsMonitor, one_record: GCStatsInfo, mock_stats_update: MagicMock
     ) -> None:
-        monitor._poll(polled(monitor, 12345))
+        monitor._poll(12345)
 
         mock_stats_update.assert_called_once_with(proc(12345), one_record)
 
@@ -70,7 +72,7 @@ class TestEventsMonitorExtra:
     ) -> None:
         reader.reads = _reads([create_mock_stats_item(ts_start=2_000, ts_stop=1_000)])
 
-        monitor._poll(polled(monitor, 12345))
+        monitor._poll(12345)
 
         assert exporter.events == []
 
@@ -79,7 +81,7 @@ class TestEventsMonitorExtra:
     ) -> None:
         reader.reads = _reads([create_mock_stats_item(ts_start=1_000, ts_stop=1_000)])
 
-        monitor._poll(polled(monitor, 12345))
+        monitor._poll(12345)
 
         assert exporter.events == []
 
@@ -98,8 +100,8 @@ class TestEventsMonitorExtra:
         }
         reader.reads = lambda pid: per_pid[pid]
 
-        monitor._poll(polled(monitor, 12345))
-        monitor._poll(polled(monitor, 999))
+        monitor._poll(12345)
+        monitor._poll(999)
 
         assert [e.ts_start for e in exporter.events] == [5_000, 4_000, 6_000]
 
@@ -108,8 +110,8 @@ class TestEventsMonitorExtra:
     ) -> None:
         reader.reads = _reads([create_mock_stats_item(ts_start=5_000, ts_stop=5_100)])
 
-        monitor._poll(polled(monitor, 12345))
-        monitor._poll(polled(monitor, 12345))
+        monitor._poll(12345)
+        monitor._poll(12345)
 
         assert [e.ts_start for e in exporter.events] == [5_000]
 
@@ -159,6 +161,7 @@ def _monitor(
     pid: int = 12345,
     wait_policy_factory: WaitPolicyFactory = no_wait_policy,
     is_pid_enabled: Callable[[int], bool] | None = None,
+    registry: ProcessRegistry | None = None,
 ) -> EventsMonitor:
     """A monitor wired the way the monitoring command wires one.
 
@@ -173,6 +176,7 @@ def _monitor(
         reader=FakeEventsReader(),
         wait_policy_factory=wait_policy_factory,
         is_pid_enabled=is_pid_enabled,
+        registry=registry,
     )
 
 
@@ -427,6 +431,27 @@ class TestOnePruneOverOneSet:
 
         # 12345 once, then 999 twice: once on first sight, once on return.
         assert factory.call_count == 3
+
+    def test_a_pid_that_leaves_the_tree_can_be_reported_unreadable_again(
+        self, exporter: MockExporter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """`_poll` says once per pid and reason that it cannot read it, and
+        that memory is state of the same lifetime: what comes back under the
+        number is a new process, and its first failed poll is news even where
+        it failed the way its predecessor did.
+        """
+        with caplog.at_level(logging.DEBUG, logger="gcmon"):
+            _drive(
+                _monitor(exporter),
+                listings=[[999], [999], [], [999]],
+                rings={
+                    12345: [_ring(1), _ring(1), _ring(1), _ring(1)],
+                    999: [TargetUnavailable("not started")] * 3,
+                },
+            )
+
+        reported = [r for r in caplog.records if "child PID=999" in r.getMessage()]
+        assert len(reported) == 2
 
     def test_a_pid_that_leaves_the_tree_loses_its_attachment(self, exporter: MockExporter) -> None:
         """ADR-0020 puts the reader's attachment under ADR-0017's rule, so it
@@ -718,6 +743,80 @@ class TestAPidThePolicyGaveUpOn:
         assert reports[0].live == frozenset()
         assert not reports[0].keep_running
         assert exporter.liveness == [], "an observation of nothing widens no span"
+
+
+class TestAPidGcmonCannotRead:
+    """A pid enters the registry on a read that returned (ADR-0025).
+
+    One created per attempt spent an epoch and a command-line read on every
+    poll of a pid that never became readable, for as long as it stayed in the
+    tree. A benchmark run at `--rate 0.001` reached `22048#13` that way, and
+    12704 of its 12768 registry entries were retired without ever having read
+    anything.
+    """
+
+    def test_it_enters_no_process(self, exporter: MockExporter) -> None:
+        monitor = _monitor(exporter)
+
+        _drive(
+            monitor,
+            listings=[[999], [999], [999]],
+            rings={
+                12345: [_ring(1), _ring(1), _ring(1)],
+                999: [TargetUnavailable("not started")] * 3,
+            },
+        )
+
+        assert monitor._processes.live() == frozenset({proc(12345)})
+        # `at` is what the control plane files evidence through, and it reads
+        # the retired processes too: one created per attempt leaves three
+        # there, so the pid answers with a process that never existed.
+        assert monitor._processes.at(999, 3 * TICK_NS) is None
+
+    def test_it_spends_no_epoch(self, exporter: MockExporter) -> None:
+        """The number a process is drawn under, so this is what a `#13` on a
+        Perfetto row costs when it is wrong: it claims twelve processes held
+        the pid before this one."""
+        monitor = _monitor(exporter)
+
+        _drive(
+            monitor,
+            listings=[[999], [999], [999], [999]],
+            rings={
+                12345: [_ring(1), _ring(1), _ring(1), _ring(1)],
+                999: [
+                    TargetUnavailable("not started"),
+                    TargetUnavailable("not started"),
+                    TargetUnavailable("not started"),
+                    _ring(1),
+                ],
+            },
+        )
+
+        assert monitor._processes.current(999) == proc(999)
+
+    def test_it_costs_no_cmdline_read(self, exporter: MockExporter) -> None:
+        """`psutil` reads the command line as the process is created, which on
+        Windows walks the target's environment block. Once per process, not
+        once per poll of a pid that answers nothing."""
+        asked: list[int] = []
+
+        def cmdline(pid: int) -> tuple[str, ...]:
+            asked.append(pid)
+            return ("python",)
+
+        monitor = _monitor(exporter, registry=ProcessRegistry(cmdline))
+
+        _drive(
+            monitor,
+            listings=[[999], [999], [999]],
+            rings={
+                12345: [_ring(1), _ring(1), _ring(1)],
+                999: [TargetUnavailable("not started")] * 3,
+            },
+        )
+
+        assert asked == [12345]
 
 
 class TestNoWaitPolicyThroughAWholeTick:

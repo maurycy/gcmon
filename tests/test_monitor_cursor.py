@@ -373,9 +373,9 @@ class TestPollIntegration:
         polls = iter([poll_0, poll_1])
         reader.reads = lambda pid: next(polls)
 
-        assert monitor._poll(polled(monitor, PID)) == PollStatus.OK
+        assert monitor._poll(PID).status == PollStatus.OK
         assert len(exporter.events) == 15
 
-        assert monitor._poll(polled(monitor, PID)) == PollStatus.OK
+        assert monitor._poll(PID).status == PollStatus.OK
 
         assert len(exporter.events) == 29
