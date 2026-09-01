@@ -1,6 +1,7 @@
 """Tests for ``PerfettoTrackState`` uuid allocation and bookkeeping."""
 
 from gcmon.exporters.perfetto_track_state import PerfettoTrackState
+from gcmon.model.process import Process
 from tests.exporters.perfetto_helpers import span
 from tests.helpers import interpreter_track, loss_track, proc
 
@@ -62,6 +63,122 @@ class TestPerfettoTrackState:
         state.get_or_create_counter_track_uuid(interpreter_track(100, 0), "G0 collected")
         assert state.has_counter_track(interpreter_track(100, 0), "G0 collected")
         assert not state.has_counter_track(interpreter_track(100, 0), "G1 collected")
+
+
+class TestRankAllocation:
+    """`rank_processes` hands out each rank once, sorting the group it is
+    given before it draws from a counter that only goes up."""
+
+    def _ranked(self, state: PerfettoTrackState, *processes: Process) -> list[int | None]:
+        return [state.get_process_track_rank(process) for process in processes]
+
+    def test_a_process_with_no_span_is_left_unranked(self) -> None:
+        """gcmon has not observed it, so there is nothing to sort it by."""
+        state = PerfettoTrackState()
+        state.rank_processes([proc(100)])
+        assert state.get_process_track_rank(proc(100)) is None
+
+    def test_a_group_is_sorted_by_first_observation(self) -> None:
+        state = PerfettoTrackState()
+        state.update_process_lifetime(proc(100), 5_000)
+        state.update_process_lifetime(proc(200), 1_000)
+        state.rank_processes([proc(100), proc(200)])
+        assert self._ranked(state, proc(200), proc(100)) == [0, 1]
+
+    def test_the_group_order_does_not_reach_the_ranks(self) -> None:
+        state = PerfettoTrackState()
+        state.update_process_lifetime(proc(100), 5_000)
+        state.update_process_lifetime(proc(200), 1_000)
+        state.rank_processes([proc(200), proc(100)])
+        assert self._ranked(state, proc(200), proc(100)) == [0, 1]
+
+    def test_an_equal_start_is_broken_by_process(self) -> None:
+        state = PerfettoTrackState()
+        for pid in (200, 100):
+            state.update_process_lifetime(proc(pid), 1_000)
+        state.rank_processes([proc(200), proc(100)])
+        assert self._ranked(state, proc(100), proc(200)) == [0, 1]
+
+    def test_a_later_group_takes_the_ranks_after_it(self) -> None:
+        """Even where it was observed first: gcmon cannot sort a process
+        against one it has not reached."""
+        state = PerfettoTrackState()
+        state.update_process_lifetime(proc(100), 5_000)
+        state.rank_processes([proc(100)])
+        state.update_process_lifetime(proc(200), 1_000)
+        state.rank_processes([proc(200)])
+        assert self._ranked(state, proc(100), proc(200)) == [0, 1]
+
+    def test_ranking_twice_leaves_the_first_answer(self) -> None:
+        state = PerfettoTrackState()
+        state.update_process_lifetime(proc(100), 5_000)
+        state.rank_processes([proc(100)])
+        state.update_process_lifetime(proc(200), 1_000)
+        state.rank_processes([proc(200), proc(100)])
+        assert self._ranked(state, proc(100), proc(200)) == [0, 1]
+
+    def test_a_repeated_process_in_one_group_spends_one_rank(self) -> None:
+        """The convert pass names a process once per event on it."""
+        state = PerfettoTrackState()
+        state.update_process_lifetime(proc(100), 5_000)
+        state.update_process_lifetime(proc(200), 9_000)
+        state.rank_processes([proc(100), proc(100), proc(200)])
+        assert self._ranked(state, proc(100), proc(200)) == [0, 1]
+
+    def test_an_unobservable_process_spends_no_rank(self) -> None:
+        """It stays unranked, and the one beside it still takes 0."""
+        state = PerfettoTrackState()
+        state.update_process_lifetime(proc(200), 9_000)
+        state.rank_processes([proc(100), proc(200)])
+        assert self._ranked(state, proc(100), proc(200)) == [None, 0]
+
+
+class TestInterpreterCount:
+    """How many interpreters gcmon read a record from, per process.
+
+    An `InterpreterTrack` is built in one place, off a record's iid, so a
+    track marked here is an interpreter that produced something.
+    """
+
+    def test_a_process_with_no_tracks_counts_zero(self) -> None:
+        state = PerfettoTrackState()
+        assert state.get_interpreter_count(proc(100)) == 0
+
+    def test_each_interpreter_counts_once(self) -> None:
+        state = PerfettoTrackState()
+        state.mark_track(interpreter_track(100, 0))
+        state.mark_track(interpreter_track(100, 1))
+        assert state.get_interpreter_count(proc(100)) == 2
+
+    def test_marking_one_twice_counts_once(self) -> None:
+        state = PerfettoTrackState()
+        state.mark_track(interpreter_track(100, 0))
+        state.mark_track(interpreter_track(100, 0))
+        assert state.get_interpreter_count(proc(100)) == 1
+
+    def test_a_loss_row_does_not_widen_the_count(self) -> None:
+        """A loss row names an interpreter but is not one, and gcmon builds
+        its groups from records it already read."""
+        state = PerfettoTrackState()
+        state.mark_track(interpreter_track(100, 0))
+        state.mark_track(loss_track(100, 0))
+        assert state.get_interpreter_count(proc(100)) == 1
+
+    def test_another_process_is_counted_apart(self) -> None:
+        state = PerfettoTrackState()
+        state.mark_track(interpreter_track(100, 0))
+        state.mark_track(interpreter_track(200, 0))
+        state.mark_track(interpreter_track(200, 1))
+        assert state.get_interpreter_count(proc(100)) == 1
+        assert state.get_interpreter_count(proc(200)) == 2
+
+    def test_two_processes_on_one_pid_are_counted_apart(self) -> None:
+        state = PerfettoTrackState()
+        state.mark_track(interpreter_track(100, 0))
+        state.mark_track(interpreter_track(100, 0, pid_epoch=2))
+        state.mark_track(interpreter_track(100, 1, pid_epoch=2))
+        assert state.get_interpreter_count(proc(100)) == 1
+        assert state.get_interpreter_count(proc(100, 2)) == 2
 
 
 class TestProcessLifetimeState:
@@ -203,12 +320,6 @@ class TestTwoProcessesOnOnePidGetTheirOwnRows:
 
         assert not state.has_process_descriptor(proc(100, 2))
 
-    def test_the_start_process_marker_goes_out_per_process(self) -> None:
-        state = PerfettoTrackState()
-        state.mark_start_process_marker(proc(100, 1))
-
-        assert not state.has_start_process_marker(proc(100, 2))
-
     def test_the_thread_track_gets_a_uuid_per_process(self) -> None:
         state = PerfettoTrackState()
 
@@ -244,3 +355,70 @@ class TestTwoProcessesOnOnePidGetTheirOwnRows:
         state = PerfettoTrackState()
 
         assert state.get_track_uuid(interpreter_track(100, 1, 1)) != state.get_track_uuid(self.FIRST)
+
+
+class TestCaptureTotals:
+    """What gcmon read for a process and what it never got to read.
+
+    Both are running totals over the whole trace, folded in one record and
+    one loss interval at a time.
+    """
+
+    def test_a_process_nothing_was_recorded_for_reads_zero(self) -> None:
+        state = PerfettoTrackState()
+        assert state.get_sampled_count(proc(100)) == 0
+        assert state.get_lost_count(proc(100)) == 0
+        assert state.get_lost_pause_ns(proc(100)) == 0
+
+    def test_each_record_counts_one(self) -> None:
+        state = PerfettoTrackState()
+        for _ in range(3):
+            state.record_sampled(proc(100))
+        assert state.get_sampled_count(proc(100)) == 3
+
+    def test_loss_intervals_add_up(self) -> None:
+        state = PerfettoTrackState()
+        state.record_loss(proc(100), lost_count=4, lost_pause_ns=1_000)
+        state.record_loss(proc(100), lost_count=6, lost_pause_ns=2_500)
+        assert state.get_lost_count(proc(100)) == 10
+        assert state.get_lost_pause_ns(proc(100)) == 3_500
+
+    def test_an_interval_that_lost_nothing_leaves_the_totals_alone(self) -> None:
+        """The fold is additive, so a zero cannot clear what is there.
+
+        `EventsMonitor` sends no such interval, and this holds the
+        accumulator to arithmetic rather than to that guarantee.
+        """
+        state = PerfettoTrackState()
+        state.record_loss(proc(100), lost_count=4, lost_pause_ns=1_000)
+        state.record_loss(proc(100), lost_count=0, lost_pause_ns=0)
+        assert state.get_lost_count(proc(100)) == 4
+        assert state.get_lost_pause_ns(proc(100)) == 1_000
+
+    def test_records_and_losses_are_counted_apart(self) -> None:
+        state = PerfettoTrackState()
+        state.record_sampled(proc(100))
+        state.record_loss(proc(100), lost_count=7, lost_pause_ns=99)
+        assert state.get_sampled_count(proc(100)) == 1
+        assert state.get_lost_count(proc(100)) == 7
+
+    def test_each_process_keeps_its_own_totals(self) -> None:
+        state = PerfettoTrackState()
+        state.record_sampled(proc(100))
+        state.record_sampled(proc(200))
+        state.record_sampled(proc(200))
+        state.record_loss(proc(200), lost_count=3, lost_pause_ns=50)
+        assert state.get_sampled_count(proc(100)) == 1
+        assert state.get_lost_count(proc(100)) == 0
+        assert state.get_sampled_count(proc(200)) == 2
+        assert state.get_lost_count(proc(200)) == 3
+
+    def test_two_processes_on_one_pid_keep_their_own_totals(self) -> None:
+        """A reused pid draws two rows, and each bar counts its own life."""
+        state = PerfettoTrackState()
+        state.record_sampled(proc(100, 1))
+        state.record_loss(proc(100, 2), lost_count=5, lost_pause_ns=10)
+        assert state.get_sampled_count(proc(100, 1)) == 1
+        assert state.get_lost_count(proc(100, 1)) == 0
+        assert state.get_sampled_count(proc(100, 2)) == 0
+        assert state.get_lost_count(proc(100, 2)) == 5

@@ -11,7 +11,6 @@ importer needs one name.
 
 from collections.abc import Sequence
 
-from ..model.process import Process
 from ..model.trace_event import (
     Counter,
     Instant,
@@ -33,9 +32,12 @@ from .perfetto_builders import (
     build_track_event,
 )
 from .perfetto_process_lifetime import (
+    _emit_process_descriptor,
+    _emit_root_descriptor,
+    _record_capture_totals,
     _record_process_lifetime,
+    emit_retired_process_row,
     finalize_perfetto_packets,
-    process_track_name,
 )
 from .perfetto_proto import (
     ChildTracksOrdering,
@@ -72,6 +74,7 @@ __all__ = [
     "build_track_descriptor",
     "build_track_event",
     "convert_trace_events_to_perfetto",
+    "emit_retired_process_row",
     "finalize_perfetto_packets",
 ]
 
@@ -104,97 +107,6 @@ _COUNTER_GROUP_NAME: str = "GC Metrics"
 _LOSS_TRACK_NAME: str = "GC Loss"
 # Below the interpreter's own thread track, which ranks 0.
 _LOSS_TRACK_RANK: int = 1
-
-_START_PROCESS_INSTANT_NAME: str = "Start Process"
-
-
-def _emit_root_descriptor(
-    state: PerfettoTrackState,
-    sequence_id: int,
-) -> list[bytes]:
-    """Build the root ``TrackDescriptor`` (``uuid = 0``), once per trace.
-
-    It carries no ``name`` and no ``process``, ``thread`` or ``counter``
-    sub-message, so the trace processor draws no row for it (ADR-0011).
-    """
-    if state.has_root_descriptor():
-        return []
-    state.mark_root_descriptor_emitted()
-    desc = build_track_descriptor(
-        uuid=0,
-        name="",
-        process_ordering=ProcessOrdering.EXPLICIT,
-        thread_ordering=ThreadOrdering.EXPLICIT,
-    )
-    return [build_trace_packet(sequence_id, track_descriptor=desc)]
-
-
-def _emit_process_descriptor(
-    process: Process,
-    state: PerfettoTrackState,
-    sequence_id: int,
-    sibling_order_rank: int | None = None,
-    start_timestamp_ns: int | None = None,
-) -> list[bytes]:
-    """Build a process track descriptor if not already emitted for *process*.
-
-    *sibling_order_rank* orders this process against the other process
-    tracks, which the UI honors only when the root descriptor carries
-    ``process_ordering = PROCESS_ORDERING_EXPLICIT``; see
-    ``_emit_root_descriptor``.
-
-    *start_timestamp_ns* goes on the ``process`` sub-message. It is
-    *process*'s first event in nanoseconds, the same timestamp the rank comes
-    from.
-    """
-    if state.has_process_descriptor(process):
-        return []
-    state.mark_process_descriptor(process)
-    proc_uuid = state.get_process_track_uuid(process)
-    cmdline = state.get_cmdline(process)
-    desc = build_track_descriptor(
-        proc_uuid,
-        process_track_name(process),
-        pid=process.pid,
-        child_ordering=ChildTracksOrdering.EXPLICIT,
-        sibling_order_rank=sibling_order_rank,
-        cmdline=cmdline,
-        description=" ".join(cmdline) if cmdline else None,
-        start_timestamp_ns=start_timestamp_ns,
-    )
-    return [build_trace_packet(sequence_id, track_descriptor=desc)]
-
-
-def _emit_start_process_marker(
-    process: Process,
-    ts_ns: int,
-    state: PerfettoTrackState,
-    sequence_id: int,
-) -> list[bytes]:
-    """Emit a single dur=0 ``Start Process`` marker on the process track.
-
-    Idempotent per process, and stamped with the first event that process
-    produced.
-
-    The Perfetto UI hides a track holding no events, and with it the process
-    track's ``description``, the joined cmdline. One marker keeps the
-    description visible however few ``Instant`` the caller sent.
-    """
-    if state.has_start_process_marker(process):
-        return []
-    state.mark_start_process_marker(process)
-    proc_uuid = state.get_process_track_uuid(process)
-    return [
-        build_trace_packet(
-            sequence_id,
-            timestamp=ts_ns,
-            track_event=build_track_event(
-                type=TrackEventType.INSTANT,
-                track_uuid=proc_uuid,
-                name=_START_PROCESS_INSTANT_NAME,
-            ),
-        )
-    ]
 
 
 def _emit_thread_descriptor(
@@ -315,7 +227,6 @@ def _emit_track_descriptors(
     track: Track,
     state: PerfettoTrackState,
     sequence_id: int,
-    ranks: dict[Process, int],
 ) -> list[bytes]:
     """Every descriptor *track* needs that has not gone out yet, parent
     first.
@@ -329,7 +240,7 @@ def _emit_track_descriptors(
         process,
         state,
         sequence_id,
-        sibling_order_rank=ranks.get(process),
+        sibling_order_rank=state.get_process_track_rank(process),
         start_timestamp_ns=state.get_process_lifetime_start_ts(process),
     )
     if isinstance(track, InterpreterTrack):
@@ -371,16 +282,19 @@ def convert_trace_events_to_perfetto(
     if events:
         for event in events:
             _record_process_lifetime(event, state)
+            _record_capture_totals(event, state)
         descriptors.extend(_emit_root_descriptor(state, sequence_id))
 
-    ranks = state.get_process_track_ranks()
+    # Ranked after the pre-pass folded the batch in, so the processes this
+    # batch describes are ordered against each other by first observation
+    # rather than by the order their events happen to sit in.
+    state.rank_processes(event.track.process for event in events)
 
     for event in events:
         process = event.track.process
-        descriptors.extend(_emit_track_descriptors(event.track, state, sequence_id, ranks))
+        descriptors.extend(_emit_track_descriptors(event.track, state, sequence_id))
 
         if isinstance(event, Slice):
-            _maybe_emit_start_process_marker(process, event.ts_start, state, sequence_id, packets)
             track_uuid = state.get_track_uuid(event.track)
             # An adjacent pair, not interleaved into stack order: the trace
             # processor sorts by timestamp and builds the nesting itself.
@@ -409,7 +323,6 @@ def convert_trace_events_to_perfetto(
             )
 
         elif isinstance(event, Instant):
-            _maybe_emit_start_process_marker(process, event.ts, state, sequence_id, packets)
             proc_uuid = state.get_process_track_uuid(process)
             packets.append(
                 build_trace_packet(
@@ -425,7 +338,6 @@ def convert_trace_events_to_perfetto(
             )
 
         elif isinstance(event, Counter):
-            _maybe_emit_start_process_marker(process, event.ts, state, sequence_id, packets)
             ctr_uuid, desc_bytes = _emit_counter_track_descriptor(
                 event.track,
                 event.metric,
@@ -443,24 +355,3 @@ def convert_trace_events_to_perfetto(
             )
 
     return descriptors, packets
-
-
-def _maybe_emit_start_process_marker(
-    process: Process,
-    ts: int,
-    state: PerfettoTrackState,
-    sequence_id: int,
-    packets: list[bytes],
-) -> None:
-    """Place *process*'s ``Start Process`` marker at *ts*, if it has not gone
-    out yet.
-
-    Takes the timestamp rather than the event: a `Slice` keeps its in
-    `ts_start` and the other two in `ts`.
-
-    The process track is described by the time this runs whatever the
-    event: the caller emits its track descriptors first.
-    """
-    if state.has_start_process_marker(process):
-        return
-    packets.extend(_emit_start_process_marker(process, ts, state, sequence_id))

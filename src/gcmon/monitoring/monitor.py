@@ -250,6 +250,7 @@ class EventsMonitor:
             # earned them, and a retirement takes it out of the registry.
             self._stats.materialize(process)
             self._processes.retire(pid, ts)
+            self._exporter.add_process_retired(process)
 
     def _retain(self, pids: Set[int], ts: int) -> None:
         """Drop the state of every pid outside *pids*, all of it at once.
@@ -266,8 +267,12 @@ class EventsMonitor:
         self._reader.retain(pids)
         for pid in self._unreadable.keys() - pids:
             del self._unreadable[pid]
-        self._stats.retain({process for process in self._processes.live() if process.pid in pids})
+        live = self._processes.live()
+        self._stats.retain({process for process in live if process.pid in pids})
         self._processes.retain(pids, ts)
+        # Sorted so a tick dropping several reports them in one order.
+        for process in sorted(process for process in live if process.pid not in pids):
+            self._exporter.add_process_retired(process)
 
     def _ingest(self, process: Process, records: Sequence[TGCStatsInfo], ts_poll: int) -> None:
         """Emit the records in *records* not seen yet.
@@ -315,15 +320,29 @@ class EventsMonitor:
             self._exporter.add_loss_event(process, LossMsg(iid=iid, ts_start=ts_prev_poll, ts_stop=ts_poll, gens=gens))
 
         # We want to keep exported events in the time order
+        rereads: dict[Process, int] = {}
         for record in sorted(fresh, key=lambda record: (record.iid, record.ts_start)):
             # A pid pruned from the tree loses its read cursor, so whatever
-            # claims it next re-reads records its predecessor produced
-            # (ADR-0025).
-            # TODO: .at is not efficient here
-            owner = self._processes.at(pid, record.ts_start)
-            assert owner is not None, "tick creates this pid's process before polling it"
-            self._exporter.add_event(owner, record)
-            self._stats.update(owner, record)
+            # claims it next re-reads records dated inside its predecessor's
+            # life. Those went out under the predecessor already, and giving
+            # them to the successor would back-date its span to before it
+            # existed. The accumulator has still swallowed them, so the cursor
+            # sits past them and they are not offered again (ADR-0025).
+            dated_under = self._processes.at(pid, record.ts_start)
+            if dated_under is not None and dated_under != process:
+                rereads[dated_under] = rereads.get(dated_under, 0) + 1
+                continue
+            self._exporter.add_event(process, record)
+            self._stats.update(process, record)
+
+        for predecessor, count in rereads.items():
+            logger.debug(
+                "PID %s: dropped %s record(s) re-read for %s, already exported under %s",
+                pid,
+                count,
+                process,
+                predecessor,
+            )
 
         self._warn_low_coverage(process)
 

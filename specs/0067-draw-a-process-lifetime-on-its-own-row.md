@@ -1,6 +1,6 @@
 # 0067: Draw each process's monitored lifetime on its own row
 
-- **Status:** Not started
+- **Status:** In progress
 - **Kind:** feature (enhancement)
 - **Effort:** M
 - **Origin:** design session 2026-09-01, taken up after 0066 split the process
@@ -135,20 +135,19 @@ zero-length span emitted END-first reads as `dur = -1`.
 **A process with a span and no descriptor gets one.** `finalize` walks every
 process with a recorded span, including one known only from
 `add_process_liveness`. Where such a process has no `ProcessDescriptor`,
-`finalize` calls `_emit_process_descriptor` for it. `get_process_track_ranks`
-already ranks from `_process_lifetime_start`, which liveness observations fold
-into. The rank and the `start_timestamp_ns` are in hand.
+`finalize` calls `_emit_process_descriptor` for it. `rank_processes` ranks
+from `_process_lifetime_start`, which liveness observations fold into. The
+rank and the `start_timestamp_ns` are in hand.
 
-**The `Lifetime` BEGIN carries eight annotations.**
+**The `Lifetime` BEGIN carries seven annotations.**
 
 | Annotation | Type | Source |
 |---|---|---|
 | `cmdline` | string | `state.get_cmdline`, space-joined |
 | `pid_epoch` | int | `Process.pid_epoch` |
 | `interpreters` | int | count of `InterpreterTrack` in `state._tracks` |
-| `clipped` | bool | `span.end_ts != span.real_end_ts` |
-| `sampled_count` | int | new accumulator, `add_event` |
-| `lost_count` | int | new accumulator, `add_loss_event` |
+| `sampled_count` | int | new accumulator, the convert pass |
+| `lost_count` | int | new accumulator, the convert pass |
 | `lost_pause_ns` + `lost_pause` | int + string | same accumulator |
 
 `lost_pause_ns` and `lost_pause` are the ns-for-SQL and readable pair
@@ -157,14 +156,29 @@ into. The rank and the `start_timestamp_ns` are in hand.
 The slice carries no `real_start_ts` or `real_end_ts`. Its own `ts` and `dur`
 are those two numbers.
 
-The `Processes` slice keeps all four annotations it has. It is the row an
-operator scans to compare processes, and the `real_*` pair is what corrects
-its own clipped drawing.
+The `Processes` slice keeps all four annotations it has and gains `clipped`, a
+bool from `span.end_ts != span.real_end_ts`. It is the row an operator scans
+to compare processes, the `real_*` pair is what corrects its own clipped
+drawing, and it is the only row whose drawing the sweep moves. The bar cannot
+carry the verdict: a retired process's row goes out at the flush after its
+retirement, before the sweep has run.
 
 **Two new per-process accumulators on `PerfettoTrackState`.**
-`record_sampled(process)` counts one record per `add_event`, and
-`record_loss_totals(process, lost_count, lost_pause_ns)` sums a `LossMsg`'s
-`gens`. Both are read at close.
+`record_sampled(process)` counts one record and
+`record_loss(process, lost_count, lost_pause_ns)` one poll interval. Both are
+read when the bar is drawn.
+
+Both are fed from the convert pass rather than from `add_event` and
+`add_loss_event`. Those two are where the records arrive, but they hold no
+encoder lock, and taking `_io_lock` there puts a second acquisition on the hot
+path. The convert pass runs under the lock its caller already holds, and it is
+also the one pass a capture read back from JSONL goes through, so
+`gcmon combine` fills the same annotations a live run does.
+
+The pass sees events rather than records, so it counts the two events that
+stand for one thing each: the `GC Pause` slice is one record, and a slice on a
+`LossTrack` is one poll interval. `trace_converter` names the pause category
+in a constant for the count to key on.
 
 `sampled_count` cannot come from the loss path. `EventsMonitor` emits a
 `LossMsg` only for a poll interval that lost something, and the
@@ -304,12 +318,21 @@ ADR-0011 gains the two-row divergence and the rule that the process's own row
 draws the observed pair. Take both in the ADRs, and the sections above become
 implementation steps.
 
-Three clauses in those records are stale independently of this work, and the
-rewrite is where they go:
+**ADR-0011 also reverses itself.** It says of a zero-GC process that "It still
+has no process track, which the UI hides anyway, the problem ADR-0010's
+`Start Process` marker was invented for. Emitting one for it is out of scope."
+Section 4 emits one. The **Rank gaps** consequence below that clause goes with
+it: the gaps existed because a zero-GC pid consumed a rank with no descriptor
+to apply it to, and once every process with a span has one the ranks run 0, 1,
+2 again.
 
-- ADR-0011 says a liveness-only process has "no process descriptor and no
-  cmdline". Since ADR-0025 the monitor publishes a command line for every
-  process it creates, and this holds for `combine` and not for a live run.
+Three clauses are stale independently of this work, and the rewrite is where
+they go:
+
+- `finalize_perfetto_packets` says in its docstring that a liveness-only
+  process has "no process descriptor and no cmdline". Since ADR-0025 the
+  monitor publishes a command line for every process it creates, and this
+  holds for `combine` and not for a live run.
 - ADR-0011 says "Only a process with at least one non-meta event gets a rank".
   `get_process_track_ranks` ranks from `_process_lifetime_start`, which
   liveness observations fold into.

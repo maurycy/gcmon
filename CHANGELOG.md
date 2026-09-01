@@ -17,14 +17,18 @@
 - A `heap_size` counter track is named `Thread {iid} heap_size`, where it was `heap_size`. Two interpreters in one process drew two sibling rows under the same name; a PerfettoSQL query matching `name = 'heap_size'` now matches nothing. `rss` is unchanged
 - A JSONL capture carries no `tid`, on any kind of line. It was `iid` again on a GC record and `-2 - iid` on a loss one; derive it from `iid` if you read it. gcmon still reads a capture that has it
 - `gcmon combine` writes no command line, on the process descriptor or the track description. It used to read whatever process held that PID on the machine running the conversion
+- A process track carries no `Start Process` instant. The `Lifetime` slice on the same row keeps the row rendered, so a PerfettoSQL query matching `name = 'Start Process'` matches nothing. It opens at gcmon's first observation of the process, at or before the timestamp the instant carried
 
 ### Features
 
 - A Perfetto trace is compressed: the same events in a file several times smaller. It opens the same way, and there is nothing to run first
 - `ControlClient.instant_msg` takes a `ts`, so an instant captured in a hot path can be sent after it and still land where it happened
 - The pyperf hook marks where each benchmark ran: `gcmon:`-prefixed begin and end marks per measured region
-- Each process that held a reused PID gets its own slice on the `Processes` track, the second named `Process 12345#2`, matching the `--stats` block. Every slice carries a `pid_epoch` annotation, so a PerfettoSQL query reads the number without parsing the name
+- Each process that held a reused PID gets its own slice on the `Processes` track, the second named `Process 12345#2`, matching the `--stats` block. Every slice carries a `pid_epoch` annotation, so a PerfettoSQL query reads the number without parsing the name, and a `clipped` annotation saying whether an overlapping process cut this one's drawn width short
 - Each process that held a reused PID draws its own rows: a `Process 12345#2` process track beside `Process 12345`, with its own pause row, `GC Loss` row and counters. In PerfettoSQL the two are separate `upid`s, and a per-process figure is a `GROUP BY`
+- Each process track draws a `Lifetime` slice over the interval gcmon watched that process. Click it and the args say what the process was running, which process on the PID it is, how many of its interpreters collected, and how much of it gcmon read: records sampled against records lost, with the GC pause inside the lost ones. It keeps the observed width where the same process's `Processes` slice was cut short by an overlapping one, so the row says how long gcmon watched rather than only that the process existed
+- A process gcmon polled and read no collections from draws a row of its own, with its command line and a `Lifetime` bar over the interval it was watched. It used to reach the trace as a `Processes` slice and nothing else, indistinguishable in the UI from a process gcmon never reached
+- A trace from a run that was killed rather than stopped still shows a row for every process gcmon had finished with. Their rows are written as gcmon lets go of each pid, not at the end of the run; a process still running when the kill lands has no row, and neither does the `Processes` track
 
 ### Bugfixes
 
@@ -32,6 +36,9 @@
 - A `Processes` slice names the program its own process was running. A reused PID used to put the first process's command line on every slice of that PID, and a process that exited before the first flush got none at all
 - A `Processes` slice covers only the process it names, where a reused PID used to draw one slice spanning both and the stretch between them
 - A process track names the program its own process was running and opens when that process started. A reused PID used to draw one track for both processes, showing the first one's command line and stamped before the second existed
+- A child that leaves the process tree and comes back draws each of its collections once. gcmon re-reads the ring it returns holding, and the records it had already drawn used to be drawn a second time
+- A process's row ends where gcmon last read it. A record read after gcmon let go of a pid used to stretch that process's span past the last poll that saw it
+- The process tracks sort by when gcmon first observed each process, and no two of them share a position. A trace holding more than one process could put two rows at the same rank and leave their order to the UI. The order was by first event timestamp before, so a process gcmon read no collections from had no place in it
 
 ### Internal
 
