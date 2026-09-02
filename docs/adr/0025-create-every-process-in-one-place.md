@@ -1,9 +1,10 @@
 # ADR-0025: Create every process in one place, and carry it instead of a pid
 
 - **Status:** Accepted
-- **Date:** 2026-08-31 (a record became filed under the process the read came
-  back from, and one dated inside a retired life dropped, 2026-09-02, see
-  [ADR-0011](0011-process-lifetime-and-ordering.md))
+- **Date:** 2026-08-31, amended:
+  - 2026-09-02: a record became filed under the process the read came back
+    from, and one dated inside a retired life dropped, see
+    [ADR-0011](0011-process-lifetime-and-ordering.md)
 
 ## Context
 

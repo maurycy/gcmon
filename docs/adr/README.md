@@ -26,7 +26,12 @@ record below.
   Write a new record that supersedes it and link both ways.
 - **Date:** when the change shipped, not when you wrote the file. A record
   that has not shipped yet has no history to keep, so rewrite it in place
-  rather than appending a note about what you changed.
+  rather than appending a note about what you changed. One that has shipped
+  grows a sublist instead: `2026-06-27, amended:` on the Date line, then a
+  `YYYY-MM-DD: what changed` bullet per amendment, oldest first. Date each
+  from its own merge, since a branch that runs for days drifts off the date in
+  the draft, and end it `see ADR-NNNN` where another record drove the change.
+  Two amendments that shipped the same day get a bullet each.
 - **Sections:** Decision holds the rules, one to a bullet, each of which
   something in the code obeys. Consequences holds what follows from them and
   never restates one: "there is now one prune" is the decision, not a

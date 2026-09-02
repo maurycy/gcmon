@@ -1,10 +1,11 @@
 # ADR-0016: Report statistics per ring, and drop the per-process row from the `--stats` table
 
 - **Status:** Accepted
-- **Date:** 2026-08-15 (the epoch moved onto a `Process` the monitor creates
-  2026-08-31, see [ADR-0025](0025-create-every-process-in-one-place.md); the
-  track keys it cites became per process 2026-09-01, see
-  [ADR-0011](0011-process-lifetime-and-ordering.md))
+- **Date:** 2026-08-15, amended:
+  - 2026-08-31: the epoch moved onto a `Process` the monitor creates, see
+    [ADR-0025](0025-create-every-process-in-one-place.md)
+  - 2026-09-01: the track keys it cites became per process, see
+    [ADR-0011](0011-process-lifetime-and-ordering.md)
 
 ## Context
 

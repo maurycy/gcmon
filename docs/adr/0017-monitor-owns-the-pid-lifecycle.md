@@ -1,8 +1,9 @@
 # ADR-0017: Give the monitor every piece of per-pid state, and leave the loop the clock
 
 - **Status:** Accepted
-- **Date:** 2026-08-17 (the process registry joined the state the prune owns
-  2026-08-31, see [ADR-0025](0025-create-every-process-in-one-place.md))
+- **Date:** 2026-08-17, amended:
+  - 2026-08-31: the process registry joined the state the prune owns, see
+    [ADR-0025](0025-create-every-process-in-one-place.md)
 
 ## Context
 

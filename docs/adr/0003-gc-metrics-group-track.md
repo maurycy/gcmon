@@ -1,8 +1,9 @@
 # ADR-0003: Parent per-generation counters to a non-OS-scoped `GC Metrics` group track
 
 - **Status:** Accepted
-- **Date:** 2026-06-27 (the track key became per process 2026-09-01, see
-  [ADR-0011](0011-process-lifetime-and-ordering.md))
+- **Date:** 2026-06-27, amended:
+  - 2026-09-01: the track key became per process, see
+    [ADR-0011](0011-process-lifetime-and-ordering.md)
 
 ## Context
 

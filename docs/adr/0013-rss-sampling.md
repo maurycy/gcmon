@@ -1,11 +1,13 @@
 # ADR-0013: Sample RSS in a standalone `RssSampler`, on a `tid = -1` sentinel track
 
 - **Status:** Accepted
-- **Date:** 2026-07-13 (caller note added 2026-08-02; `tick` moved to
-  nanoseconds, the per-sample clock read removed, and "one clock read per
-  tick" narrowed to one *stamping* read, 2026-08-17; `tick` took processes
-  rather than pids 2026-08-31, see
-  [ADR-0025](0025-create-every-process-in-one-place.md))
+- **Date:** 2026-07-13, amended:
+  - 2026-08-02: caller note added
+  - 2026-08-17: `tick` took the instant in nanoseconds, which removed the
+    per-sample clock read and narrowed "one clock read per tick" to one
+    *stamping* read
+  - 2026-08-31: `tick` took processes rather than pids, see
+    [ADR-0025](0025-create-every-process-in-one-place.md)
 
 ## Context
 

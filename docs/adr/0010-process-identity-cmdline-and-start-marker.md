@@ -1,12 +1,13 @@
 # ADR-0010: Carry process cmdline in two places, and force the process track to render
 
 - **Status:** Accepted
-- **Date:** 2026-06-08 (`Start Process` marker added 2026-06-27; collection
-  moved to the monitor and became once per process 2026-08-31, see
-  [ADR-0025](0025-create-every-process-in-one-place.md); the descriptor and
-  the marker became per process 2026-09-01, see
-  [ADR-0011](0011-process-lifetime-and-ordering.md); the marker became the
-  `Lifetime` slice 2026-09-02)
+- **Date:** 2026-06-08, amended:
+  - 2026-06-27: `Start Process` marker added
+  - 2026-08-31: collection moved to the monitor and became once per process,
+    see [ADR-0025](0025-create-every-process-in-one-place.md)
+  - 2026-09-01: the descriptor and the marker became per process, see
+    [ADR-0011](0011-process-lifetime-and-ordering.md)
+  - 2026-09-02: the marker became the `Lifetime` slice
 
 ## Context
 

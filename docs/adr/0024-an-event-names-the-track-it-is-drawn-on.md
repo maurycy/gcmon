@@ -1,8 +1,9 @@
 # ADR-0024: An event names the track it is drawn on
 
 - **Status:** Accepted
-- **Date:** 2026-08-26 (a track named a process rather than a pid 2026-08-31,
-  see [ADR-0025](0025-create-every-process-in-one-place.md))
+- **Date:** 2026-08-26, amended:
+  - 2026-08-31: a track named a process rather than a pid, see
+    [ADR-0025](0025-create-every-process-in-one-place.md)
 - **Supersedes:** [ADR-0004](0004-toplevel-shared-counters.md),
   [ADR-0006](0006-begin-end-slice-pairs.md)
 
