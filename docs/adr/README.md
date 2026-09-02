@@ -21,17 +21,22 @@ record below.
 - **Filename:** `NNNN-kebab-case-title.md`. Assign numbers in order and
   **never reuse or renumber them**, so a reference to ADR-0007 keeps meaning
   the same record.
-- **Status:** `Accepted`, or `Superseded by ADR-NNNN`. Leave a superseded
-  record in place; the history is worth keeping. Do not delete or rewrite one.
-  Write a new record that supersedes it and link both ways.
-- **Date:** when the change shipped, not when you wrote the file. A record
-  that has not shipped yet has no history to keep, so rewrite it in place
-  rather than appending a note about what you changed. One that has shipped
-  grows a sublist instead: `2026-06-27, amended:` on the Date line, then a
-  `YYYY-MM-DD: what changed` bullet per amendment, oldest first. Date each
-  from its own merge, since a branch that runs for days drifts off the date in
-  the draft, and end it `see ADR-NNNN` where another record drove the change.
-  Two amendments that shipped the same day get a bullet each.
+- **Status:** `Accepted`, `Accepted, unbuilt (spec NNNN)`, or
+  `Superseded by ADR-NNNN`. A record is unbuilt while its decision is taken
+  and the code has not caught up: its anchors name modules that do not exist
+  yet, and the spec it names is the work that creates them. Drop the qualifier
+  in the commit that lands the spec. Leave a superseded record in place; the
+  history is worth keeping. Do not delete or rewrite one. Write a new record
+  that supersedes it and link both ways.
+- **Date:** when the change shipped, not when you wrote the file. An unbuilt
+  record dates the decision instead, and takes the merge date when the work
+  lands. A record that has not shipped yet has no history to keep, so rewrite
+  it in place rather than appending a note about what you changed. One that
+  has shipped grows a sublist instead: `2026-06-27, amended:` on the Date
+  line, then a `YYYY-MM-DD: what changed` bullet per amendment, oldest first.
+  Date each from its own merge, since a branch that runs for days drifts off
+  the date in the draft, and end it `see ADR-NNNN` where another record drove
+  the change. Two amendments that shipped the same day get a bullet each.
 - **Sections:** Decision holds the rules, one to a bullet, each of which
   something in the code obeys. Consequences holds what follows from them and
   never restates one: "there is now one prune" is the decision, not a
@@ -91,3 +96,5 @@ module is neither.
 | [0023](0023-the-pyperf-hook-annotates-and-does-not-drive.md) | Mark the benchmark from the pyperf hook, and drive nothing | Accepted | model, pyperf |
 | [0024](0024-an-event-names-the-track-it-is-drawn-on.md) | An event names the track it is drawn on, and the encoder derives the rest | Accepted | exporters, model |
 | [0025](0025-create-every-process-in-one-place.md) | Create every process in one place, and carry it instead of a pid | Accepted | cli, control, exporters, model, monitoring |
+| [0026](0026-two-towers-over-a-shared-base.md) | Split the package into a monitor tower and an analysis tower | Accepted, unbuilt | analysis, cli, exporters, monitoring |
+| [0027](0027-the-monitor-tower-owns-the-interpreter-floor.md) | The monitor tower owns the interpreter floor | Accepted, unbuilt | cli, monitoring |

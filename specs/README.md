@@ -41,6 +41,7 @@ This file holds the open set and the order to take it in. The other two:
 | [0061](0061-build-the-statistics-table-from-a-tracefile.md) | Feature (enhancement) | L | The statistics table exists only while gcmon is running; a capture from last week holds every number and offers no way to see them |
 | [0062](0062-name-a-workload-from-a-sanitized-command-line.md) | Feature (enhancement) | M | A pyperformance run prints one `Total` folding sixty benchmarks and hundreds of blocks keyed by a pid that means nothing afterwards; the level anyone asks about is missing |
 | [0063](0063-compare-two-tracefiles.md) | Feature (enhancement) | L | Nothing answers "did GC get worse between these two runs"; two tables side by side works for one row and fails for sixty |
+| [0068](0068-split-the-tree-into-two-towers.md) | Feature (cleanup) | L | gcmon will not install below Python 3.15, though half of what it does needs nothing from it; and nothing stops a command that only reads a file from importing the monitoring layer |
 
 Every row here has a file. A missing number either retired or never became
 one; [RETIRED.md](RETIRED.md) says which.
@@ -63,6 +64,7 @@ one; [RETIRED.md](RETIRED.md) says which.
 | 0020 | Unblocked: 0067 landed, and the `Lifetime` slice is where both fields go |
 | 0051 | Unblocked: 0039 landed, and `StreamingStats` is in the module it will keep |
 | 0060 | Smallest of the comparison set and depends on none of it |
+| 0068 | Constrained: before 0061. Creates the `analysis` tower the reader lands in, and the extra it needs |
 | 0061 | Unblocked: 0059 landed, and a trace now says which process held a pid |
 | 0062 | |
 | 0063 | Constrained: after 0060, 0061 and 0062 |
@@ -85,6 +87,7 @@ the position. A blank cell means no recorded reason, so that row can move.
 | First | Then | Why |
 |-------|------|-----|
 | 0050 | 0040 | 0040 derives the option declarations from one table and would otherwise have to carry the alias 0050 introduces through a rewrite of the structure holding it |
+| 0068 | 0061 | 0061's reader lives in the `analysis` tower and needs the `analysis` extra; 0068 creates both |
 | 0060, 0061, 0062 | 0063 | 0063 builds two of the tables those three produce and diffs them; it computes no statistic of its own |
 
 0042 depends on nothing else here; take it at any time.
