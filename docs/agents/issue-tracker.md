@@ -45,6 +45,33 @@ problem from the operator's perspective. Read it before writing one.
 - Comments and conversation history append to the bottom of the file under a
   `## Comments` heading.
 
+## GitHub issues are a separate act
+
+`.scratch/` is the default, and `/to-tickets` writes there as-is under the
+conventions above. Nothing here publishes a ticket to GitHub on its own.
+
+Open a public issue only when asked for one directly. "Split this into
+tickets" means `.scratch/`. "Open an issue on GitHub" means GitHub.
+
+A public issue is read by people who never saw the conversation it came from.
+It carries five sections in this order:
+
+| Section | Holds |
+|---|---|
+| Problem | What is wrong or missing |
+| Context | What the code does not say: measurements, counts, the trees involved, the questions the ticket settles |
+| Requirements | What the change has to achieve |
+| Constraints | What it cannot negotiate: repository settings, pinning rules, the Python version |
+| Acceptance criteria | How a reviewer tells it is done |
+
+`Out of scope` sits before the acceptance criteria where neighbouring work
+needs naming. An umbrella issue replaces it with `Rejected`, holding the
+alternatives weighed and turned down.
+
+Leave the solution out. State the problem, what was measured, and what done
+looks like. The contributor designs the change, and a ticket carrying the
+finished configuration has nothing left in it to contribute.
+
 ## When a skill says "publish to the issue tracker"
 
 Create a new file under `.scratch/<feature-slug>/`, creating the directory if
