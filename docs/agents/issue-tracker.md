@@ -72,6 +72,10 @@ Leave the solution out. State the problem, what was measured, and what done
 looks like. The contributor designs the change, and a ticket carrying the
 finished configuration has nothing left in it to contribute.
 
+Anchor on names and never on line numbers: a job and step name, a command, a
+heading, a symbol. A number drifts between the ticket being written and the
+work starting, and `specs/CONVENTIONS.md` holds specs to the same rule.
+
 ## When a skill says "publish to the issue tracker"
 
 Create a new file under `.scratch/<feature-slug>/`, creating the directory if
