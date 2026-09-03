@@ -65,6 +65,69 @@ def test_main_combine_command(tmp_path: Path) -> None:
     assert cli.main(["combine", str(input_file), "-o", str(tmp_path / "output.pftrace")]) == 0
 
 
+def test_main_no_subcommand_exits_2(capsys: pytest.CaptureFixture[str]) -> None:
+    from gcmon.cli import main as cli
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main([])
+
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert "the following arguments are required: command" in captured.err
+    for subcommand in ("monitor", "combine", "run"):
+        assert subcommand in captured.err
+
+
+def test_main_invalid_subcommand_exits_2(capsys: pytest.CaptureFixture[str]) -> None:
+    from gcmon.cli import main as cli
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["12345"])
+
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert "invalid choice: '12345'" in captured.err
+
+
+def test_main_version_exits_0(capsys: pytest.CaptureFixture[str]) -> None:
+    from gcmon.cli import main as cli
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["--version"])
+
+    assert excinfo.value.code == 0
+
+
+def test_main_subcommands_dispatch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from gcmon.cli import main as cli
+
+    calls: list[str] = []
+
+    def mock_monitor(args: object) -> int:
+        calls.append("monitor")
+        return 0
+
+    def mock_run(args: object) -> int:
+        calls.append("run")
+        return 0
+
+    def mock_combine(args: object) -> int:
+        calls.append("combine")
+        return 0
+
+    monkeypatch.setattr("gcmon.cli.commands.monitor_cmd.cmd_monitor", mock_monitor)
+    assert cli.main(["monitor", "12345"]) == 0
+    assert calls == ["monitor"]
+
+    monkeypatch.setattr("gcmon.cli.commands.run_cmd.cmd_run", mock_run)
+    assert cli.main(["run", "-m", "timeit"]) == 0
+    assert calls == ["monitor", "run"]
+
+    monkeypatch.setattr("gcmon.cli.commands.convert_cmd.cmd_combine", mock_combine)
+    assert cli.main(["combine", str(tmp_path / "in.jsonl"), "-o", str(tmp_path / "out.pftrace")]) == 0
+    assert calls == ["monitor", "run", "combine"]
+
+
 # =============================================================================
 # CLI Help Tests
 # =============================================================================
