@@ -1,7 +1,6 @@
 # Changelog
 
 ## WIP
-- Removed OS from the coverage report name
 
 ### Breaking changes
 
@@ -47,6 +46,7 @@
 ### Internal
 
 - `gcmon.TraceExporter` is gone from the public surface
+- Removed OS from the coverage report name
 - Stability, correctness and performance improvements
 
 
