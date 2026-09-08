@@ -27,13 +27,20 @@ describes half its contents.
 ## Decision
 
 - The package is two towers over a shared base.
-- The base is `support`, `model`, `stats` and `exporters`. Both towers import
-  it.
+- The base is `support`, `model`, `stats` and `exporters`. Each tower's row in
+  the table says which of the four it takes: `analysis` reads and writes files
+  and takes three, and `stats` is reached from `cli.analyze` above it.
+- A tower is defined by which side of the capture file it sits on, not by the
+  interpreter it needs. `pyperf` and `control` require nothing of 3.15
+  ([ADR-0027](0027-the-monitor-tower-owns-the-interpreter-floor.md)) and are
+  monitor-tower code because they run beside a live process.
 - The monitor tower is `control`, `monitoring`, `pyperf` and `cli.monitor`.
 - The analysis tower is `analysis` and `cli.analyze`.
 - **Neither tower imports the other.** `cli` itself, meaning `main.py` and the
   two root modules, is the one place both are reachable, because it assembles
   the parser from both.
+- `cli.shared` holds what both towers' parsers need, and imports nothing. It
+  exists so that a tower never imports `cli`, where `main.py` reaches both.
 - `analysis` holds what consumes a file gcmon wrote: `combine`, `jsonl_io`,
   and the tracefile reader spec 0061 adds. `combine` writes a trace as its
   output, and belongs here regardless, because what it reads is a capture.
@@ -41,7 +48,8 @@ describes half its contents.
   the same accumulation, and spec 0061 exists in the shape it does so that
   they cannot drift apart.
 - The layer table in `tests/architecture/test_layering.py` carries the towers,
-  and `layer_of` answers `cli.monitor` or `cli.analyze` by subdirectory.
+  and `layer_of` answers `cli.monitor`, `cli.analyze` or `cli.shared` by
+  subdirectory, trying the two-segment name before the head.
 
 ## Consequences
 
@@ -53,10 +61,14 @@ describes half its contents.
 - `gcmon.exporters` stops re-exporting `combine_files` and
   `convert_jsonl_to_trace_format`, and `gcmon` stops re-exporting the
   monitoring layer. Both are public names, and both go.
-- The towers' code separates; their tests do not. A monitor-tower test reads
-  back what `JsonlExporter` wrote by calling `read_jsonl`, which is
-  analysis-tower code. Nothing forbids it, because the layer walk reads `src/`
-  only, and one distribution ships both.
+- The towers' tests separate in one direction. A monitor-tower test reads back
+  what `JsonlExporter` wrote by calling `read_jsonl`, which is analysis-tower
+  code; the layer walk reads `src/` only, and one distribution ships both. The
+  reverse is barred by the floor rather than by the walk: a base or analysis
+  test that imports the monitor tower cannot be collected on 3.13
+  ([ADR-0027](0027-the-monitor-tower-owns-the-interpreter-floor.md)), which
+  puts the shared fixtures in `tests/conftest.py` and `tests/helpers.py` on
+  the tower-free side.
 - A third tower is now cheap to argue for and expensive to add by accident.
   The table names two, and a directory that belongs to neither has to say
   which it is.
@@ -83,5 +95,6 @@ whose only caller is `combine_files`. The module is analysis-side entire.
 
 - `tests/architecture/test_layering.py` holds the table, `FOLDED` and
   `layer_of`.
-- `src/gcmon/analysis/`, `src/gcmon/cli/monitor/`, `src/gcmon/cli/analyze/`.
+- `src/gcmon/analysis/`, `src/gcmon/cli/monitor/`, `src/gcmon/cli/analyze/`,
+  `src/gcmon/cli/shared/`.
 - Spec 0068 is the move itself.

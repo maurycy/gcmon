@@ -76,9 +76,10 @@ the file.
 **The reader is two seams, both protocols, with one implementation over
 `TraceProcessor`.** The lower seam takes a trace and yields the rows it holds:
 slices with their category, name, span and arguments, counter samples, and the
-processes those hang under. The upper seam folds those rows into records. Spec
-0068 declares the `analysis` extra that `perfetto` and `protobuf` arrive in,
+processes those hang under. The upper seam folds those rows into records. This
+spec declares the `analysis` extra that `perfetto` and `protobuf` arrive in,
 and importing either seam without it fails with a message naming the extra.
+Spec 0068 lowered the floor those two have to meet.
 
 Two seams rather than one because each has a consumer. `report` wants records.
 A tool reading gcmon's traces from outside wants the rows, and denied them it
@@ -97,13 +98,17 @@ test in section 5 is what would validate the replacement.
 
 **The upper seam returns `dict[int, list[TItem]]`,** the type `read_jsonl`
 already returns. Folding a capture's records back into a `StreamingStats`
-becomes the single path from records to a table. `pyperf/hook.py` carried a
-private `_replay` doing exactly that; spec 0064 left it with no caller, since
-the hook marks the benchmark and computes nothing, and it was deleted rather
-than left to rot. Recover it from git history: it and its tests are the commit
-before "Drop the hook's replay of a capture". JSONL and a tracefile then reach
-the table through the same code, and the zero-duration rule in
-`streaming_stats._record` is applied once rather than reimplemented.
+becomes the single path from records to a table, and it lives in
+`cli/analyze/`: the layer table gives `analysis` `model`, `exporters` and
+`support`, and `stats` is reached from the command above it
+([ADR-0026](../docs/adr/0026-two-towers-over-a-shared-base.md)).
+`pyperf/hook.py` carried a private `_replay` doing exactly that; spec 0064
+left it with no caller, since the hook marks the benchmark and computes
+nothing, and it was deleted rather than left to rot. Recover it from git
+history: it and its tests are the commit before "Drop the hook's replay of a
+capture". JSONL and a tracefile then reach the table through the same code,
+and the zero-duration rule in `streaming_stats._record` is applied once rather
+than reimplemented.
 
 That costs the reader some fabrication. A sub-phase has its own slice, so its
 duration is in the file directly, and reassembling the timestamp pair the

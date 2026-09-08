@@ -4,14 +4,20 @@
 - **Date:** 2026-06-08, amended:
   - 2026-08-01: `perfetto_format.py` split into five modules, and its tests to
     match
+  - 2026-09-08: the dependency argument narrowed to the pyperf hook, see
+    ADR-0027
 
 ## Context
 
 gcmon writes Perfetto binary traces (`.pftrace`). The obvious implementation
 imports the generated message classes from the official `perfetto` Python
-package and lets it serialize. That package pulls in `protobuf`, and gcmon is
-a monitoring tool meant to be installable next to the process it watches, so
-every runtime dependency is one the target application inherits.
+package and lets it serialize. That package pulls in `protobuf`. The pyperf
+hook runs inside the target
+([ADR-0023](0023-the-pyperf-hook-annotates-and-does-not-drive.md)), and a
+runtime dependency on that path is one the benchmarked application inherits.
+`monitor` and `run` read the target from outside and hand it nothing.
+[ADR-0027](0027-the-monitor-tower-owns-the-interpreter-floor.md) narrows this
+argument to the hook.
 
 The slice of the Perfetto wire format gcmon needs is small: varints,
 length-delimited submessages, and roughly thirty field numbers, a few hundred

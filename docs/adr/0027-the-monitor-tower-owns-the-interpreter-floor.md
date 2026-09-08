@@ -34,12 +34,17 @@ nothing with it but the interpreter version.
 
 - `requires-python` is `>=3.13`. It states the analysis tower's floor, because
   that is the floor of the distribution as a whole.
-- 3.15 is a runtime requirement of the monitor tower
-  ([ADR-0026](0026-two-towers-over-a-shared-base.md)), enforced where it is
-  real: importing `monitoring` on an older interpreter fails, because
-  `_remote_debugging` is not there.
-- `cli/main.py` registers the monitor tower's subcommands through an
-  `ImportError` guard, and registers a stub for each when the import fails.
+- 3.15 is `monitoring`'s runtime requirement, not the whole monitor tower's.
+  `control` and `pyperf` need nothing from it, and the hook runs inside a
+  target that need not be 3.15 either; a tower is defined by which side of the
+  capture it sits on ([ADR-0026](0026-two-towers-over-a-shared-base.md)). The
+  requirement is enforced where it is real: importing `monitoring` on an older
+  interpreter fails, because `_remote_debugging` is not there.
+- `cli/main.py` attempts the monitor tower's subcommands and classifies the
+  failure. An `ImportError` below 3.15 registers a stub for each. On 3.15 and
+  above it propagates, because there the tower is present and the fault is a
+  circular import, a renamed symbol or a half-built install, which a message
+  naming the interpreter version would hide.
 - **The help text is identical on every interpreter.** `monitor` and `run`
   carry `(requires Python 3.15+)` in their descriptions on 3.15 as well as on
   3.13. Running one where the tower is absent exits non-zero with a message
@@ -47,8 +52,10 @@ nothing with it but the interpreter version.
 - The floor is 3.13 rather than the 3.12 the syntax allows, because 3.13 is
   what the analysis consumers run. Lowering a floor later is not a breaking
   change; raising one is.
-- CI runs the base and the analysis tower on the floor, so that a 3.15-only
-  construct in either fails on the commit that introduces it.
+- CI runs the base and the analysis tower on the floor, and type-checks both
+  against 3.13, so that a 3.15-only construct in either fails on the commit
+  that introduces it. The suite reaches what it executes; a checker reading a
+  versioned typeshed reaches the stdlib names it does not.
 
 ## Consequences
 
@@ -85,7 +92,9 @@ between machines can be documented truthfully for only one of them.
 
 ## Implementation
 
-- `pyproject.toml`: `requires-python`, and the `analysis` extra.
+- `pyproject.toml`: the `python` constraint under
+  `[tool.poetry.dependencies]`, and the classifiers. The `analysis` extra
+  arrives in spec 0061, with the reader that imports it.
 - `cli/main.py`: the guard and the stubs.
 - `monitoring/events_reader.py` and `monitoring/monitor.py`: the imports that
   are the requirement.
