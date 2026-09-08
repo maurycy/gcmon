@@ -64,7 +64,8 @@ Links run from an ADR to a page, never back: a page names no ADR and no spec.
 - The journey. What was searched, what broke, what was tried. The decision is
   the part worth keeping, and the record already holds it.
 - A clause after the claim opening with *so*, *since*, *which is what* or
-  *rather than*.
+  *rather than*. This holds outside `docs/adr/`; a record's reasoning is what
+  the record is for.
 - A literary phrase where a standard term exists. "Case and surrounding space
   are forgiven" is "case-insensitive, surrounding whitespace stripped".
 - The document justifying its own existence. "Worth recording because", "this
@@ -74,11 +75,42 @@ Links run from an ADR to a page, never back: a page names no ADR and no spec.
   earning it.
 - An intensifier or a hedge carrying no fact: *strictly*, *deliberately*,
   *exactly*, *precisely*, *outright*, *quietly*, *for now*. Cut the word and
-  check the sentence still claims what it claimed.
+  check the sentence still claims what it claimed. *Exactly* counting a thing
+  and *strictly* bounding a set are terms, and stay.
 - The value a test asserts. The routing table sends the constraint to the
   test, and the number it compares against goes with it. "The same ring
   without the departure opens one" beats "emits a window of 297", which is a
   fixture copied into prose and stale the moment the fixture changes.
+
+## What stays
+
+The cutting rules above have a floor. A convention is not slop, and a pass
+that trims one does damage that reads like tidying.
+
+- A formulaic container the reader expects: the CHANGELOG's `###` headings, an
+  ADR's Status and Context, a template's sections. The community reads the
+  container, not around it.
+- The standing `### Internal` line. It repeats across versions because that is
+  what standing means.
+- A table or a list where the facts are genuinely enumerable. Prose is not the
+  more human form of a five-row table.
+- A one-word answer. Terseness is the house default here, not a draft that ran
+  out of effort.
+- A habit the file already keeps. Edit toward the voice in front of you, not
+  toward a generic one.
+
+## Checking an edit
+
+Two tests on anything a trimming pass rewrote, before it stands.
+
+Strike each word the pass added. If the sentence still parses and still claims
+what it claimed, the word was filler and goes. Then put back each phrase the
+pass replaced. If the old wording was sound and said the same, the old wording
+wins. A shorter version that dropped a claim does not win on length.
+
+Repair fails both tests and stays: the subject a split run-on needs, the verb
+that replaces a nominalisation, the article that makes a sentence grammatical.
+A passage that ends longer than it began was not trimmed.
 
 ## Mechanical
 
