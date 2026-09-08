@@ -9,9 +9,8 @@
   [ADR-0001](../docs/adr/0001-hand-rolled-perfetto-protobuf-encoder.md) (the
   encoder is hand-rolled and `perfetto` stays out of the *monitoring*
   runtime), [ADR-0026](../docs/adr/0026-two-towers-over-a-shared-base.md) (the
-  reader and `report` are analysis-tower code),
-  [ADR-0027](../docs/adr/0027-the-monitor-tower-owns-the-interpreter-floor.md)
-  (why `perfetto` on the analysis path is not the decision ADR-0001 took),
+  reader and `report` are analysis-tower code, and why `perfetto` on the
+  analysis path is not the decision ADR-0001 took),
   [ADR-0009](../docs/adr/0009-nanoseconds-canonical-time-unit.md) (nanoseconds
   inside gcmon),
   [ADR-0016](../docs/adr/0016-the-ring-is-the-statistics-unit.md) (the ring is
@@ -79,13 +78,12 @@ slices with their category, name, span and arguments, counter samples, and the
 processes those hang under. The upper seam folds those rows into records. This
 spec declares the `analysis` extra that `perfetto` and `protobuf` arrive in,
 and importing either seam without it fails with a message naming the extra.
-Spec 0068 lowered the floor those two have to meet.
 
 Two seams rather than one because each has a consumer. `report` wants records.
 A tool reading gcmon's traces from outside wants the rows, and denied them it
 writes its own SQL against gcmon's track layout, which is how a renamed track
 becomes a wrong number in somebody else's output instead of a failing test
-here. ADR-0027 holds the argument for the extra itself.
+here. ADR-0026 holds the argument for the extra itself.
 
 Rejected for now, and worth naming because it is close: a hand-rolled decoder
 mirroring the hand-rolled encoder, sharing the field numbers in
@@ -189,9 +187,13 @@ for metadata that cannot be known: absent rather than guessed.
 ## 7. Further notes
 
 Landing this earns an ADR: the reader is two protocols, with `TraceProcessor`
-behind them for now. ADR-0027 already carries why `perfetto` is allowed on the
+behind them for now. ADR-0026 already carries why `perfetto` is allowed on the
 analysis path, so what this record adds is the split, the rejected hand-rolled
 decoder, and why the seam is where it is.
+
+Whether the lower seam takes a path or an open trace processor is this spec's
+decision. A consumer running several queries over one file should not reopen
+it once per query.
 
 Depends on spec 0059, without which the offline table cannot say which process
 held a pid and would drop a distinction the live table makes, and on spec

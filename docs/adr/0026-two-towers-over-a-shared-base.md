@@ -16,13 +16,21 @@ capture is what `monitor` produces and what `combine` consumes.
 
 A linear stack cannot say that. `cli` is permitted every layer beneath it, so
 a command that only reads a tracefile may import `monitoring`, and nothing
-objects. The permission is not hypothetical: specs 0061, 0062 and 0063 add
-three commands that read files and nothing else, and they land in `cli` beside
+objects. The permission is not hypothetical: specs 0061 and 0063 add two
+commands that read files and nothing else, and they land in `cli` beside
 `monitor` and `run`.
 
 `exporters/` already holds both directions. `jsonl_io` and `combine` consume a
 file; the Perfetto modules and `jsonl_exporter` produce one. The layer's name
 describes half its contents.
+
+[ADR-0001](0001-hand-rolled-perfetto-protobuf-encoder.md) argued gcmon's
+runtime dependency tree from the package being installable next to the process
+it watches. That premise holds for the pyperf hook, which runs inside the
+target ([ADR-0023](0023-the-pyperf-hook-annotates-and-does-not-drive.md)) and
+so hands it whatever that path imports. `monitor` and `run` read the target
+from outside and hand it nothing, and the analysis side reads a file the
+target never sees.
 
 ## Decision
 
@@ -30,10 +38,12 @@ describes half its contents.
 - The base is `support`, `model`, `stats` and `exporters`. Each tower's row in
   the table says which of the four it takes: `analysis` reads and writes files
   and takes three, and `stats` is reached from `cli.analyze` above it.
-- A tower is defined by which side of the capture file it sits on, not by the
-  interpreter it needs. `pyperf` and `control` require nothing of 3.15
-  ([ADR-0027](0027-the-monitor-tower-owns-the-interpreter-floor.md)) and are
-  monitor-tower code because they run beside a live process.
+- A tower is defined by which side of the capture file it sits on. `pyperf`
+  and `control` are monitor-tower code because they run beside a live process,
+  whatever they import.
+- A dependency the analysis tower takes is not one the target inherits.
+  ADR-0001's argument against `perfetto` in the runtime tree therefore narrows
+  to the pyperf hook, and `perfetto` may serve the analysis path.
 - The monitor tower is `control`, `monitoring`, `pyperf` and `cli.monitor`.
 - The analysis tower is `analysis` and `cli.analyze`.
 - **Neither tower imports the other.** `cli` itself, meaning `main.py` and the
@@ -53,22 +63,14 @@ describes half its contents.
 
 ## Consequences
 
-- A command's flags and its handler separate. A parser must be importable
-  without the tower that serves it, which is what
-  [ADR-0027](0027-the-monitor-tower-owns-the-interpreter-floor.md) then rests
-  on. `monitoring_options` already had this shape and is the model for the
-  rest.
 - `gcmon.exporters` stops re-exporting `combine_files` and
-  `convert_jsonl_to_trace_format`, and `gcmon` stops re-exporting the
-  monitoring layer. Both are public names, and both go.
-- The towers' tests separate in one direction. A monitor-tower test reads back
-  what `JsonlExporter` wrote by calling `read_jsonl`, which is analysis-tower
-  code; the layer walk reads `src/` only, and one distribution ships both. The
-  reverse is barred by the floor rather than by the walk: a base or analysis
-  test that imports the monitor tower cannot be collected on 3.13
-  ([ADR-0027](0027-the-monitor-tower-owns-the-interpreter-floor.md)), which
-  puts the shared fixtures in `tests/conftest.py` and `tests/helpers.py` on
-  the tower-free side.
+  `convert_jsonl_to_trace_format`. Both are public names, and both follow the
+  modules that hold them into `analysis`, which `exporters` may not import.
+  `gcmon` itself is unchanged: the root belongs to `cli` by direction and
+  reaches every layer.
+- The towers' tests do not separate. A monitor-tower test reads back what
+  `JsonlExporter` wrote by calling `read_jsonl`, which is analysis-tower code;
+  the layer walk reads `src/` only, and one distribution ships both.
 - A third tower is now cheap to argue for and expensive to add by accident.
   The table names two, and a directory that belongs to neither has to say
   which it is.
