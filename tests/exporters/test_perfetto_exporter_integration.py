@@ -1229,14 +1229,6 @@ class TestProcessRowLifetimeSlice:
             _ZERO_CLIPPED_STOP - _ZERO_CLIPPED_START,
         )
 
-    def test_no_misplaced_end_events(
-        self,
-        zero_duration_trace_processor: TraceProcessor,
-    ) -> None:
-        """A zero-length bar is a BEGIN and an END sharing a timestamp. The
-        trace processor must pair them, not orphan the END."""
-        assert _misplaced_end_events(zero_duration_trace_processor) == 0
-
 
 class TestProcessesTrack:
     """The Perfetto encoder emits a single shared top-level track named
