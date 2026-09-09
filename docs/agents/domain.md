@@ -17,9 +17,9 @@ absence; don't suggest creating them upfront. The `/domain-modeling` skill
 (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates
 them lazily when terms or decisions actually get resolved.
 
-`CONTEXT.md` does not exist in this repo yet. `docs/adr/` does, with an index
-and reading order in `docs/adr/README.md`; start there rather than listing the
-directory.
+`CONTEXT.md` exists here and carries the vocabulary: one entry per term, with
+the spellings to avoid under each. `docs/adr/` has an index and reading order
+in `docs/adr/README.md`; start there rather than listing the directory.
 
 ## The forward-looking complement
 
