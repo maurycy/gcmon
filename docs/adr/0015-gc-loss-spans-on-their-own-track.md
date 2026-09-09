@@ -207,12 +207,11 @@ survives the ring wrapping.
   one fast burst weakens that floor for the whole session, and it errs in the
   dangerous direction, since a stretch narrower than the floor that did hold a
   record loses it. Loss happens when runs come fast.
-- **Inline on the interpreter's thread track (`tid = iid`)**, either with an
-  ADR-0011-style clipping sweep or snapped to the adjacent observed records.
-  Rejected: an interval-width bar beside the pause slices invites the
-  misreading a separate track prevents, clipping shortens spans whose width is
-  the claim being made, and snapping draws the loss as a pause of known
-  extent.
+- **Inline on the interpreter's own row**, either with an ADR-0011-style
+  clipping sweep or snapped to the adjacent observed records. Rejected: an
+  interval-width bar beside the pause slices invites the misreading a separate
+  track prevents, clipping shortens spans whose width is the claim being made,
+  and snapping draws the loss as a pause of known extent.
 - **One track per `(pid, iid, gen)`.** Three rows say what the args say, at
   three times the vertical cost, and a process with several interpreters would
   carry nine.

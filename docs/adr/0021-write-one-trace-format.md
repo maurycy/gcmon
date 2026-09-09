@@ -39,7 +39,7 @@ this record carries that half forward.
 `perfetto`.** `chrome`, `trace` and `chrome+perfetto` are not spellings
 argparse accepts: the run stops at the argument with a message naming the
 three that remain. The default output path is `gcmon.pftrace`, and
-`--format jsonl` still defaults to `gcmon.jsonl`.
+`GCMON_FORMAT=jsonl` makes it `gcmon.jsonl`.
 
 **`GCMON_FORMAT` refuses a word `--format` would refuse.** The variable's
 value is handed on as written and refused later, once logging is configured.
@@ -93,6 +93,10 @@ new output format is a second `EventEncoder` implementation.
   in practice: ADR-0012 rejected `chrome → jsonl` because the Chrome format
   had lost the `TGCStatsInfo` structure, and Perfetto was never an input.
   JSONL is now what an operator keeps if they want to convert later.
+- **The default output path follows `GCMON_FORMAT`, not `--format`.** argparse
+  resolves a default while the parser is built, before it has parsed anything,
+  so `--format jsonl` with no `-o` writes JSONL into `gcmon.pftrace`. Only the
+  variable is read early enough to move the default.
 - **A trace with nothing in it is no file at all.** The Chrome encoder wrote
   `[]` for a run that read no records; the Perfetto encoder writes nothing.
   Monitoring a pid that never collects now leaves no output file.

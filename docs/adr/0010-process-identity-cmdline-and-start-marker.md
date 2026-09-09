@@ -1,4 +1,4 @@
-# ADR-0010: Carry process cmdline in two places, and force the process track to render
+# ADR-0010: Duplicate the process cmdline per consumer, and force the process track to render
 
 - **Status:** Accepted
 - **Date:** 2026-06-08, amended:
@@ -33,7 +33,7 @@ description.
 
 ## Decision
 
-**Write the cmdline twice, on purpose.**
+**Write the cmdline for each consumer, on purpose.**
 
 - `ProcessDescriptor.cmdline` (field 2, repeated string), protobuf-correct and
   visible in the UI.
@@ -77,9 +77,9 @@ line, and that is the only way to have none.
 ## Consequences
 
 - You can identify processes in the UI and query them from SQL.
-- The cmdline is stored twice. Accepted: the two consumers differ (UI
-  rendering versus the SQL `args` table), and neither can read the other's
-  copy.
+- The cmdline is stored more than once, and the `Lifetime` and `Processes`
+  slices repeat it again as an annotation. Accepted: the consumers differ (UI
+  rendering versus the SQL `args` table), and neither reads the other's copy.
 - **The process track is never empty.** Every process draws one `Lifetime`
   slice on it, and the workload's own marks land on the same row, nested
   inside the slice unless one shares its start timestamp. The slice is

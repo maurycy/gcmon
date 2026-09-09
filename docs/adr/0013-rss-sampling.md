@@ -1,4 +1,4 @@
-# ADR-0013: Sample RSS in a standalone `RssSampler`, on a `tid = -1` sentinel track
+# ADR-0013: Sample RSS in a standalone `RssSampler`, on the process track rather than a thread's
 
 - **Status:** Accepted
 - **Date:** 2026-07-13, amended:
@@ -24,9 +24,9 @@ read) but carries syscall overhead on Windows and macOS. The GC poll runs at
 10 Hz by default, and multiplying that by each child pid is a meaningful tax
 for a metric that moves slowly.
 
-**RSS has no thread.** The other counters are emitted per `(pid, tid)`, where
-`tid` is the interpreter id. RSS is a process-level number with no thread
-affinity, so no honest `tid` exists to give it.
+**RSS has no thread.** The other counters went out per `(pid, tid)`, where
+`tid` was the interpreter id. RSS is a process-level number with no thread
+affinity, so no honest `tid` existed to give it.
 
 **`MonitorLoop` should not learn about `psutil`.** The loop polls and paces.
 Threading sampling logic, timers and exception handling through it would
