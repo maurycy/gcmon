@@ -132,9 +132,9 @@ the sampled one has no remaining use once the exact one exists.
   gcmon missed are gone; only their total survives.
 - **`Read Time`.** Monitor-side cost, with no generation and no `PauseTotals`,
   and its distribution is not skewed the way a pause distribution is.
-- **The pyperf metadata keys.** `gc_pause_gen_N_*` are a published surface;
-  adding to them is a separate decision carrying its own compatibility
-  question.
+- **The pyperf metadata keys.** `gc_pause_gen_N_*` are documented in
+  `docs/pyperf.md`, and adding to them is a feature of its own rather than a
+  consequence of a column changing.
 
 ## 7. Further notes
 

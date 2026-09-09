@@ -26,7 +26,7 @@ subinterpreter id happens to equal the pid.
 `perfetto_format._emit_thread_descriptor` builds the descriptor with
 
 ```python
-tid=pid if iid == 0 else iid,
+tid=row_pid if iid == 0 else iid,
 ```
 
 It is the only tid gcmon publishes. A loss row is a plain custom track with no
@@ -47,11 +47,10 @@ synthetic namespace.
 trace, since the main interpreter is always present. Visible as `thread.tid`
 in the trace processor and in the Perfetto UI's thread details.
 
-**Not affected:** the Chrome JSON path, which carries `tid` from the
-`TraceEvent` and already uses `iid` unconditionally. Track UUIDs, parenting
-and slice content are untouched; only the `tid` field inside the descriptor
-changes. The loss and RSS tracks emit their own descriptors and never reach
-this branch.
+**Not affected:** the JSONL and stdout paths, which name an interpreter by its
+`iid` and write no tid at all. Track UUIDs, parenting and slice content are
+untouched; only the `tid` field inside the descriptor changes. The loss and
+RSS tracks emit their own descriptors and never reach this branch.
 
 **Why the suite didn't catch it:** nothing asserts on `thread.tid` through
 SQL. `test_dump_thread_table` prints the table without asserting, and the

@@ -4,8 +4,7 @@
   ADR-0015)
 - **Kind:** feature (enhancement)
 - **Effort:** S
-- **Origin:** grilling session, 2026-08-08; recommendation 3 of
-  `.scratch/problem.md`
+- **Origin:** grilling session, 2026-08-08, recommendation 3
 - **Respects:** [ADR-0003](../docs/adr/0003-gc-metrics-group-track.md)
   (`GC Metrics` group),
   [ADR-0004](../docs/adr/0004-toplevel-shared-counters.md) (which counters are
@@ -94,7 +93,7 @@ rather than per-generation. Give all three generations the same
 `y_axis_share_key` (ADR-0005) so they share a scale and can be compared by
 eye.
 
-**Note on the research this came from.** `.scratch/problem.md` recommends a
+**Note on the research this came from.** The grilling session recommended a
 loss counter as insurance against Perfetto summarising away narrow loss
 slices: *"a loss region much narrower than event spans may vanish when zoomed
 out."* That reason does not hold here. gcmon's loss spans are the widest thing

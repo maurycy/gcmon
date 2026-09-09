@@ -10,8 +10,9 @@
   (cmdline as a debug annotation on the process slice),
   [ADR-0011](../docs/adr/0011-process-lifetime-and-ordering.md) (the
   `Processes` track and its slices),
-  [ADR-0012](../docs/adr/0012-trace-output-formats.md) (Perfetto-only features
-  are allowed to be Perfetto-only)
+  [ADR-0021](../docs/adr/0021-write-one-trace-format.md) (`--format` takes
+  `perfetto`, `jsonl` and `stdout`, and a Perfetto-only feature is allowed to
+  be Perfetto-only)
 
 ## 1. Problem statement
 
@@ -54,7 +55,7 @@ shows today and no metadata, and the trace is otherwise identical.
 6. As a maintainer, I want a value to be either correct or absent, so that
    nobody reads a threshold off a trace that was actually the monitoring
    process's threshold.
-7. As a user of `--format chrome` or `--format jsonl`, I want my output
+7. As a user of `--format jsonl` or `--format stdout`, I want my output
    byte-identical, so that a Perfetto-only feature stays Perfetto-only.
 
 ## 4. Implementation decisions
@@ -76,7 +77,7 @@ track's slices.
 `PerfettoTrackState` stores both per process, with getters and setters
 following the ones already there for the descriptor and the command line. It
 is not internally thread-safe and does not need to be; see
-[0030](0030-exporter-hygiene-batch.md) section 4.3 for why.
+[0030](0030-exporter-hygiene-batch.md) section 4.2 for why.
 
 **Each value has exactly one trustworthy source, and they are different
 sources.** This is the decision the original spec left open, and getting it
@@ -132,8 +133,8 @@ already behaves.
   join `args` to the `Lifetime` slice on a known pid's process track and
   assert the value. A test that greps the trace bytes for the string would
   pass on an annotation attached to the wrong slice, or to a packet the UI
-  never renders. Assert the negative too: `--format chrome` and
-  `--format jsonl` output stays byte-identical.
+  never renders. Assert the negative too: `--format jsonl` and
+  `--format stdout` output stays byte-identical.
 - **Prior art:** the `debug.cmdline` assertions in
   `tests/exporters/test_perfetto_exporter_integration.py`, which are this
   feature's exact shape, one annotation earlier.
@@ -145,13 +146,12 @@ already behaves.
      other's.
   3. Neither source available: the trace is valid, the slice carries `cmdline`
      as before, and neither annotation is present.
-  4. Regression guard: Chrome and JSONL output byte-identical; the `Processes`
+  4. Regression guard: JSONL and stdout output byte-identical; the `Processes`
      track's slice count, spans and ordering unchanged.
 
 ## 6. Out of scope
 
-- Metadata in Chrome JSON, JSONL or stdout. Perfetto-only, like `cmdline`
-  (ADR-0010).
+- Metadata in JSONL or stdout. Perfetto-only, like `cmdline` (ADR-0010).
 - Tracking threshold *changes* over a run. One observation, annotated with
   when it was taken. A `gc.set_threshold` mid-run is a real event worth
   drawing, and it is its own spec.
@@ -159,8 +159,6 @@ already behaves.
   would extend to it; the CLI surface, precedence and escaping are a separate
   design.
 - Updating `examples/perfetto_dump.py` to decode the new annotations.
-- `--format chrome+perfetto`: the metadata lands in the `.pftrace` and not the
-  `.json`, which follows from the first bullet.
 
 ## 7. Further notes
 

@@ -66,9 +66,9 @@ the file.
    offline trace paths already did twice.
 7. As a maintainer, I want the reader replaceable, so that a hand-rolled
    decoder can take over without anything else in the codebase noticing.
-8. As the maintainer of a tool that reads gcmon's traces, I want the rows the
-   reader queried, so that I do not keep my own SQL against gcmon's track
-   layout and learn it broke from a wrong number.
+8. As a maintainer, I want the rows a trace holds observable before they are
+   folded into records, so that a fold that drops a field fails at the row
+   level rather than surfacing as a wrong number in a table.
 
 ## 4. Implementation decisions
 
@@ -79,11 +79,25 @@ processes those hang under. The upper seam folds those rows into records. This
 spec declares the `analysis` extra that `perfetto` and `protobuf` arrive in,
 and importing either seam without it fails with a message naming the extra.
 
-Two seams rather than one because each has a consumer. `report` wants records.
-A tool reading gcmon's traces from outside wants the rows, and denied them it
-writes its own SQL against gcmon's track layout, which is how a renamed track
-becomes a wrong number in somebody else's output instead of a failing test
-here. ADR-0026 holds the argument for the extra itself.
+Two seams rather than one because the split is where the optional dependency
+stops. Below the lower seam is `TraceProcessor`, which the `analysis` extra
+brings; above it is gcmon's own arithmetic, which needs none. Replacing the
+decoder, which the rejection below keeps available, touches only the lower
+half, and that is where the extra is declared. One trace-to-records seam would
+put both halves behind one protocol and make the replacement a rewrite of the
+fold as well. ADR-0026 holds the argument for the extra itself.
+
+The split is also what makes the fold testable. Folding rows into records
+discards track identity, slice names and argument keys, so a bug in the row
+extraction reaches a single-seam reader only through whatever survives the
+fold. Case 5 in section 5 asserts at the row level for that reason.
+
+**The lower seam takes a path, not an open trace processor.** A signature
+naming `TraceProcessor` would put the dependency in the protocol and leave a
+hand-rolled decoder unable to satisfy it, which is the reversibility the split
+exists for. One call per file opens the file once, runs the several queries
+the rows need and closes it, so no caller holds a session and the cost that
+argued for the alternative is the implementation's to pay once.
 
 Rejected for now, and worth naming because it is close: a hand-rolled decoder
 mirroring the hand-rolled encoder, sharing the field numbers in
@@ -180,9 +194,6 @@ for metadata that cannot be known: absent rather than guessed.
   trace, and a second path into the same table earns nothing.
 - **A hand-rolled decoder**, for the reasons in section 4. The protocol is
   what keeps it available.
-- **What a consumer does with the rows.** The lower seam hands them back;
-  writing them to a file, and the shape of that file, belongs to whoever
-  publishes it.
 
 ## 7. Further notes
 
@@ -190,10 +201,6 @@ Landing this earns an ADR: the reader is two protocols, with `TraceProcessor`
 behind them for now. ADR-0026 already carries why `perfetto` is allowed on the
 analysis path, so what this record adds is the split, the rejected hand-rolled
 decoder, and why the seam is where it is.
-
-Whether the lower seam takes a path or an open trace processor is this spec's
-decision. A consumer running several queries over one file should not reopen
-it once per query.
 
 Depends on spec 0059, without which the offline table cannot say which process
 held a pid and would drop a distinction the live table makes. Spec 0068 landed

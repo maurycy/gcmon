@@ -197,6 +197,6 @@ plausible pause lengths, and that is a detector that eventually drops a real
 long pause, the one record an operator most wants.
 
 **Where the answer goes.** ADR-0015's `## What gcmon trusts the target for` is
-the statement of record and is amended when this lands, per README
-convention 4. 0024 section 4's handling table carries the same two rows and
-stays in step with it.
+the statement of record and is amended when this lands, per
+[CONVENTIONS.md](CONVENTIONS.md) rule 4. 0024 section 4's handling table
+carries the same two rows and stays in step with it.

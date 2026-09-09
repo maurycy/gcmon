@@ -33,7 +33,7 @@ This file holds the open set and the order to take it in. The other two:
 | [0042](0042-name-the-process-session-for-its-role.md) | Feature (cleanup) | S | The monitored-process seam carries the name of a role it does not fill, and its two adapters do not have the same shape |
 | [0044](0044-torn-reads-and-reordered-publishes.md) | Bug (correctness) | S | **Blocked on upstream.** A pause slice can read one inter-collection interval too long, and a hole inside one poll's records reaches no loss window; both are races in the target that every filter gcmon has passes |
 | [0050](0050-name-the-poll-interval-for-what-it-is.md) | Feature (ergonomics) | S | `--rate` is a duration in seconds under a name that means a frequency, and gcmon echoes `Rate: 0.1s` back |
-| [0051](0051-key-the-running-rings-by-pid.md) | Feature (efficiency) | S | Asking `StreamingStats` about one process walks every process's rings; `low_coverage` does it once per polled pid per tick, and on a healthy run it never stops |
+| [0051](0051-key-the-running-rings-by-process.md) | Feature (efficiency) | S | Asking `StreamingStats` about one process walks every process's rings; `low_coverage` does it once per polled process per tick, and on a healthy run it never stops |
 | [0052](0052-a-recycled-pid-can-be-read-through-a-stale-attachment.md) | Bug (correctness) | S | A pid the OS reissues between two ticks is read through the attachment gcmon still holds, so an unrelated process's memory reaches the trace as plausible records; only Linux is exposed |
 | [0054](0054-macos-attachment-leaks-a-mach-task-port.md) | Bug (availability) | S | On macOS every attachment costs gcmon a Mach port name that nothing gives back; CPython's cleanup has a Windows arm and a Linux arm and no Apple one |
 | [0060](0060-report-an-exact-mean-and-a-geometric-mean.md) | Feature (enhancement) | S | `Avg` is the sampled mean and reads high on any lossy run, while the exact one sits unprinted in `PauseTotals`; and no column summarises a pause distribution as skewed as this one |
@@ -56,7 +56,7 @@ one; [RETIRED.md](RETIRED.md) says which.
 | 0035 | 0039 landed, and the nine `Metric` classes it replaces are a module named for the table |
 | 0037 | |
 | 0036 | |
-| 0040 | Constrained: after 0050. Rewrites the option declarations 0045 edited |
+| 0040 | Rewrites the option declarations 0045 edited |
 | 0042 | |
 | 0020 | Unblocked: 0067 landed, and the `Lifetime` slice is where both fields go |
 | 0051 | Unblocked: 0039 landed, and `StreamingStats` is in the module it will keep |
@@ -78,11 +78,10 @@ the position. A blank cell means no recorded reason, so that row can move.
 - **0054** was found in CPython's source and not in a run. Nobody should size
   it until the ports have been counted on a Mac.
 
-**The only ordering constraints:**
+**The only ordering constraint:**
 
 | First | Then | Why |
 |-------|------|-----|
-| 0050 | 0040 | 0040 derives the option declarations from one table and would otherwise have to carry the alias 0050 introduces through a rewrite of the structure holding it |
 | 0060, 0061, 0062 | 0063 | 0063 builds two of the tables those three produce and diffs them; it computes no statistic of its own |
 
 0042 depends on nothing else here; take it at any time.

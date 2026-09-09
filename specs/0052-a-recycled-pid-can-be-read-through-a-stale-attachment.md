@@ -24,7 +24,7 @@ has no way to tell them from the real ones, and no warning is printed.
 
 ## 2. Evidence
 
-`gcmon.events_reader.RemoteEventsReader` keeps one
+`gcmon.monitoring.events_reader.RemoteEventsReader` keeps one
 `_remote_debugging.GCMonitor` per pid and reuses it for every read until a
 read fails. `GCMonitor` resolves the target's runtime address and debug
 offsets when it is constructed and revalidates neither afterwards; the reads
@@ -36,19 +36,19 @@ Two facts make the result data rather than an error:
 1. **Nothing on the read path validates.** Every field gcmon consumes (`gen`,
    `iid`, `collections`, `ts_start`, `ts_stop`, `heap_size`, `duration`) is an
    integer or a double copied out of the target. The only filter is
-   `gcmon.monitor`'s completeness check, which rejects a slot whose `ts_start`
-   is not below its `ts_stop`. Arbitrary memory satisfies that roughly half
-   the time.
+   `gcmon.monitoring.monitor`'s completeness check, which rejects a slot whose
+   `ts_start` is not below its `ts_stop`. Arbitrary memory satisfies that
+   roughly half the time.
 2. **The successor is a Python process of the same build**, in the case that
    matters. A recycled pid under a fan-out is very often the *same worker
    program being restarted*, so the address gcmon resolved is very likely
    still mapped and still holds a `gc_stats` structure, just a different one,
    with counters that have nothing to do with the ring gcmon was tracking.
 
-`gcmon.monitor.EventsMonitor` cannot see this either. Its prune keys on the
-child listing, and the pid never left it. The cursor comparison is what turns
-fresh counters into a loss window, and here the counters are not fresh, merely
-unrelated.
+`gcmon.monitoring.monitor.EventsMonitor` cannot see this either. Its prune
+keys on the child listing, and the pid never left it. The cursor comparison is
+what turns fresh counters into a loss window, and here the counters are not
+fresh, merely unrelated.
 
 **This is a change of consequence, not a new defect.** ADR-0017 was written
 about the same window: before this, the worst case was a successor's records

@@ -1,4 +1,4 @@
-# 0051: Key the running rings by pid
+# 0051: Key the running rings by process
 
 - **Status:** Not started
 - **Kind:** feature (efficiency)
@@ -9,30 +9,40 @@
   [ADR-0016](../docs/adr/0016-the-ring-is-the-statistics-unit.md) (the ring is
   the unit statistics are kept in),
   [ADR-0017](../docs/adr/0017-monitor-owns-the-pid-lifecycle.md) (per-pid
-  state has one owner and one prune)
+  state has one owner and one prune),
+  [ADR-0025](../docs/adr/0025-create-every-process-in-one-place.md) (a
+  `Process` is what identifies a target, and it carries the pid epoch)
 
 ## 1. Problem statement
 
-`StreamingStats._running_rings` is a flat `dict[(pid, iid), RingStats]`, so
-every question about one process is a walk over every process's rings.
-`StreamingStats.low_coverage` asks that question on the hot path:
-`EventsMonitor._ingest` calls `_warn_low_coverage(pid)` after every successful
-poll of every pid, and `_warn_low_coverage` returns early only once the
-advisory has fired.
+`StreamingStats._running_rings` is a flat `dict[RingKey, RingStats]`, where
+`RingKey` is `(Process, iid)`, so every question about one process is a walk
+over every process's rings. Three methods ask one:
+
+| Method | The walk |
+| :-- | :-- |
+| `low_coverage` | every running ring, `continue` on a differing process |
+| `materialize` | `[key for key in self._running_rings if key[0] == process]` |
+| `retain` | one pass over every key, grouping the departed ones |
+
+`low_coverage` asks it on the hot path: `EventsMonitor._ingest` calls
+`_warn_low_coverage(process)` after every successful poll of every process,
+and `_warn_low_coverage` returns early only once the advisory has fired.
 
 A run that stays above `COVERAGE_ADVISORY` never fires the advisory. It walks
-every running ring, once per polled pid, on every tick, until the run ends.
-The cost grows with the width of the tree squared, which is the shape 0046
-took out of `retain` and left here.
+every running ring, once per polled process, on every tick, until the run
+ends. The cost grows with the width of the tree squared, which is the shape
+0046 took out of `retain` and left here.
 
-Measured on 3.15.0b3, Windows 11, x86-64, calling `low_coverage` once per pid
-over a fan-out whose rings all sit above the advisory, median of 21 ticks:
+Measured on 3.15.0b3, Windows 11, x86-64, calling `low_coverage` once per
+process over a fan-out whose rings all sit above the advisory, median of 21
+ticks:
 
 | rings running | per tick |
 | :-- | -----: |
-| 30 (10 pids, 3 iids) | 0.027 ms |
-| 90 (30 pids, 3 iids) | 0.158 ms |
-| 255 (85 pids, 3 iids) | 1.089 ms |
+| 30 (10 processes, 3 iids) | 0.027 ms |
+| 90 (30 processes, 3 iids) | 0.158 ms |
+| 255 (85 processes, 3 iids) | 1.089 ms |
 
 Until 0048 landed an operator could not see this, because the read dominated
 it: the same thirty-worker tree spent around 14 ms of every tick attaching,
@@ -63,59 +73,61 @@ its surviving members for the interval they are measured over.
    generation.
 4. As someone reading a trace afterwards, I want this change to be invisible
    in it, so that traces from either side of the change are comparable.
-5. As a gcmon maintainer, I want a pid's rings reachable without a filter, so
-   that a method that forgets the filter cannot mix two processes' rings.
+5. As a gcmon maintainer, I want a process's rings reachable without a filter,
+   so that a method that forgets the filter cannot mix two processes' rings.
 
 ## 4. Implementation decisions
 
 ### 4.1 The shape
 
 ```python
-self._running_rings: dict[int, dict[int, RingStats]] = {}
+self._running_rings: dict[Process, dict[int, RingStats]] = {}
 ```
 
-Outer key pid, inner key iid. `low_coverage` and `_find_ring` become lookups;
-`_open_ring` becomes two `setdefault` calls; `_all_rings`, `_keyed_rings`,
-`rings` and `untracked_rings` become nested loops over the same rings in the
-same order.
+Outer key the process, inner key the iid. `low_coverage`, `materialize` and
+`_find_ring` become lookups; `_open_ring` becomes two `setdefault` calls;
+`_all_rings`, `_keyed_rings`, `rings` and `untracked_rings` become nested
+loops over the same rings in the same order. `rings` keeps sorting on
+`(process.pid, process.pid_epoch, iid)`, so its output is unchanged.
 
-**Rejected: a per-pid index beside the flat map.** It buys the same lookups
-and adds a second structure to keep in step with the first, on the paths that
-open and settle rings. The key carries it instead.
+**Rejected: a per-process index beside the flat map.** It buys the same
+lookups and adds a second structure to keep in step with the first, on the
+paths that open and settle rings. The key carries it instead.
 
-**Settled: `_settled_rings` stays flat.** It is keyed `(pid, iid, epoch)` and
-nothing asks it for one pid's rings; `_find_ring` reaches it by full key.
+**Settled: `_settled_rings` stays flat.** It is keyed `(Process, iid)` and
+nothing asks it for one process's rings; `_find_ring` reaches it by full key.
 Re-keying it would be layout for its own sake.
 
 ### 4.2 `_settle` loses its `keys` argument
 
-`_settle(pid, keys)` exists because the caller has to find the pid's keys
-first, and it pops each of them from the dict they were read out of, so *keys*
-has to be a list rather than a view over `_running_rings`. Under the new shape
-it pops one entry:
+`_settle(process, keys)` exists because the caller has to find the process's
+keys first, and it pops each of them from the dict they were read out of, so
+*keys* has to be a list rather than a view over `_running_rings`. Under the
+new shape it pops one entry:
 
 ```python
-def _settle(self, pid: int) -> None:
+def _settle(self, process: Process) -> None:
     ...
-    for iid, settled in self._running_rings.pop(pid, {}).items():
+    for iid, settled in self._running_rings.pop(process, {}).items():
 ```
 
-`materialize` calls `_settle(pid)`. `retain` iterates the departed pids and
-calls it once each, and the one-pass grouping 0046 added goes with it: there
-is nothing left to group.
+`materialize` calls `_settle(process)` and drops its comprehension. `retain`
+iterates the departed processes and calls it once each, and the one-pass
+grouping 0046 added goes with it: there is nothing left to group.
 
 This is the part worth having. Today a caller can hand `_settle` a partial key
 list, and the result is a process whose interpreters settle under two epochs,
-with its pid epoch advanced once per group. Nothing in the signature stops it.
-After the re-key there is no key list to get wrong.
+with its pid epoch advanced once per group. Nothing in the signature stops it;
+the docstring asks for it in prose, that *keys* are "its rings and no other
+process's". After the re-key there is no key list to get wrong.
 
 ### 4.3 Ordering, which is observable in one place
 
 `low_coverage` keeps the worst ring with a strict `<`, so the first ring
-examined wins a tie. Iids within a pid keep their insertion order in the inner
-dict, so a tie resolves to the same interpreter as today. Everything else that
-walks the rings either sorts (`rings`) or reduces
-(`untracked_rings`, `pause_totals_by_gen`, `heap_high_water`).
+examined wins a tie. Iids within a process keep their insertion order in the
+inner dict, so a tie resolves to the same interpreter as today. Everything
+else that walks the rings either sorts (`rings`) or reduces
+(`untracked_rings`, `pause_totals_by_gen`).
 
 ## 5. Seams and testing decisions
 
@@ -140,7 +152,7 @@ walks the rings either sorts (`rings`) or reduces
 - **Cases:**
   1. The advisory fires on the same runs and names the same interpreter and
      generation, including the tie in section 4.3.
-  2. A pid's interpreters settle under one epoch, which section 4.2 makes
+  2. A process's interpreters settle under one epoch, which section 4.2 makes
      structural. The case exists as
      `TestAFanOutThatDeparts::test_a_pid_whose_rings_interleave_settles_in_one_go`
      and should survive the re-key unchanged in intent.
@@ -153,9 +165,9 @@ two-level:
 | test | what it asserts |
 | :-- | :-- |
 | `test_streaming_stats_retain_wide_fan_out` | the fan-out settled, so a run that stopped settling does not read as a win |
-| `TestAProcessThatExits::test_retain_settles_the_pids_it_leaves_out` | one pid's ring survives `retain` |
+| `TestAProcessThatExits::test_retain_settles_the_pids_it_leaves_out` | one process's ring survives `retain` |
 | `TestAProcessThatExits::test_every_interpreter_of_the_pid_settles` | `materialize` empties the running set |
-| `TestAnOpenPidHoldsARing::test_each_path_that_opens_a_pid_opens_a_ring` | every open pid holds a ring |
+| `TestAnOpenPidHoldsARing::test_each_path_that_opens_a_pid_opens_a_ring` | every open process holds a ring |
 | `TestAFanOutThatDeparts._state` | the tuple the settling-equivalence cases compare |
 | `TestAFanOutThatDeparts::test_the_survivors_keep_their_rings` | the survivors keep their rings |
 
@@ -166,8 +178,11 @@ two-level:
   `EventsMonitor._warn_low_coverage`'s behaviour and this changes neither the
   threshold nor the once-per-run rule. Making the advisory cheap is what
   removes the reason to argue about it.
-- **`_heap_size`.** Keyed `(pid, epoch)` and read only in aggregate, by
-  `heap_high_water`. No caller asks it for one pid.
+- **`_heap_size`.** Keyed by `Process`, which carries the pid epoch, and read
+  only in aggregate by `heap_size_p99`. It holds no rings and no caller asks
+  it for one process's entry.
+- **`_open_processes`.** The set `retain` reads to find the departed. It
+  already answers per process and the re-key gives it nothing.
 - **`MAX_ACTIVE_RINGS` and the admission bound.** Untouched: the same rings
   are admitted, declined and counted.
 - **Anything about what a ring means or when it settles.** ADR-0016 owns the

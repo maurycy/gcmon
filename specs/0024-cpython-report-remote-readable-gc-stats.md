@@ -198,7 +198,7 @@ one record, lets a reader tell that the ring moved under its read and retry.
 For context on which of these are already worked around and which are not. The
 handling in rows 1, 2 and 4 is the subject of
 [ADR-0015](../docs/adr/0015-gc-loss-spans-on-their-own-track.md) and lives in
-`gcmon.loss` and `EventsMonitor._ingest`.
+`gcmon.model.loss` and `EventsMonitor._ingest`.
 
 | Finding | gcmon's handling |
 | :------ | :--------------- |

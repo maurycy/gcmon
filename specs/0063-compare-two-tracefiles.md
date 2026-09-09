@@ -67,8 +67,8 @@ produced.
    read as an improvement.
 7. As someone comparing a build against itself, I want every row to read
    unchanged, so that I can trust the threshold.
-8. As someone piping this into a script, I want a stable exit status, so that
-   a comparison never fails a build by reporting one.
+8. As someone reading the table, I want the exit status to mean the command
+   ran, so that a threshold I can set cannot decide whether gcmon succeeded.
 9. As a maintainer, I want the comparison built from two tables produced by
    the existing code, so that `report` and `compare` cannot disagree.
 
@@ -157,10 +157,10 @@ points at the harness's own output and turns `bm_base64#3` into
 for comparing, and the harness-version-specific tables it needs stay off the
 path everyone uses.
 
-**The exit status does not depend on the data.** A comparison that fails a
-build by reporting a regression breaks every script that wanted the table, and
-it would make the exit code depend on `--min-change`, whose default is
-provisional. Unpaired rows and diverged key sets are reported in the table,
+**The exit status does not depend on the data.** A comparison that failed by
+reporting a regression would make the exit code depend on `--min-change`,
+whose default is provisional, so calibrating a threshold would change what
+success means. Unpaired rows and diverged key sets are reported in the table,
 not in the status.
 
 **Verdict wording.** `shorter` and `longer` for a pause, `more` and `less` for

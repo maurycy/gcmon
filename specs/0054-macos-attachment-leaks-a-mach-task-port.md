@@ -45,9 +45,9 @@ page cache, and the port send right stays in the caller's name space.
 
 `GCMonitor_dealloc` reaches that cleanup through `cleanup_runtime_offsets`, so
 dropping the last reference to a `GCMonitor` is what releases a handle on the
-two platforms that release anything. `gcmon.events_reader` drops that
-reference on every failed read and on every prune, which is what makes the
-count grow rather than sit at one per live pid.
+two platforms that release anything. `gcmon.monitoring.events_reader` drops
+that reference on every failed read and on every prune, which is what makes
+the count grow rather than sit at one per live pid.
 
 **Attaching once made this better, not worse.** Before
 [ADR-0020](../docs/adr/0020-attach-to-a-process-once.md) gcmon built and
@@ -94,13 +94,13 @@ attach passes every one of those assertions.
 **Rejected: gcmon releasing the port itself.** It has no handle to release.
 `GCMonitor` exposes the pid and the records, not the port, and reaching past
 that would put a `ctypes` Mach call in a package whose one rule about
-`_remote_debugging` is that it stays behind `gcmon.events_reader`.
+`_remote_debugging` is that it stays behind `gcmon.monitoring.events_reader`.
 
 ## 5. Seams and testing decisions
 
-- **Seam:** `gcmon.events_reader.RemoteEventsReader`, driven directly. The
-  leak is per attachment, and that class is where attachments are made and
-  dropped.
+- **Seam:** `gcmon.monitoring.events_reader.RemoteEventsReader`, driven
+  directly. The leak is per attachment, and that class is where attachments
+  are made and dropped.
 - **New seam needed:** a way to read the process's own Mach port count, which
   nothing in the repo does. `mach_port_names(mach_task_self(), ...)` through
   `ctypes` in the test, not in the package.

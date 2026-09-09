@@ -4,14 +4,14 @@
 - **Kind:** feature (cleanup)
 - **Effort:** M
 - **Origin:** code structure review of `src/gcmon`, 2026-08-15
-- **Respects:** [ADR-0012](../docs/adr/0012-trace-output-formats.md) (which
+- **Respects:** [ADR-0021](../docs/adr/0021-write-one-trace-format.md) (which
   formats exist), [ADR-0013](../docs/adr/0013-rss-sampling.md) (RSS behind a
   flag with an interval)
 
 ## 1. Problem statement
 
 Run `gcmon run -s app.py -v --rate -1` and gcmon reports the configuration it
-is about to use (`Format: chrome`, `Rate: -1.0s`,
+is about to use (`Format: perfetto`, `Rate: -1.0s`,
 `Duration: until script exits`) and then refuses to start because the rate
 must be positive. The echo is not a preview of a rejected configuration; it is
 the same echo a successful run prints, emitted before anything is checked. An
@@ -22,7 +22,7 @@ Behind it, every monitoring option is written out three times: once as a
 `get_env_*` function, once as an `add_argument` block whose help text re-names
 the same environment variable, and once as a constructor parameter, a field
 assignment and a keyword at the call site. `monitoring_options` imports
-twenty-two names from the environment module to do it, the widest import in
+twenty-three names from the environment module to do it, the widest import in
 the codebase. Adding an option means eight edits in three files, and the
 failure mode is an option that works on the command line and silently ignores
 its environment variable, or the reverse.
@@ -50,9 +50,9 @@ environment defaults both derived from it.
 4. As a maintainer, I want an option's help text to name its environment
    variable without my writing the name twice, so that renaming the variable
    cannot leave the help stale.
-5. As an operator relying on `GCMON_*` variables in CI, I want every one of
-   them to keep working exactly as documented, so that this is not a
-   migration.
+5. As a maintainer, I want every `GCMON_*` variable to accept exactly what it
+   accepts today, so that `tests/test_env.py` is the guard on the rewrite
+   rather than a suite that had to be edited to pass.
 6. As a maintainer of the `run` and `monitor` commands, I want option
    validation to raise rather than return `None`, so that a new command cannot
    forget the `if options is None` check and start a run with an unvalidated
@@ -61,7 +61,7 @@ environment defaults both derived from it.
    other data carrier in gcmon, so that nothing downstream can mutate a
    validated configuration.
 8. As an operator running `--help`, I want output identical to today's, so
-   that scripts and documentation that quote it stay accurate.
+   that the pages quoting it in `docs/cli.md` stay accurate.
 
 ## 4. Implementation decisions
 

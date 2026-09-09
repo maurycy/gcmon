@@ -68,15 +68,15 @@ shape:
 |---|---|
 | `data.GCStatsInfo` | the optional timestamp and count fields |
 | `protocol` | eight per-phase `Protocol` classes and nine `has_*` TypeGuards |
-| `protocol.to_mapping` | seven `if has_*(item):` blocks assigning field by field |
+| `protocol.to_mapping` | eight `if has_*(item):` blocks assigning field by field |
 | `stats.METRICS` | nine `Metric` classes, each a name and a two-field getter |
 | `trace_converter.convert_item_to_trace_format` | eight near-identical `Slice` blocks |
 | `jsonl_io.normalize_jsonl_timestamps` | eight `if has_*(item):` subtraction blocks |
 
-`data.GCStatsInfo` stays as it is: it is the msgspec decode target and its
-fields are the JSONL schema, which is public and documented in
-[docs/formats.md](../docs/formats.md#jsonl-output). The table describes those
-fields; it does not replace them.
+`data.GCStatsInfo` stays as it is: it is the msgspec decode target
+`read_jsonl` converts into, and
+[docs/formats.md](../docs/formats.md#jsonl-output) enumerates its fields one
+by one. The table describes those fields; it does not replace them.
 
 **4.1: One `Phase` table, in the model layer.** A tuple per sub-phase, ordered
 as the collector runs them. The shape, which is the decision:
@@ -115,10 +115,10 @@ caller that must distinguish it keeps doing so by key.
 for the optional fields and keeps its explicit list of the mandatory ones.
 `stats.METRICS` is derived from it and the nine `Metric` classes go: each is a
 name and a two-field getter, which is what a row already is.
-`convert_item_to_trace_format` becomes a loop emitting one `Slice` per
-present phase whose interval is non-empty, preserving today's
-`stop - start > 0` guard, which now also fixes the slice's duration.
-`normalize_jsonl_timestamps` walks the start and stop field names.
+`convert_item_to_trace_format` becomes a loop emitting one `Slice` per present
+phase whose interval is non-empty, preserving today's `stop - start > 0`
+guard, which now also fixes the slice's duration. `normalize_jsonl_timestamps`
+walks the start and stop field names.
 
 **4.4: The `has_*` guards and the per-phase `Protocol` classes go.** Once the
 table drives every consumer, nothing narrows to `TMarkAliveInfo` or its
@@ -157,10 +157,11 @@ way: the JSONL bytes must not change.
 
 ## 5. Seams and testing decisions
 
-- **Seam:** the chrome↔perfetto content-equivalence test in
+- **Seam:** `test_full_gen1_sub_slices_present` in
   `tests/test_convert_cmd_perfetto.py`, through the trace processor. It is the
-  highest seam available: it observes the sub-phases as *slices in a trace*,
-  which is what the table exists to produce, rather than observing the table.
+  highest seam available: it queries the eight sub-phase slice names for one
+  generation, so it observes the sub-phases as *slices in a trace*, which is
+  what the table exists to produce, rather than observing the table.
   `tests/stats/test_metrics.py` and the JSONL golden file cover the two
   consumers the trace processor cannot see.
 - **New seam needed:** none for behaviour. One new test *file* at an existing
@@ -174,9 +175,10 @@ way: the JSONL bytes must not change.
   expected slice names and categories as literals in the test, since they are
   the public surface an operator queries in PerfettoSQL.
 - **Prior art:** `tests/exporters/test_perfetto_format.py` for per-slice
-  assertions; `tests/test_convert_cmd_perfetto.py` for the cross-encoder
-  equivalence shape; `tests/stats/test_metrics.py` for the METRICS coverage
-  assertions.
+  assertions; `test_every_slice_matches_the_events_behind_it`, which reads a
+  combined trace back and compares every slice against the events it was built
+  from, for the equivalence shape; `tests/stats/test_metrics.py` for the
+  METRICS coverage assertions.
 - **Cases:**
   1. A record carrying every sub-phase produces the identical `TraceEvent`
      list before and after: same order, same names, same categories, same
@@ -195,7 +197,8 @@ way: the JSONL bytes must not change.
 ## 6. Out of scope
 
 - Any change to the JSONL schema or to slice names, categories and arg keys.
-  All are public; this is a refactor with no output diff.
+  What proves this refactor broke nothing is that it has no output diff, and a
+  change to any of the three takes that proof away.
 - The `--stats` table layout in `stats_output`. It consumes `METRICS`; it does
   not care where `METRICS` came from.
 - Splitting `stats/stats.py` and `model/data.py` into modules by concern. That

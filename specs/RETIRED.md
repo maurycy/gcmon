@@ -20,7 +20,7 @@ rows.
 | 0041 | **Landed** 2026-08-21 (cleanup) | L | Nineteen modules sat in one flat namespace with the layering unchecked. The package has seven directories now, one per layer, and `tests/architecture/test_layering.py` fails on an import crossing a layer the wrong way. The deep import paths moved with the modules |
 | 0043 | **Landed** 2026-08-18 (reporting) | XS | `gcmon.__version__` had said `0.1.0` since `0.2.0`, five releases behind the distribution. It reads the installed metadata now, `pyproject.toml` is the single source, and `gcmon --version` prints it. [RELEASE.md](../docs/RELEASE.md) carries the versioning policy |
 | 0045 | **Landed** 2026-08-18 (ergonomics) | S | `--stats` printed one table, half of it a copy of the other half on a single-interpreter run. The flag takes `total` or `full` now, `GCMON_STATS` the same words, and neither keeps a bare spelling. [ADR-0018](../docs/adr/0018-stats-requires-a-view-and-keeps-no-bare-alias.md); its section 7 became 0047 |
-| 0046 | **Landed** 2026-08-19 (performance) | S | Settling a departed pid rescanned every running ring, so a fan-out exiting together cost the tick that noticed it tens of milliseconds. `StreamingStats.retain` groups the departing keys in one traversal now, under [ADR-0016](../docs/adr/0016-the-ring-is-the-statistics-unit.md). Its open question is [0051](0051-key-the-running-rings-by-pid.md) |
+| 0046 | **Landed** 2026-08-19 (performance) | S | Settling a departed pid rescanned every running ring, so a fan-out exiting together cost the tick that noticed it tens of milliseconds. `StreamingStats.retain` groups the departing keys in one traversal now, under [ADR-0016](../docs/adr/0016-the-ring-is-the-statistics-unit.md). Its open question is [0051](0051-key-the-running-rings-by-process.md) |
 | 0047 | **Landed** 2026-09-09 (reporting) | XS | The README opened its Quick Start with `gcmon 12345`, a form no release ever accepted. `main` lost the dead branch that would have dispatched it in 0.7.0, and no documented example omits the subcommand now |
 | 0048 | **Landed** 2026-08-21 (efficiency) | M | gcmon re-derived where a process keeps its GC state on every poll and threw it away again. It attaches once and reads many times now. [ADR-0020](../docs/adr/0020-attach-to-a-process-once.md) owns the attachment's lifetime, and [0052](0052-a-recycled-pid-can-be-read-through-a-stale-attachment.md) is the window it left open |
 | 0049 | **Landed** 2026-08-20 (correctness) | S | `--rate` was the wait after a tick rather than the interval between two, so a wide tree polled slower than asked and nothing said so. Tick starts sit on a fixed grid now. [ADR-0019](../docs/adr/0019-schedule-tick-starts-on-a-fixed-grid.md); the naming half is [0050](0050-name-the-poll-interval-for-what-it-is.md) |
@@ -60,7 +60,7 @@ rather than editing this text:
 
 | Review | Findings already covered |
 |---|---|
-| `src/gcmon` structure, 2026-08-15 | 0028, 0029 (since retired), [0030](0030-exporter-hygiene-batch.md) section 4.5 |
+| `src/gcmon` structure, 2026-08-15 | 0028, 0029 (since retired), [0030](0030-exporter-hygiene-batch.md) section 4.2 |
 
 ## Provenance
 

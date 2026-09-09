@@ -6,7 +6,7 @@
 - **Origin:** code structure review of `src/gcmon`, 2026-08-15
 - **Respects:** [ADR-0011](../docs/adr/0011-process-lifetime-and-ordering.md)
   (a monitored pid's lifetime),
-  [ADR-0012](../docs/adr/0012-trace-output-formats.md); neither is affected;
+  [ADR-0021](../docs/adr/0021-write-one-trace-format.md); neither is affected;
   listed because both name the monitored process
 
 ## 1. Problem statement
@@ -55,11 +55,11 @@ implementations.
    monitoring entry point the thing it needs directly, so that both commands
    do not carry the same closure to satisfy a name.
 5. As a maintainer, I want the child-process adapter to expose the interface
-   and not eight extra members, so that a caller cannot come to depend on
+   and not five extra members, so that a caller cannot come to depend on
    something the other adapter does not have.
 6. As an operator running `gcmon monitor <pid>`, I want the exit code to stay
-   0 regardless of what the attached process does, so that this refactor does
-   not change my CI.
+   0 regardless of what the attached process does, so that a rename does not
+   change what a command returns.
 7. As an operator running `gcmon run`, I want the target's exit code to keep
    propagating, so that a failing script still fails the command.
 
@@ -93,12 +93,13 @@ does not use, and it silently weakens the check it appears to offer, since it
 tests for method presence and not signatures.
 
 **4.5: The child adapter is trimmed to the session interface.** It exposes
-`process`, `pid`, `is_running` and `close` beyond it. `close` is an alias for
-`terminate`, and the other three have no caller in the monitoring flow, only
-its own tests. Trimming them makes the two adapters substitutable in fact and
-not only in principle. Where a test genuinely needs the subprocess handle, it
-should reach for it deliberately rather than through a public property that
-exists for its benefit.
+five members beyond it: `process`, `pid`, `is_running`, `terminate` and
+`close`. `close` is an alias for `terminate`, which the monitoring flow
+reaches only through `__exit__`, and the first three have no caller in `src/`
+at all, only its own tests. Trimming them makes the two adapters substitutable
+in fact and not only in principle. Where a test genuinely needs the subprocess
+handle, it should reach for it deliberately rather than through a public
+property that exists for its benefit.
 
 **Rejected: merge `TargetProcess` into the session.** They are different
 lifetimes. A session exists before there is a process and after it exits; a
@@ -109,20 +110,18 @@ Collapsing them is what produced the attach adapter's double role.
 smaller half. A reader's actual difficulty is that `start()` returns `self` on
 one path and a different object on the other, and no name fixes that.
 
-**Open, to settle when picked up:** whether the session's `wait` keeps its
-`timeout` parameter. Its one caller passes 2.0 seconds with a comment
-explaining why, and the attach adapter ignores it entirely. This was to be
-settled by whether the monitoring entry point still needs a bounded wait after
-0038 reorganized shutdown. 0038 has since landed and left that wait alone: the
-loop keeps only the clock and the stop event, and the 2.0-second wait after it
-still guards reading a return code from a process mid-finalization, so the
-question is now answerable from the code rather than blocked on anything.
+**Settled: the session's `wait` keeps its `timeout` parameter.** 0038
+reorganized shutdown and left the wait alone: the loop keeps only the clock
+and the stop event, and the 2.0-second wait after it still guards reading a
+return code from a process mid-finalization, which is a bound the caller has
+to be able to set. The attach adapter goes on ignoring it, and 4.1's docstring
+is where that is stated rather than left to the implementations.
 
 ## 5. Seams and testing decisions
 
-- **Seam:** `tests/monitoring/test_loop_runner.py`, at the monitoring
-  entry point, the highest seam that can observe the change, because what
-  these types are *for* is being handed to that function and started.
+- **Seam:** `tests/monitoring/test_loop_runner.py`, at the monitoring entry
+  point, the highest seam that can observe the change, because what these
+  types are *for* is being handed to that function and started.
   `tests/test_child_process_runner.py` and
   `tests/monitoring/test_monitor_cmd.py` cover the two adapters at their own
   level.
@@ -131,10 +130,10 @@ question is now answerable from the code rather than blocked on anything.
   entry point and assert the observable difference is only the one that should
   exist: the exit code. A test asserting that a class implements a protocol
   proves the type checker ran; assert behaviour instead.
-- **Prior art:** `tests/monitoring/test_loop_runner.py` for driving the
-  entry point with a substituted session; `tests/monitoring/conftest.py` for
-  the existing fakes; `tests/test_child_process_runner.py` for the spawn
-  adapter's lifecycle.
+- **Prior art:** `tests/monitoring/test_loop_runner.py` for driving the entry
+  point with a substituted session; `tests/monitoring/conftest.py` for the
+  existing fakes; `tests/test_child_process_runner.py` for the spawn adapter's
+  lifecycle.
 - **Cases:**
   1. `gcmon run` propagates a failing script's exit code, as today.
   2. `gcmon monitor <pid>` exits 0 whatever the attached process does, as
