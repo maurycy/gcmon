@@ -9,11 +9,18 @@ target ends or you press `Ctrl+C`. `-v` follows progress:
 
 ```bash
 $ gcmon monitor 12345 -v
-[INFO] monitoring PID 12345 (perfetto trace → gcmon.pftrace)
-[INFO] collected 42 GC events so far
+[gcmon] INFO: Output: gcmon.pftrace
+[gcmon] INFO: Format: perfetto
+[gcmon] INFO: Rate: 0.1s
+[gcmon] INFO: Duration: until interrupted (Ctrl+C)
+[gcmon] INFO: Self PID: 38752
+[gcmon] INFO: Running server on <control address>
+[gcmon] INFO: Monitoring PID: 12345
 ...
-[INFO] stopping (Ctrl+C)
-[INFO] wrote 42 events to gcmon.pftrace
+[gcmon] INFO: Monitoring complete.
+[gcmon] INFO: Total events: 27
+[gcmon] INFO: Ticks: 28 of 30 scheduled
+[gcmon] INFO: Trace saved to: gcmon.pftrace
 ```
 
 Open the output in [Perfetto UI](https://ui.perfetto.dev), whose SQL panel
@@ -133,7 +140,7 @@ gcmon combine trace1.jsonl --output-format jsonl -o combined.jsonl
 
 ```bash
 $ gcmon --version
-0.5.0
+0.7.0
 ```
 
 The version of the gcmon you are running, read from the installed
