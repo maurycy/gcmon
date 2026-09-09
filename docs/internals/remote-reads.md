@@ -136,9 +136,7 @@ carrying the original as `__cause__`. A dead target on Windows arrives that
 way, measured. `tests/test_events_reader.py` records what the other two do, on
 every CI run across `ubuntu-latest`, `macos-latest` and `windows-latest`.
 
-[win32-pid]:
-https://learn.microsoft.com/en-us/windows/win32/procthread/process-handles-and-identifiers
-[posix-reuse]:
-https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/V1_chap04.html#tag_04_17
-[linux-wait]: https://man7.org/linux/man-pages/man2/wait.2.html [linux-pidfd]:
-https://man7.org/linux/man-pages/man2/pidfd_open.2.html
+[win32-pid]: https://learn.microsoft.com/en-us/windows/win32/procthread/process-handles-and-identifiers
+[posix-reuse]: https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/V1_chap04.html#tag_04_17
+[linux-wait]: https://man7.org/linux/man-pages/man2/wait.2.html
+[linux-pidfd]: https://man7.org/linux/man-pages/man2/pidfd_open.2.html

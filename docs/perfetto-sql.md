@@ -90,8 +90,8 @@ ORDER BY p.start_ts, c.ts
 ## Example: Querying Process Command Lines
 
 Requires the [`[cmdline]` extra](rss.md#the-cmdline-extra). gcmon writes the
-command line to [three places](formats.md#process-command-lines); two of them
-are reachable from SQL.
+command line to [several places](formats.md#process-command-lines), and the
+ones below are what SQL reaches.
 
 The process track's `description` holds the space-joined command line:
 
@@ -188,8 +188,9 @@ ORDER BY observed_dur - s.dur DESC
 
 - Timestamps are nanoseconds. Divide by `1e6` for milliseconds, `1e9` for
   seconds.
-- `EXTRACT_ARG` reads a slice annotation:
-  `EXTRACT_ARG(arg_set_id, 'heap_size')`.
+- `EXTRACT_ARG` reads a slice annotation, under the `debug.` prefix the trace
+  processor adds: `EXTRACT_ARG(arg_set_id, 'debug.heap_size')`. Without the
+  prefix it returns `NULL`.
 
 ## Further Reading
 

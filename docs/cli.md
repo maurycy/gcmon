@@ -78,6 +78,7 @@ Exactly one of `-s`/`--script` or `-m`/`--module`.
 | `--flush-threshold` | both | Number of events to buffer before flushing | `100` |
 | `--stats <view>` | both | Show a statistics table at end of monitoring. The value is required: `total`, `full`, or one of `no`/`off`/`false`/`0` (see [`--stats`](#--stats)) | No table |
 | `--table-format` | both | Table format: `plain` or `markdown`/`md` | `plain` |
+| `--control-name` | both | Name the control plane, so a target can build its address (see [`--control-name`](#--control-name)) | The OS picks one |
 | `--rss` | both | Track the target's Resident Set Size. `perfetto` only, and needs the `[cmdline]` extra (see [RSS Tracking](rss.md)) | `False` |
 | `--rss-interval` | both | RSS sampling interval in seconds | `1.0` |
 
@@ -97,6 +98,21 @@ Bare `--stats` is a parse error, and so is any word outside the table.
 `GCMON_STATS` takes the same words. Blank reads as unset, and anything else
 stops the run at startup.
 
+### `--control-name`
+
+The monitor listens on a control plane, and a `ControlClient` inside the
+target sends to it ([Programmatic Control](control-plane.md)). Naming it fixes
+the address:
+
+| Platform | Address for `--control-name my-app` |
+|---|---|
+| Windows | `\\.\pipe\gcmon-my-app` |
+| Linux, macOS | `/tmp/gcmon-my-app` |
+
+Unset, `multiprocessing` picks a random address that a target cannot
+reconstruct. `gcmon run` needs no name: it starts the target and passes the
+address down in `GCMON_CONTROL_ADDRESS`.
+
 ## Environment Variables
 
 Each variable below sets a default for its flag, and a flag on the command
@@ -113,6 +129,7 @@ exception is `GCMON_STATS`, which stops the run.
 | `GCMON_FLUSH_THRESHOLD` | `--flush-threshold` | Number of events to buffer before flushing | `100` |
 | `GCMON_STATS` | `--stats` | Statistics table view, in the words [`--stats`](#--stats) takes. Blank reads as unset; any other value stops the run | No table |
 | `GCMON_TABLE_FORMAT` | `--table-format` | Table format: `plain`, `md`, or `markdown` | `plain` |
+| `GCMON_CONTROL_NAME` | `--control-name` | Name the control plane | The OS picks one |
 | `GCMON_RSS` | `--rss` | Enable RSS tracking (`1`, `true`, `yes`, `on`) | `False` |
 | `GCMON_RSS_INTERVAL` | `--rss-interval` | RSS sampling interval in seconds | `1.0` |
 
@@ -123,7 +140,7 @@ Combine JSONL captures into one trace, or into one JSONL capture.
 ```bash
 gcmon combine trace1.jsonl trace2.jsonl -o combined.pftrace
 
-# `-n` starts every process at t=0
+# `-n` starts each input file's timeline at t=0
 gcmon combine trace1.jsonl trace2.jsonl -o combined.pftrace -n
 
 gcmon combine trace1.jsonl --output-format jsonl -o combined.jsonl
@@ -134,7 +151,7 @@ gcmon combine trace1.jsonl --output-format jsonl -o combined.jsonl
 | `inputs` (required) | One or more input JSONL captures | - |
 | `-o, --output` (required) | Output file path for the combined trace | - |
 | `--output-format` | Output format: `perfetto` or `jsonl` | `perfetto` |
-| `-n, --normalize` | Normalize timestamps per PID so each process timeline starts at 0 | `False` |
+| `-n, --normalize` | Normalize timestamps so each timeline starts at 0. The scope differs by output: per input file for `perfetto`, per PID across the whole merge for `jsonl` | `False` |
 
 ## --version
 

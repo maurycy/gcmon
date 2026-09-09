@@ -4,9 +4,11 @@ gcmon writes traces in three formats, selected with `--format`: `perfetto`
 (compressed Perfetto binary protobuf), `jsonl` (JSONL to file), and `stdout`
 (JSONL to stdout). See the [CLI reference](cli.md) for the flag.
 
-A `.pftrace` needs Perfetto v58 or newer. An older one shows the capture as an
-empty timeline rather than refusing to open it: a run that collected nothing
-looks the same.
+gcmon compresses each batch it writes, with zstd where the interpreter has
+`compression.zstd` and deflate where it does not. **A zstd capture needs
+Perfetto v58 or newer.** An older reader shows it as an empty timeline rather
+than refusing to open it, and a run that collected nothing looks the same. A
+deflate capture opens on any Perfetto.
 
 ## Perfetto output
 
@@ -150,14 +152,18 @@ for most of every tick. Lower `--rate` or a calmer workload thins it out. See
 
 ### Process command lines
 
-gcmon writes each command line to **three** places, no one of which serves
-both the UI and SQL:
+gcmon writes each command line in these places:
 
 | Where | Form | Visible in the UI | Queryable from SQL |
 |---|---|---|---|
 | `ProcessDescriptor.cmdline` on the process track | argv, one string per argument | Yes | **No**. The trace processor does not surface this field |
 | `description` on the process track | argv joined with single spaces | Yes | Yes, via `args` (key `description`) |
 | `cmdline` debug annotation on the `Process {pid}` slice of the `Processes` track | argv joined with single spaces | Yes, in the slice's details | Yes, via `args` (key `debug.cmdline`) |
+| `cmdline` debug annotation on that process's own `Lifetime` slice | argv joined with single spaces | Yes, in the slice's details | Yes, via `args` (key `debug.cmdline`) |
+
+The two `debug.cmdline` annotations hold the same string under the same key on
+different rows, so a query reading it without filtering by slice name gets
+each process twice.
 
 Each is read once, while the process is running. On a reused PID all three
 name the program that process ran.

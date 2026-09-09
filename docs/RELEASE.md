@@ -11,10 +11,12 @@ changelog body attached.
 
 - [ ] Bump `version` in `pyproject.toml`. Nothing else carries a version:
   `gcmon.__version__` and `gcmon --version` follow from it.
-- [ ] Add a `## Version X.Y.Z` section to `CHANGELOG.md` (below the `## WIP`
-  block).
-- [ ] Open a PR; CI runs the release workflow on the PR and fails if the
-  changelog section is missing or version-mismatched.
+- [ ] Add a `## Version X.Y.Z (YYYY-MM-DD)` section to `CHANGELOG.md` (below
+  the `## WIP` block).
+- [ ] Open a PR **from a branch named `release/...`**; the workflow's PR run
+  is gated on that prefix, so a branch named anything else gets no validation
+  and says nothing about it. On a `release/` branch CI fails if the changelog
+  section is missing or version-mismatched.
 - [ ] Merge the PR after CI is green.
 - [ ] Tag the merge commit (`git tag vX.Y.Z <sha>`) and push the tag
   (`git push origin vX.Y.Z`).

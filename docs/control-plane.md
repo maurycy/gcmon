@@ -84,6 +84,26 @@ gcmon's own.
 
 ## Prerequisites
 
-`gcmon run` and `gcmon monitor` set `GCMON_CONTROL_ADDRESS` in the process
-they start. Without it the client never connects, and every send is logged at
-debug level and dropped.
+The client needs the monitor's address, and where that comes from depends on
+the subcommand.
+
+`gcmon run` starts the target itself, so it sets `GCMON_CONTROL_ADDRESS` in
+that process and `ControlClient()` reads it with no argument.
+
+`gcmon monitor` attaches to a process already running, whose environment was
+fixed before gcmon reached it, so it sets nothing. Name the control plane
+instead and build the address in the target:
+
+```python
+import sys
+
+NAME = "my-app"  # gcmon monitor <pid> --control-name my-app
+address = rf"\\.\pipe\gcmon-{NAME}" if sys.platform == "win32" else f"/tmp/gcmon-{NAME}"
+client = ControlClient(address)
+```
+
+Without `--control-name` the address is random and the snippet has nothing to
+build. See [`--control-name`](cli.md#--control-name).
+
+With no address the client never connects, and every send is logged at debug
+level and dropped.

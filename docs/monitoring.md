@@ -22,8 +22,7 @@ run it held.
 
 How many records it holds depends on the CPython version and build. A
 free-threaded build keeps one per generation, so only the newest survives to
-the next poll. gcmon reads that size off the first poll that returns records
-and keeps it for the session.
+the next poll.
 
 ## Polling
 
@@ -81,13 +80,19 @@ lists the target's children once a tick and reads whatever that listing names.
 A worker whose whole life falls between two ticks leaves no records, no track
 and no row.
 
-**On Linux, a reissued pid can put two processes on one track.** The operating
-system is free to hand a dead worker's pid to a new process, and gcmon has no
-way to tell that it happened: records read afterwards belong to the new
-process and are drawn on the old one's track. Windows does not reissue a pid
-gcmon is attached to. macOS stops reading the moment the first process exits,
-and starts the second one afresh, so both give you two separate blocks instead
-of one blended track.
+**A reissued pid usually gets a row of its own, and can be blended into its
+predecessor's.** The operating system is free to hand a dead worker's pid to a
+new process. Where gcmon sees the exit, which is the ordinary case, the
+successor becomes a process of its own: its own track, its own block, named
+`Process 12345#2` for the second to hold the pid. Where it does not, both
+processes read as one throughout.
+
+gcmon misses the exit when the pid is recycled inside a single tick, so the
+child listing never shows it gone. On Linux a read can also reach the
+successor through the attachment gcmon still holds, since a read there names
+the pid; Windows pins the pid for as long as it is attached, and macOS reads
+through a task port a dead process does not rebind.
+[Remote reads, per platform](internals/remote-reads.md) has the whole table.
 
 **A process gcmon is not allowed to read is left out quietly.** A child owned
 by another user is polled, refused, and dropped, and nothing says so at the
