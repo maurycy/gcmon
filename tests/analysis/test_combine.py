@@ -7,8 +7,8 @@ import msgspec
 import pytest
 from perfetto.protos.perfetto.trace.perfetto_trace_pb2 import TrackEvent
 
-from gcmon.exporters.combine import _normalize_trace_timestamps, _starts_at, combine_files
-from gcmon.exporters.jsonl_io import (
+from gcmon.analysis.combine import _normalize_trace_timestamps, _starts_at, combine_files
+from gcmon.analysis.jsonl_io import (
     convert_jsonl_to_trace_format,
     normalize_jsonl_timestamps,
     read_jsonl,
@@ -22,8 +22,8 @@ from gcmon.model.trace_event import (
     Slice,
     TraceEvent,
 )
+from tests.analysis.conftest import make_inc_jsonl_record
 from tests.data_helpers import create_instant_msg
-from tests.exporters.conftest import make_inc_jsonl_record
 from tests.helpers import (
     assert_valid_perfetto_trace,
     create_jsonl_record,

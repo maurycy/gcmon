@@ -21,16 +21,39 @@ PACKAGE = "gcmon"
 SRC = Path(__file__).resolve().parent.parent.parent / "src" / PACKAGE
 
 ALLOWED: dict[str, frozenset[str]] = {
+    # The base both subsystems build on.
     "support": frozenset(),
     "model": frozenset({"support"}),
     "exporters": frozenset({"model", "support"}),
     "stats": frozenset({"model", "support"}),
+    "cli.shared": frozenset(),
+    # The monitor subsystem.
     "control": frozenset({"model", "exporters", "support"}),
     "monitoring": frozenset({"model", "exporters", "stats", "control", "support"}),
-    "cli": frozenset({"model", "exporters", "stats", "control", "monitoring", "support"}),
+    "cli.monitor": frozenset({"model", "exporters", "stats", "control", "monitoring", "support", "cli.shared"}),
+    # The analysis subsystem.
+    "analysis": frozenset({"model", "exporters", "support"}),
+    "cli.analyze": frozenset({"model", "exporters", "stats", "analysis", "support", "cli.shared"}),
+    # The one place both subsystems are reachable.
+    "cli": frozenset(
+        {
+            "model",
+            "exporters",
+            "stats",
+            "analysis",
+            "control",
+            "monitoring",
+            "support",
+            "cli.shared",
+            "cli.monitor",
+            "cli.analyze",
+        }
+    ),
 }
 """What each layer may import. The table lives here because it is a statement
-about the architecture, and this is where such a statement can fail."""
+about the architecture, and this is where such a statement can fail.
+
+`analysis` is denied `stats`; ADR-0026 holds the argument."""
 
 ROOT_CLI = frozenset({"__init__", "__main__"})
 """The two modules that cannot live anywhere else.
@@ -40,12 +63,12 @@ belong to `cli` by direction. The root cannot be a directory, so this is the
 one membership a path cannot answer; enumerating it is what stops a new root
 module from being handed the CLI's permissions by default."""
 
-FOLDED: dict[str, str] = {"pyperf": "cli"}
+FOLDED: dict[str, str] = {"pyperf": "cli.monitor"}
 """A directory that is part of a layer named for somewhere else.
 
-The pyperf hook is an entry point into gcmon exactly as the console script is,
-and nothing below imports it, so it is `cli` rather than a layer of its own. It
-was left open until a second member could argue for one; it still has none."""
+The pyperf hook is an entry point into gcmon as the console script is, and
+nothing below imports it, so it is not a layer of its own. It belongs to the
+monitor subsystem because it runs inside the target (ADR-0023, ADR-0026)."""
 
 
 @dataclass(frozen=True)
@@ -64,16 +87,25 @@ class Import:
 def layer_of(module: str) -> str | None:
     """The layer *module* belongs to.
 
-    The directory answers: a module under `stats/` is `stats`. Two rules make
-    that true without exceptions in the tree. `commands` is part of `cli`,
-    which is otherwise the package root, where `__init__.py` and `__main__.py`
-    have to live, and `pyperf` is part of it too: both are entry points.
+    The directory answers: a module under `stats/` is `stats`, and one under
+    `cli/monitor/` is `cli.monitor`. The two-segment name is tried before the
+    head, because `cli` at the head would hand a subsystem every permission the
+    CLI has. Two rules make the directory answer without exceptions in the
+    tree. The package root, where `__init__.py` and `__main__.py` have to
+    live, is `cli`, and `pyperf` is part of the monitor subsystem: both are
+    entry points.
 
-    Nothing else is placed. A directory that is not a layer and a module at
-    the root that is neither the CLI's nor a shim both come back None, and
-    `unplaced` is what turns that into a failure.
+    Nothing else is placed. A directory that is not a layer, a module at the
+    root that is neither the CLI's nor a shim, and a directory under `cli/`
+    the table does not name all come back None, and `unplaced` is what turns
+    that into a failure.
     """
-    head = module.split(".")[0]
+    parts = module.split(".")
+    if len(parts) > 1 and ".".join(parts[:2]) in ALLOWED:
+        return ".".join(parts[:2])
+    if len(parts) > 2 and parts[0] == "cli":
+        return None
+    head = parts[0]
     if head in ALLOWED:
         return head
     if head in FOLDED:
@@ -199,16 +231,31 @@ class TestTheLayerOfAModule:
         assert layer_of("support.set_on_exit") == "support"
         assert layer_of("exporters.exporter") == "exporters"
 
-    def test_the_subcommands_are_part_of_the_cli(self) -> None:
-        assert layer_of("cli.commands.run_cmd") == "cli"
+    def test_a_directory_under_the_cli_that_is_not_a_subsystem_places_nothing(self) -> None:
+        """`cli` is permitted every layer, so an offline command written into
+        `cli/report/` would import `monitoring` and pass the walk."""
+        assert layer_of("cli.report.report_cmd") is None
+
+    def test_a_module_directly_under_the_cli_is_still_the_cli(self) -> None:
+        """Two segments is a module in `cli/` itself, not a directory."""
+        assert layer_of("cli.main") == "cli"
+        assert layer_of("cli._version") == "cli"
 
     def test_the_two_modules_the_root_must_hold_are_cli(self) -> None:
         assert layer_of("__init__") == "cli"
         assert layer_of("__main__") == "cli"
 
-    def test_the_pyperf_hook_is_an_entry_point_not_a_layer(self) -> None:
-        """One member, imported by nothing below: the CLI's profile."""
-        assert layer_of("pyperf.hook") == "cli"
+    def test_a_subsystem_under_the_cli_answers_for_itself(self) -> None:
+        assert layer_of("cli.monitor.run_cmd") == "cli.monitor"
+        assert layer_of("cli.analyze.convert_cmd") == "cli.analyze"
+        assert layer_of("cli.shared.parser_factory") == "cli.shared"
+
+    def test_the_cli_itself_is_not_a_subsystem(self) -> None:
+        assert layer_of("cli.main") == "cli"
+
+    def test_the_pyperf_hook_is_monitor_subsystem_code(self) -> None:
+        """It runs inside the target."""
+        assert layer_of("pyperf.hook") == "cli.monitor"
 
     def test_a_directory_that_is_not_a_layer_places_nothing(self) -> None:
         assert layer_of("newthing.module") is None
@@ -244,3 +291,35 @@ class TestAnImportThatCrossesTheWrongWay:
 
     def test_an_import_inside_one_layer_is_allowed(self) -> None:
         assert violations([Import("exporters.exporter", "exporters.encoder", 4)], layer_of, ALLOWED) == []
+
+
+class TestAnImportThatCrossesBetweenTheSubsystems:
+    """The crossings the subsystems exist to prevent. The real tree holds none."""
+
+    def test_the_analysis_subsystem_may_not_reach_a_live_process(self) -> None:
+        assert violations([Import("analysis.combine", "monitoring.monitor", 5)], layer_of, ALLOWED) == [
+            "analysis.combine:5 imports monitoring.monitor: analysis may not import monitoring"
+        ]
+        assert violations([Import("cli.analyze.report_cmd", "control.control_client", 6)], layer_of, ALLOWED) == [
+            "cli.analyze.report_cmd:6 imports control.control_client: cli.analyze may not import control"
+        ]
+
+    def test_neither_subsystem_may_import_the_cli(self) -> None:
+        """`cli.main` reaches both, so importing it is how one subsystem would
+        reach the other."""
+        assert violations([Import("cli.monitor.monitor_cmd", "cli.main", 8)], layer_of, ALLOWED) == [
+            "cli.monitor.monitor_cmd:8 imports cli.main: cli.monitor may not import cli"
+        ]
+        assert violations([Import("cli.analyze.convert_cmd", "cli.main", 8)], layer_of, ALLOWED) == [
+            "cli.analyze.convert_cmd:8 imports cli.main: cli.analyze may not import cli"
+        ]
+
+    def test_the_analysis_layer_computes_nothing(self) -> None:
+        """`stats` is reached from `cli.analyze` above it (ADR-0026)."""
+        assert violations([Import("analysis.jsonl_io", "stats.streaming_stats", 4)], layer_of, ALLOWED) == [
+            "analysis.jsonl_io:4 imports stats.streaming_stats: analysis may not import stats"
+        ]
+
+    def test_both_subsystems_may_take_what_the_shared_base_holds(self) -> None:
+        assert violations([Import("cli.monitor.monitor_cmd", "cli.shared.parser_factory", 2)], layer_of, ALLOWED) == []
+        assert violations([Import("cli.analyze.convert_cmd", "cli.shared.parser_factory", 2)], layer_of, ALLOWED) == []

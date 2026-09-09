@@ -1,10 +1,10 @@
-"""Shared monitoring logic for run and monitor commands."""
+"""The monitoring loop `monitor` and `run` both drive."""
 
 import logging
 import os
 from contextlib import ExitStack
 
-from gcmon.cli.commands.monitoring_options import MonitoringOptions
+from gcmon.cli.monitor.monitoring_options import MonitoringOptions
 from gcmon.control.control_server import ControlServer
 from gcmon.exporters import EventsExporterFactory
 from gcmon.monitoring.events_reader import RemoteEventsReader
