@@ -128,15 +128,17 @@ what it claimed, the word was filler and goes. Then put back each phrase the
 pass replaced. If the old wording was sound and said the same, the old wording
 wins. A shorter version that dropped a claim does not win on length.
 
-Repair fails the last two tests and stays: the subject a split run-on needs, the verb
-that replaces a nominalisation, the article that makes a sentence grammatical.
-A passage that ends longer than it began was not trimmed.
+Repair fails the last two tests and stays: the subject a split run-on needs,
+the verb that replaces a nominalisation, the article that makes a sentence
+grammatical. A passage that ends longer than it began was not trimmed.
 
 ## Mechanical
 
 - No em dash. No section sign, which is hard to type on an ordinary keyboard.
 - Wrap at 78, 80 at the outside:
-  `python .github/scripts/wrap_markdown.py <files>`.
+  `python .github/scripts/wrap_markdown.py <files>`. CI runs the same script
+  with `--check` over every tracked Markdown file but `CHANGELOG.md`, which is
+  one bullet per line.
 - Use the vocabulary in `specs/CONVENTIONS.md` rule 4: record, event, iid,
   loss window, span. Do not coin a synonym for one of them.
 - Every file is LF. A rewrite that flips the endings buries the real diff;
