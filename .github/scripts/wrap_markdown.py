@@ -2,9 +2,11 @@
 
     python .github/scripts/wrap_markdown.py --width 78 docs/formats.md
 
-Verbatim: fenced blocks, tables, headings and HTML. Rewrapped: paragraphs,
-block quotes, and list items with their continuation lines. A bare ``>`` ends
-the quoted paragraph it follows, the way a blank line ends an unquoted one.
+Verbatim: fenced blocks, tables, headings, HTML, and a line opening a link
+reference definition, which stops being one the moment anything follows its
+destination. Rewrapped: paragraphs, block quotes, and list items with their
+continuation lines. A bare ``>`` ends the quoted paragraph it follows, the way
+a blank line ends an unquoted one.
 
 A link, an inline code span and a short parenthesised list read badly split
 over two lines, and stop being greppable, so the spaces inside them are held
@@ -48,7 +50,7 @@ from pathlib import Path
 FENCE = re.compile(r"^\s*(```|~~~)")
 LIST_ITEM = re.compile(r"^(\s*(?:[-*+]|\d+\.)\s+)(.*)$")
 QUOTE = re.compile(r"^(\s*>\s*)(.*)$")
-VERBATIM = re.compile(r"^(\s*\||#{1,6}\s|<)")
+VERBATIM = re.compile(r"^(\s*\||#{1,6}\s|<|\[[^\]]+\]:)")
 INDENTED = re.compile(r"^ {4,}\S")
 LABEL = re.compile(r"^(?:\*\*[^*]+\*\*|_[^_]+_):")
 # Spaces that must not become a line break.

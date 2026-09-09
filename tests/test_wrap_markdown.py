@@ -162,6 +162,52 @@ class TestADefinitionListKeepsItsLabels:
         assert wrap_markdown.rewrap(source, 78) == source
 
 
+class TestALinkReferenceDefinitionStaysOnItsLine:
+    """`[label]: url` is a definition only while nothing follows the URL."""
+
+    def test_a_block_of_definitions_is_left_alone(self) -> None:
+        """The defect wrapped them as one paragraph, so a short one and the
+        next label landed on a line together and neither resolved.
+        """
+        source = textwrap.dedent("""\
+            Some prose citing [wait(2)][linux-wait] and [pidfd_open(2)][linux-pidfd].
+
+            [linux-wait]: https://man7.org/linux/man-pages/man2/wait.2.html
+            [linux-pidfd]: https://man7.org/linux/man-pages/man2/pidfd_open.2.html
+        """)
+
+        assert wrap_markdown.rewrap(source, 78) == source
+
+    def test_no_line_carries_two_definitions(self) -> None:
+        """What the broken file looked like: one label, its URL, and the next
+        label after it, which makes the first invalid too.
+        """
+        source = textwrap.dedent("""\
+            [a]: https://example.com/one
+            [b]: https://example.com/two
+        """)
+
+        result = wrap_markdown.rewrap(source, 78).split("\n")
+
+        assert not [line for line in result if line.count("]:") > 1]
+
+    def test_a_reference_style_link_in_prose_still_wraps(self) -> None:
+        """Only the definition is held. A paragraph using one is prose, and a
+        rule that caught both would stop the page wrapping at all.
+        """
+        source = "Prose citing [wait(2)][linux-wait] over and over, " * 4
+
+        assert max(len(line) for line in wrap_markdown.rewrap(source, 78).split("\n")) <= 78
+
+    def test_a_definition_cannot_interrupt_a_paragraph(self) -> None:
+        """CommonMark reads it as part of the paragraph, so the tool does too:
+        the `not para` guard in front of the verbatim branch is deliberate.
+        """
+        source = "Some prose that runs straight on.\n[a]: https://example.com/one\n"
+
+        assert wrap_markdown.rewrap(source, 78) == "Some prose that runs straight on. [a]: https://example.com/one\n"
+
+
 class TestTheToolIsStable:
     def test_a_second_pass_over_the_tree_changes_nothing(self) -> None:
         """The defect was a first pass that indented a paragraph and a second
