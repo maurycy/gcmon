@@ -41,6 +41,14 @@ jobs:
         run: |
           poetry run ruff check src
 
+      # Every tracked Markdown file but `CHANGELOG.md`, which is one bullet
+      # per line and stays that way. A CRLF file fails here too: the script
+      # reports one rather than rewriting it.
+      - name: Check the prose wrapping
+        run: |
+          git ls-files -z '*.md' ':!:CHANGELOG.md' \
+            | xargs -0 python .github/scripts/wrap_markdown.py --check
+
   mypy:
     runs-on: ubuntu-latest
     timeout-minutes: 10

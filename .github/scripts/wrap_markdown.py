@@ -18,6 +18,12 @@ A ``|`` and an ordinal are held to the word before them for a different
 reason: a continuation line that opens with one reads as a table row or a
 list item, and the next pass would wrap it as one.
 
+Holding only protects a line this tool wrapped. A paragraph arriving with an
+ordinal already at the start of one is read the way CommonMark reads it: a
+bullet may interrupt a paragraph, an ordered marker only where it numbers 1.
+So a sentence running on into ``0029. Three lines`` stays the paragraph it
+was, rather than becoming a list item with the rest indented under it.
+
 A definition list is written as a label in bold or italic, a colon, and the
 text under it, so a line starting on one of those labels keeps the break
 before it. A line that is only the label is left where it stands.
@@ -51,6 +57,18 @@ LINK = re.compile(r"\[[^\]]*\]\([^)]*\)")
 FITTED = re.compile(r"`[^`]+`|\((?:[^()\s]+[,;]\s+){1,4}[^()\s]+\)")
 # Joined to the word before, so no wrapped line opens like a table or a list.
 MARKER = re.compile(r"(?<=\S) (?=\||\d+\.(?:\s|$))")
+ORDERED = re.compile(r"^\s*(\d+)\.")
+
+
+def _may_interrupt(line: str) -> bool:
+    """Whether the list marker on *line* may break a paragraph already open.
+
+    CommonMark lets a bullet do it and an ordered marker only where it numbers
+    1. Without the second half a line beginning `0029.` opens a list item and
+    the rest of the sentence is indented under it.
+    """
+    ordered = ORDERED.match(line)
+    return ordered is None or ordered.group(1) == "1"
 
 
 def _hold(text: str) -> str:
@@ -79,13 +97,15 @@ def rewrap(text: str, width: int) -> str:
     para: list[str] = []
     first = rest = ""
     in_fence = False
+    in_item = False
 
     def flush() -> None:
-        nonlocal para, first, rest
+        nonlocal para, first, rest, in_item
         if para:
             out.extend(_wrap(para, first, rest, width))
         para = []
         first = rest = ""
+        in_item = False
 
     for line in text.split("\n"):
         if FENCE.match(line):
@@ -100,9 +120,9 @@ def rewrap(text: str, width: int) -> str:
         elif VERBATIM.match(line) and not para:
             flush()
             out.append(line)
-        elif LABEL.match(line):
+        elif label := LABEL.match(line):
             flush()
-            if len(line.split()) == 1:
+            if label.group(0) == line.rstrip():
                 out.append(line.rstrip())
             else:
                 para.append(line)
@@ -114,10 +134,11 @@ def rewrap(text: str, width: int) -> str:
             if not para:
                 first = rest = quote.group(1)
             para.append(quote.group(2))
-        elif item := LIST_ITEM.match(line):
+        elif (item := LIST_ITEM.match(line)) and (not para or in_item or _may_interrupt(line)):
             flush()
             first, rest = item.group(1), " " * len(item.group(1))
             para.append(item.group(2))
+            in_item = True
         else:
             para.append(line)
 
