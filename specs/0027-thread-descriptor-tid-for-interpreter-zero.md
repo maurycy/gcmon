@@ -6,10 +6,13 @@
 - **Origin:** post-v0.2.0 code review (old spec 18, REQ-15)
 - **Respects:**
   [ADR-0002](../docs/adr/0002-perfetto-track-uuid-and-hierarchy.md) (every
-  track is explicitly parented), [ADR-0013](../docs/adr/0013-rss-sampling.md)
-  (`tid = -1` sentinel),
-  [ADR-0015](../docs/adr/0015-gc-loss-spans-on-their-own-track.md)
-  (`tid = -2 - iid` sentinel)
+  track is explicitly parented),
+  [ADR-0011](../docs/adr/0011-process-lifetime-and-ordering.md) (the thread
+  descriptor follows the row pid, interpreter 0's `tid` included: section 4
+  proposes changing exactly that),
+  [ADR-0024](../docs/adr/0024-an-event-names-the-track-it-is-drawn-on.md) (an
+  event names its `Track`, so the interpreter descriptor is the only `tid`
+  left)
 
 ## 1. Problem
 
@@ -26,7 +29,7 @@ subinterpreter id happens to equal the pid.
 `perfetto_format._emit_thread_descriptor` builds the descriptor with
 
 ```python
-tid=row_pid if iid == 0 else iid,
+tid = (row_pid if iid == 0 else iid,)
 ```
 
 It is the only tid gcmon publishes. A loss row is a plain custom track with no
@@ -60,7 +63,7 @@ either direction.
 
 ## 4. Proposed change
 
-1. `tid=pid if iid == 0 else iid` → `tid=iid`.
+1. `tid=row_pid if iid == 0 else iid` → `tid=iid`.
 2. Add the SQL assertion described in section 5 so the convention is stated
    somewhere executable.
 3. If the trace processor turns out to *depend* on `tid == pid` to identify a
@@ -90,8 +93,8 @@ either direction.
   1. Two interpreters, one pid: `thread.tid` is `{0, 1}`, and both rows still
      join to the right `process.pid` through `upid`.
   2. Regression guard: the thread name stays `Thread {iid}`, the track
-     hierarchy is unchanged, and the loss/RSS descriptors keep their sentinel
-     tids.
+     hierarchy is unchanged, and the `GC Loss` and `rss` rows still write no
+     `tid` of their own.
 
 ## 6. Out of scope
 

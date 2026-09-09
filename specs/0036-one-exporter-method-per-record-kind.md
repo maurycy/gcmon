@@ -12,8 +12,8 @@
   dropped: sections 4.4 and 4.5),
   [ADR-0011](../docs/adr/0011-process-lifetime-and-ordering.md) (liveness
   arrives batched, once per tick: 4.1),
-  [ADR-0013](../docs/adr/0013-rss-sampling.md) (RSS on a `tid = -1` sentinel
-  track: 4.2),
+  [ADR-0013](../docs/adr/0013-rss-sampling.md) (RSS on the process track
+  rather than a thread's: 4.2),
   [ADR-0015](../docs/adr/0015-gc-loss-spans-on-their-own-track.md) (a loss
   window is drawn on its own track, which `convert_loss_to_trace_format`
   decides and 4.1 does not touch),
@@ -142,8 +142,7 @@ becomes an `RssSample` struct passed to `add`, declared in `model.data` beside
 the other concrete records. `RssSampler._sample` is the one caller.
 `PerfettoExporter`'s branch builds the same
 `Counter(ProcessTrack(process), "rss", "rss", ts_ns, rss_bytes)` it builds
-today, so the sentinel track and the counter it produces are unchanged
-(ADR-0013).
+today, so the row it lands on and the counter itself are unchanged (ADR-0013).
 
 **4.3: Capability is asked of the exporter.** Each exporter declares the
 record kinds it handles; `add`'s behaviour for an unhandled kind stays what
