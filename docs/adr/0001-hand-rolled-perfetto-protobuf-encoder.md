@@ -16,11 +16,11 @@ hook runs inside the target
 ([ADR-0023](0023-the-pyperf-hook-annotates-and-does-not-drive.md)), and a
 runtime dependency on that path is one the benchmarked application inherits.
 `monitor` and `run` read the target from outside and hand it nothing.
-[ADR-0026](0026-two-subsystems-over-a-shared-base.md) narrows this argument to the
-hook.
+[ADR-0026](0026-two-subsystems-over-a-shared-base.md) narrows this argument to
+the hook.
 
 The slice of the Perfetto wire format gcmon needs is small: varints,
-length-delimited submessages, and roughly thirty field numbers, a few hundred
+length-delimited submessages, and a few dozen field numbers, a few hundred
 lines to write by hand.
 
 The cost is owning those field numbers against a proto that changes upstream.
@@ -93,8 +93,8 @@ helpers.
 
 ## Consequences
 
-- Installing gcmon pulls in no protobuf machinery. The only optional runtime
-  dependency is `psutil`, and that degrades gracefully.
+- Installing gcmon pulls in no protobuf machinery. The optional runtime
+  dependencies are `psutil` and `ddsketch`, and each degrades gracefully.
 - Field-number drift in upstream Perfetto is a real, recurring risk, and it
   fails silently. So the regression tests assert the **raw wire format**,
   meaning field number and wire type, instead of round-tripping through

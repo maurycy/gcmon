@@ -1,7 +1,9 @@
 # ADR-0023: Mark the benchmark from the pyperf hook, and drive nothing
 
 - **Status:** Accepted
-- **Date:** 2026-08-24
+- **Date:** 2026-08-24, amended:
+  - 2026-08-26: an instant gained args, see
+    [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)
 
 ## Context
 
@@ -96,12 +98,13 @@ from outside for that reason, and `--rate` spends the monitor's time rather
 than the target's.
 
 **Carry the fields as annotations.** An instant could take a payload of keys,
-and a reader would join the `args` table instead of parsing a string.
-`build_track_event` already writes `debug_annotations` for the GC pause
-slices, but `InstantEvent` carries no args where `BeginEvent` and
-`CounterEvent` do, so a payload has to reach every exporter's
-`add_instant_event` and survive the JSONL round trip `combine` reads. That
-touches the model and both backends, not the hook, and gets a spec of its own.
+and a reader would join the `args` table instead of parsing a string. The
+encoder already writes `debug_annotations` for the GC pause slices, and an
+`Instant` has carried args since
+[ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md), so what is left
+is a payload reaching every exporter's `add_instant_event` and surviving the
+JSONL round trip `combine` reads. That touches the exporter protocol and the
+capture format, not the hook, and gets a spec of its own.
 
 **Draw a region as a slice.** A slice would pair the two ends in the model,
 where a reader now matches two names. It needs a track to sit on, and where a

@@ -48,11 +48,12 @@ now carry a non-NULL `parent_id` pointing at the `GC Metrics` row, and the
 ranking takes effect *inside* the group.
 
 Ranks come from a single ordered table covering each metric. `heap_size` and
-`rss` come first (they are top-level, see
-[ADR-0004](0004-toplevel-shared-counters.md)), then `collected`,
-`uncollectable` (emitted only when non-zero), `candidates`, `duration`, and
-the rest. Inserting a metric shifts the ranks below it, which is fine: only
-the relative order matters.
+`rss` come first (they are drawn outside the group, see
+[ADR-0004](0004-toplevel-shared-counters.md) and
+[ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)), then
+`collected`, `uncollectable` (emitted only when non-zero), `candidates`,
+`duration`, and the rest. Inserting a metric shifts the ranks below it, which
+is fine: only the relative order matters.
 
 ## Consequences
 
@@ -65,11 +66,12 @@ the relative order matters.
   UI rather than nested inside it. The spec owner reviewed this and accepted
   it, since ordering within the group still works.
 - The group is collapsible, which keeps the top-level track list short. That
-  is why [ADR-0004](0004-toplevel-shared-counters.md) keeps `heap_size`
-  *outside* the group.
-- Any new per-generation metric inherits the grouping for free; only the
-  top-level metrics of [ADR-0004](0004-toplevel-shared-counters.md) sit
-  outside it.
+  is why `heap_size` is drawn *outside* the group
+  ([ADR-0004](0004-toplevel-shared-counters.md), carried forward by
+  [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)).
+- Any new per-generation metric inherits the grouping for free. What sits
+  outside it is `heap_size` and whatever a `ProcessTrack` owns, `rss` among
+  them (ADR-0024).
 
 ## Alternatives considered
 

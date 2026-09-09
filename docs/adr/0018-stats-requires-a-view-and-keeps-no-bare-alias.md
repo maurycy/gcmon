@@ -1,7 +1,9 @@
 # ADR-0018: Require a value on `--stats`, and keep no bare alias
 
 - **Status:** Accepted
-- **Date:** 2026-08-18
+- **Date:** 2026-08-18, amended:
+  - 2026-08-22: `GCMON_FORMAT` took the same shape, see
+    [ADR-0021](0021-write-one-trace-format.md)
 
 ## Context
 
@@ -83,11 +85,12 @@ variable sets a default for every run in the shell, and `--stats=no` declines
 it for one. `GCMON_RSS` has the same shape and no such escape, since `--rss`
 is a `store_true` with no off spelling.
 
-`GCMON_STATS` becomes the only gcmon environment variable that can fail a run.
-Every other `get_env_*` falls back on an unreadable value:
-`GCMON_FORMAT=bogus` yields `chrome`, `GCMON_TABLE_FORMAT=bogus` yields plain.
-A variable selecting between two named views has no default that is one of
-them.
+`GCMON_STATS` is the first gcmon environment variable that can fail a run.
+Every other `get_env_*` fell back on an unreadable value: `GCMON_FORMAT=bogus`
+yielded the default format, `GCMON_TABLE_FORMAT=bogus` yields plain. A
+variable selecting between two named views has no default that is one of them.
+[ADR-0021](0021-write-one-trace-format.md) took this shape for `GCMON_FORMAT`
+four days later, and cites this record for it.
 
 Reversing this costs more than deleting a check. Re-admitting bare `--stats`
 means choosing which view it prints, a decision nobody has had to make yet.
@@ -135,12 +138,12 @@ capture that prints no table at the end.
 
 ## Implementation
 
-`src/gcmon/cli/monitor/monitoring_options.py` declares `--stats` and refuses
-a bad `GCMON_STATS`; `src/gcmon/cli/monitor/_env.py` reads the raw value. The refusal
-does not sit with the reading, because every `get_env_*` runs while the parser
-is being built, before logging is configured. The options builder turns it
-down instead, alongside `rate`, `duration` and `flush_threshold`, once logging
-exists.
+`src/gcmon/cli/monitor/monitoring_options.py` declares `--stats` and refuses a
+bad `GCMON_STATS`; `src/gcmon/cli/monitor/_env.py` reads the raw value. The
+refusal does not sit with the reading, because every `get_env_*` runs while
+the parser is being built, before logging is configured. The options builder
+turns it down instead, alongside `rate`, `duration` and `flush_threshold`,
+once logging exists.
 
 `StatsView` in `src/gcmon/stats/views.py` holds the view, beside the
 `TableFormat` behind `--table-format`, and each member's value is the word the

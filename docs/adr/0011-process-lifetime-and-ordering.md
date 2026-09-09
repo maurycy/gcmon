@@ -132,9 +132,8 @@ the trace processor the suite pins in `tests.perfetto_prebuilt`.
 passes record spans and emit nothing. Two reasons the BEGIN cannot go out
 earlier: keeping the track laminar needs every pid's span in hand at once, and
 a clip discovered at close cannot correct a BEGIN already written. Nor could
-the END, since `PerfettoExporter` flushes in chunks of `flush_threshold`
-(default 1000) and Perfetto pairs a BEGIN with the **first** matching END,
-orphaning the rest.
+the END, since `PerfettoExporter` flushes in chunks of `flush_threshold` and
+Perfetto pairs a BEGIN with the **first** matching END, orphaning the rest.
 
 **Spans are clipped to a laminar set.** Sorted by ascending start, ties broken
 by longer span first and then by process, a stack sweep pulls each crossed

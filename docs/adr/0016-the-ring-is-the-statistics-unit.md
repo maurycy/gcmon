@@ -2,6 +2,8 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-15, amended:
+  - 2026-08-26: `heap_size` gained its interpreter on the trace, see
+    [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)
   - 2026-08-31: the epoch moved onto a `Process` the monitor creates, see
     [ADR-0025](0025-create-every-process-in-one-place.md)
   - 2026-09-01: the track keys it cites became per process, see
@@ -37,11 +39,14 @@ so the fix belongs in the key.
 
 ## Decision
 
-**The ring is the unit statistics are keyed on and reported for.**
-`gcmon.stats.streaming_stats` keys sampled metrics, loss and lifetime totals
-on `(pid, iid, gen)`, the key `gcmon.model.loss` uses for its accumulators and
-the one the exporters draw. gcmon folds when it reads a figure, so a ring's
-own number and a roll-up over rings both stay available.
+**The ring is the unit statistics are reported for.**
+`gcmon.stats.streaming_stats` holds one entry per `(process, iid)`, the pair a
+`Track` names ([ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md),
+[ADR-0025](0025-create-every-process-in-one-place.md)), and each entry keeps
+its sampled metrics, loss and lifetime totals in a dict per generation. A ring
+is one of those generations, and the three settle together because one entry
+holds them. gcmon folds when it reads a figure, so a ring's own number and a
+roll-up over rings both stay available.
 
 **The `--stats` table prints two levels: the run, and the ring.** `Total`
 stays, the one answer to what a run cost. The per-process block goes, its rows
@@ -119,11 +124,12 @@ summed over:
 ```
 
 **Process-wide quantities stay keyed per process.** `heap_size` has no
-generation and no thread affinity
-([ADR-0004](0004-toplevel-shared-counters.md)), so its high-water mark is
-taken per process, and two processes that shared a pid keep a mark each. The
-end-of-run summary and the coverage footnote stay run-wide, the scope `Total`
-reports.
+generation, so no ring owns one, and its high-water mark is taken per process,
+with two processes that shared a pid keeping a mark each. The trace draws it
+per interpreter instead, `Thread {iid} heap_size`
+([ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)), so the two
+sides fold it differently. The end-of-run summary and the coverage footnote
+stay run-wide, the scope `Total` reports.
 
 ## Consequences
 

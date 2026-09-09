@@ -2,6 +2,8 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-17, amended:
+  - 2026-08-22: the pinned trace became the Perfetto one, see
+    [ADR-0021](0021-write-one-trace-format.md)
   - 2026-08-31: the process registry joined the state the prune owns, see
     [ADR-0025](0025-create-every-process-in-one-place.md)
 
@@ -93,7 +95,9 @@ cursor and re-exports its whole ring.
   was right. Both halves of policy-stays-cursors-go are covered, since a test
   watching one half passes with the other inverted.
 - `tests/monitoring/test_monitored_run_trace.py` runs the whole loop over the
-  capture in `tests/captures.py` on a scripted clock and pins the Chrome
-  output against `tests/fixtures/monitored_run_chrome_trace.json`. Written
-  before this change and passed through it untouched, which is the evidence
-  that operators see the same trace.
+  capture in `tests/captures.py` on a scripted clock and pins the output
+  against `tests/fixtures/monitored_run_perfetto_trace.txt`, read back through
+  Perfetto's own generated schema
+  ([ADR-0014](0014-perfetto-integration-test-strategy.md)). Written before
+  this change and passed through it untouched, which is the evidence that
+  operators see the same trace.

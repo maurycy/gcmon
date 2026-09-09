@@ -63,16 +63,20 @@ the two previous implementations were reaching for and missing.
 
 The split settled three further questions:
 
-- **The seen-pid set lives in the base, not the encoder.** The base is the
-  single source of truth for "have we seen this pid/iid?". The encoder can
-  therefore rely on exactly one `ProcessMeta` per pid arriving, which means it
-  registers a cmdline at most once per pid, and the previous
-  double-checked-locking dance around that registration is gone.
-- **Cmdline registration runs under the I/O lock.** The old design ran the
-  slow `psutil.Process(pid).cmdline()` call outside any lock to avoid
-  serializing threads. It now runs inside `write_events`, which the base
-  serializes. Accepted: the cost is paid at most once per pid, because of the
-  point above.
+- **The seen-pid set lived in the base, not the encoder**, which is what let
+  the encoder rely on exactly one `ProcessMeta` per pid arriving, register a
+  cmdline at most once, and drop the double-checked-locking dance around that
+  registration. The set followed meta building to the encoder
+  ([ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)), where
+  `PerfettoTrackState` holds it.
+- **Cmdline registration ran under the I/O lock.** The old design ran the slow
+  `psutil.Process(pid).cmdline()` call outside any lock to avoid serializing
+  threads, which is what needed the double-checked locking. Moving it inside
+  `write_events` cost one serialized call per pid. The monitor reads it now,
+  once, where it creates the process
+  ([ADR-0010](0010-process-identity-cmdline-and-start-marker.md),
+  [ADR-0025](0025-create-every-process-in-one-place.md)), and the encoder only
+  records what arrives.
 - **`JsonEventEncoder` wrote `[]\n` on close only if nothing was ever
   written.** If any `write_events` succeeded it wrote `\n]\n` instead. Both
   paths produced a valid JSON array. `ProtobufEventEncoder` writes no file at
@@ -81,7 +85,7 @@ The split settled three further questions:
 ## Consequences
 
 - A new output format is an `EventEncoder` implementation. No lifecycle,
-  locking or dedup code to copy. [ADR-0012](0012-trace-output-formats.md)'s
+  locking or dedup code to copy. [ADR-0021](0021-write-one-trace-format.md)'s
   `combine --output-format perfetto` reuses `ProtobufEventEncoder` directly,
   outside any exporter, because the protocol has no dependency on the base
   class.
@@ -110,10 +114,10 @@ The split settled three further questions:
 
 ## Implementation
 
-- `src/gcmon/exporters/_buffered_exporter.py` builds a pid's meta events with
-  the check-and-emit inside one critical section under the state lock.
+- `src/gcmon/exporters/perfetto_exporter.py` holds the buffer and the two
+  locks the base held, merged in by this record's amendment.
 - `src/gcmon/exporters/encoder.py` declares the `EventEncoder` protocol, its
-  one implementation, and the cmdline registration that one runs.
+  one implementation, and the command line that one records against a process.
 - Tests: `tests/exporters/test_exporter_thread_safety.py` fires two threads at
   a brand-new pid to pin the dedup race; the structural tests in
   `tests/exporters/test_perfetto_exporter.py` decode the output; the stress

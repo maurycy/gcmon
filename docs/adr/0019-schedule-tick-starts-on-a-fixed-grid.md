@@ -137,9 +137,10 @@ summary rather than the loop.
 - `src/gcmon/stats/stats_output.py` states the tick counts and selects the
   remedy; `src/gcmon/monitoring/monitor.py` carries the advisory that no
   longer prescribes one.
-- `src/gcmon/cli/monitor/_env.py` parses one rate spelling for both `--rate` and
-  `GCMON_RATE`; `src/gcmon/cli/monitor/monitoring_options.py` reports what it
-  rejects and applies the same minimum to a rate arriving from anywhere else.
+- `src/gcmon/cli/monitor/_env.py` parses one rate spelling for both `--rate`
+  and `GCMON_RATE`; `src/gcmon/cli/monitor/monitoring_options.py` reports what
+  it rejects and applies the same minimum to a rate arriving from anywhere
+  else.
 - Tests: `tests/test_schedule.py` for the grid, the skip and the floor,
   asserted on the arithmetic directly; `tests/monitoring/test_monitor_loop.py`
   for the rest, driven by a scripted clock and a stop event that records what

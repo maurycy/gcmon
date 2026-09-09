@@ -32,8 +32,8 @@ Three things followed from the Chrome shape:
 `LossTrack(process, iid)`. The `(pid, tid)` pair and the sentinels go.
 `LossTrack` and `InterpreterTrack` carry the same two fields and name
 different rows. The first field is a `Process`
-([ADR-0025](0025-create-every-process-in-one-place.md)), so a trace can draw two
-processes that shared a pid apart. A capture read back offline carries no
+([ADR-0025](0025-create-every-process-in-one-place.md)), so a trace can draw
+two processes that shared a pid apart. A capture read back offline carries no
 epoch, so `combine` builds every pid a first process.
 
 **The encoder derives every other row from those.** Ahead of the first packet

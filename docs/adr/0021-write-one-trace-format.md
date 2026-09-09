@@ -105,10 +105,12 @@ new output format is a second `EventEncoder` implementation.
   cmdline provider for `combine` on the grounds that "historical pids have no
   cmdline to find"; a reissued pid falsifies that, and the fix is one argument
   at the call site.
-- `TraceEvent` keeps its Chrome-derived shape. It is ADR-0007's
-  format-independent intermediate and the Perfetto converter's input, and
-  reshaping it around Perfetto's own vocabulary is a separate change to the
-  converter, the track state and the loss-slice builder.
+- `TraceEvent` kept its Chrome-derived shape through this change. It is
+  ADR-0007's format-independent intermediate and the Perfetto converter's
+  input, and reshaping it around Perfetto's own vocabulary was a separate
+  change to the converter, the track state and the loss-slice builder, made
+  four days later by
+  [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md).
 - Two tests run on the trace processor now. The whole-run characterization
   pinned Chrome bytes, because Chrome resolved no cmdline and dropped liveness
   on a base-class no-op; the loss-row round trip read the combined output as
@@ -142,8 +144,8 @@ new output format is a second `EventEncoder` implementation.
 - `src/gcmon/cli/monitor/monitoring_options.py` holds `FORMATS`, which the
   parser's `choices` and the `GCMON_FORMAT` refusal both read, and
   `RSS_CAPABLE_FORMATS`.
-- `src/gcmon/cli/monitor/_env.py` holds the `GCMON_FORMAT` reading and the default
-  output path.
+- `src/gcmon/cli/monitor/_env.py` holds the `GCMON_FORMAT` reading and the
+  default output path.
 - `src/gcmon/cli/analyze/convert_cmd.py` holds `combine`'s arguments.
 - `src/gcmon/analysis/combine.py` holds the two output paths and the
   normalization split.

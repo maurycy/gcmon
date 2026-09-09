@@ -7,8 +7,9 @@
 - **Origin:** grilling session, 2026-08-08, recommendation 3
 - **Respects:** [ADR-0003](../docs/adr/0003-gc-metrics-group-track.md)
   (`GC Metrics` group),
-  [ADR-0004](../docs/adr/0004-toplevel-shared-counters.md) (which counters are
-  top-level), [ADR-0005](../docs/adr/0005-counter-y-axis-share-key.md)
+  [ADR-0024](../docs/adr/0024-an-event-names-the-track-it-is-drawn-on.md)
+  (which counters are drawn outside the group),
+  [ADR-0005](../docs/adr/0005-counter-y-axis-share-key.md)
   (`y_axis_share_key`),
   [ADR-0007](../docs/adr/0007-shared-trace-converter-pipeline.md) (one
   conversion pipeline),
@@ -87,11 +88,11 @@ descriptor and OpenTelemetry applies to `otel.dropped_*_count`. A clean
 capture grows no rows.
 
 **Placement:** inside the per-process `GC Metrics` group (ADR-0003), beside
-the existing `collected` / `candidates` / `duration` counters, not top-level:
-ADR-0004 reserves top-level for `heap_size` and `rss`, which are process-wide
-rather than per-generation. Give all three generations the same
-`y_axis_share_key` (ADR-0005) so they share a scale and can be compared by
-eye.
+the existing `collected` / `candidates` / `duration` counters, not outside it:
+what is drawn out there is `heap_size` and whatever a `ProcessTrack` owns
+(ADR-0024), both process-wide rather than per-generation. Give all three
+generations the same `y_axis_share_key` (ADR-0005) so they share a scale and
+can be compared by eye.
 
 **Note on the research this came from.** The grilling session recommended a
 loss counter as insurance against Perfetto summarising away narrow loss

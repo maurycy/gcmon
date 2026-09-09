@@ -4,6 +4,8 @@
 - **Date:** 2026-06-12 (the stress marker), amended:
   - 2026-06-18: trace-processor tests added
   - 2026-08-02: fuzz marker added
+  - 2026-09-02: architecture marker added, see
+    [ADR-0026](0026-two-subsystems-over-a-shared-base.md)
 
 ## Context
 
@@ -39,8 +41,11 @@ module level. The first run downloads the trace-processor binary; later runs
 use the cache.
 
 **Only the optional suites are gated by marker**, registered in
-`pyproject.toml` and deselected by
-`addopts = "-m 'not stress and not benchmark and not fuzz'"`:
+`pyproject.toml` and deselected by the default `addopts`:
+
+```
+-m 'not stress and not benchmark and not fuzz and not architecture'
+```
 
 - `stress`, for probabilistic concurrency tests. CI runs them in a separate
   `stress-test` job (`-m stress --count 20`, plus `-k "control" --count 40`),
@@ -53,6 +58,11 @@ use the cache.
   `--count`; widen coverage by raising the trial count in the test. They earn
   a marker for cost, not flakiness; the trace processor starts once per trial,
   which is seconds rather than the milliseconds the default suite budgets for.
+- `architecture`, for the layer and lock-order checks
+  ([ADR-0026](0026-two-subsystems-over-a-shared-base.md)). CI runs them in a
+  separate `architecture` job. They are deselected for the opposite reason to
+  the other three: they cost nothing and answer a question about structure
+  rather than behaviour, which the rest of the suite cannot fail on.
 
 **The trace is asserted against the events it was built from.** While gcmon
 wrote two formats, the suites were parametrized over Chrome JSON and Perfetto
@@ -128,13 +138,14 @@ do not assert on it.
 ## Implementation
 
 - `pyproject.toml` holds `perfetto` in `[tool.poetry.group.dev.dependencies]`,
-  the `stress`, `benchmark` and `fuzz` marker registrations, and the `addopts`
-  deselection.
+  the four marker registrations, and the `addopts` deselection.
 - `.github/workflows/ci.yml`, the always-on `test` job, plus the separate
-  `stress-test` and `fuzz-test` jobs.
-- `tests/exporters/test_perfetto_emission_order_fuzz.py`, the only
-  `fuzz`-marked file: it pins ADR-0011's emission-order claims, positive case
-  and negative control both.
+  `stress-test`, `fuzz-test` and `architecture` jobs.
+- The two `fuzz`-marked files:
+  `tests/exporters/test_perfetto_emission_order_fuzz.py` pins ADR-0011's
+  emission-order claims, positive case and negative control both, and
+  `tests/exporters/test_perfetto_loss_track.py` settles the loss track's
+  layout ([ADR-0015](0015-gc-loss-spans-on-their-own-track.md)).
 - `tests/exporters/test_perfetto_exporter_integration.py` holds the
   trace-processor fixture and the trace-writing helper.
 - `tests/test_convert_cmd_perfetto.py`, the same approach applied to the

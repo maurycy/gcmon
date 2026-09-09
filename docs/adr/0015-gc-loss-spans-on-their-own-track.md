@@ -2,6 +2,8 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-05, amended:
+  - 2026-08-26: the sentinel tid became a `LossTrack`, see
+    [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)
   - 2026-09-01: the track key became per process, see
     [ADR-0011](0011-process-lifetime-and-ordering.md)
 
@@ -23,12 +25,12 @@ their placement is guesswork.
 
 ## Decision
 
-**Loss spans go on a `GC Loss` track of their own, one per `(process, iid)`,
-at `tid = -2 - iid`.** The `tid = -1` sentinel from
-[ADR-0013](0013-rss-sampling.md) is the precedent, extended to a range. The
-track is a custom slice track parented to the process track, sorting under the
-interpreter's own row. gcmon names no negative tid with a `thread_name`, which
-stops Perfetto from drawing a track as an OS thread that does not exist.
+**Loss spans go on a `GC Loss` track of their own, one per `(process, iid)`.**
+The track is a custom slice track parented to the process track, ranked below
+the interpreter's own row. It carries no `thread_name`, which stops Perfetto
+from drawing a track as an OS thread that does not exist. A `LossTrack` names
+it ([ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)), where a
+sentinel tid extending [ADR-0013](0013-rss-sampling.md)'s did before.
 
 **A span is one poll interval**, from the read before the gap to the read that
 found it, which is the tightest bound available. A record the previous poll
@@ -101,7 +103,7 @@ trace shows.
 **Loss records leave the monitor a poll at a time.** Nothing is retained, so
 no flush is needed when a session stops or a pid goes away and no buffer grows
 over a long run. Emitting there keeps loss inside the shared converter, so
-Chrome, Perfetto and JSONL take it from one place and
+every exporter takes it from one place and
 [ADR-0007](0007-shared-trace-converter-pipeline.md) holds. `combine` can then
 rebuild the spans from a JSONL capture.
 
@@ -160,9 +162,6 @@ survives the ring wrapping.
   closing the wrong span while the trace processor reports
   `misplaced_end_event = 0`. One span per poll cannot produce that shape, so
   the default suite pins the row's flatness rather than leaving it to `fuzz`.
-- **`combine` rebuilds loss spans from JSONL but not from Chrome.** A Chrome
-  trace carries them as slices, so re-converting keeps the drawing and loses
-  the record type.
 - **The intervals either side of the observed span draw nothing.** No poll
   measured a `collections` delta across them, and gcmon cannot tell "ran
   before we attached" from "lost". Both fall outside the span rather than
@@ -217,7 +216,7 @@ survives the ring wrapping.
 - **One track per `(pid, iid, gen)`.** Three rows say what the args say, at
   three times the vertical cost, and a process with several interpreters would
   carry nine.
-- **A flat `-2` for every interpreter.** Rejected: interpreters collect
+- **One row for every interpreter.** Rejected: interpreters collect
   concurrently and one poll bounds all of them, so two interpreters' spans
   would land on one row over the same interval and Perfetto would read the
   pair as nested.
@@ -247,8 +246,8 @@ survives the ring wrapping.
 - `src/gcmon/stats/streaming_stats.py` records every gap.
 - `tests/test_loss.py` and `tests/test_loss_replay.py` check the arithmetic
   against synthetic sessions and a real capture replayed behind a simulated
-  ring. `tests/analysis/test_combine_loss_round_trip.py` resolves the loss
-  row as a stack, live and through `combine`.
+  ring. `tests/analysis/test_combine_loss_round_trip.py` resolves the loss row
+  as a stack, live and through `combine`.
   `tests/exporters/test_perfetto_loss_track.py`, marked `fuzz`, settles the
   track layout against the real trace processor per
   [ADR-0014](0014-perfetto-integration-test-strategy.md).

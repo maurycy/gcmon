@@ -105,24 +105,27 @@ defaults to 1.0 s, independent of the 0.1 s GC poll rate.
   sample and no error. `--rss` on a machine without `psutil` is ignored, with
   one info log.
 - **Perfetto-only.** An RSS sample is a no-op on the `EventsExporter` base and
-  `BufferedTraceExporter` overrides it, so JSONL and stdout carry no RSS.
-  Chrome traces contained the counter event, a side effect of the shared base
-  that nobody validated. The format is gone
-  ([ADR-0021](0021-write-one-trace-format.md)). `RSS_CAPABLE_FORMATS` in the
-  CLI layer names the one format that carries it.
-- Adding `"rss"` to the top-level set brings the accepted trade-off from
-  ADR-0004 with it: its `sibling_order_rank` is dropped because its parent is
-  OS-scoped.
-- The counter payload key is `"rss"` (`{"rss": rss_bytes}`). The event carries
-  a single argument, so the display name normalizes to the metric name and the
-  key never surfaces in the UI.
+  `PerfettoExporter` overrides it, so JSONL and stdout carry no RSS. Chrome
+  traces contained the counter event, a side effect of a shared base that
+  nobody validated; the format and the base are both gone
+  ([ADR-0021](0021-write-one-trace-format.md),
+  [ADR-0008](0008-buffered-exporter-and-encoder-protocol.md)).
+  `RSS_CAPABLE_FORMATS` in the CLI layer names the one format that carries it.
+- **`rss` loses its `sibling_order_rank`.** A `ProcessTrack` owns the counter,
+  so it parents to the OS-scoped process track and the trace processor drops
+  the rank, the trade-off [ADR-0003](0003-gc-metrics-group-track.md)
+  established. Its position in the UI is a heuristic.
+- The metric is `"rss"` and so is the display name the exporter writes beside
+  it ([ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)), so the row
+  reads `rss` and no key surfaces in the UI.
 
 ## Alternatives considered
 
 - **`tid = 0` for the process-level counter.** Rejected: `0` is a legitimate
   interpreter id, so it can collide with a real thread, and meta building
   would manufacture a `ThreadMeta(pid, 0, "Thread 0")` that describes nothing.
-  A negative sentinel cannot collide, and one comparison guards it.
+  A negative sentinel could not collide, and a `ProcessTrack` says the same
+  thing without a number at all (ADR-0024).
 - **Sampling inside `MonitorLoop` at the GC poll rate.** Rejected on cost and
   coupling: ten times the syscalls for a slow-moving metric, and `psutil`
   knowledge pushed into the core loop.
@@ -137,11 +140,10 @@ defaults to 1.0 s, independent of the 0.1 s GC poll rate.
 - `src/gcmon/monitoring/rss_sampler.py` holds `RssSampler`, its
   `tick(now_ns, live)` entry point, the interval check, and the default
   sampler catching `NoSuchProcess` / `AccessDenied`.
-- `src/gcmon/exporters/_buffered_exporter.py` holds the `-1` sentinel, the
-  `iid >= 0` guard that suppresses thread meta for it, and the exporter's RSS
-  sample.
-- `src/gcmon/exporters/perfetto_format.py` carries `"rss"` in the top-level
-  metric set.
+- `src/gcmon/exporters/perfetto_exporter.py` turns a sample into a `Counter`
+  on a `ProcessTrack`. There is no sentinel and no thread meta to suppress.
+- `src/gcmon/exporters/perfetto_format.py` parents a `ProcessTrack`'s counter
+  to the process row, and carries `"rss"` in the rank table.
 - `src/gcmon/monitoring/monitor_loop.py` takes one stamping read per tick and
   hands the instant to the monitor and then to the sampler; the monitor
   collects the live pids and reports liveness
@@ -150,5 +152,5 @@ defaults to 1.0 s, independent of the 0.1 s GC poll rate.
 - `src/gcmon/cli/monitor/_env.py` reads `GCMON_RSS` and `GCMON_RSS_INTERVAL`.
 - Tests: `tests/test_rss_sampler.py` (interval timing, live-pid filtering,
   injected sampler, psutil-unavailable fallback);
-  `tests/exporters/test_buffered_exporter.py` (`iid = -1` emits no
-  `ThreadMeta`); `tests/benchmarks/test_rss_sampler_bench.py` (read latency).
+  `tests/exporters/test_perfetto_counter_tracks.py` (the row the sample lands
+  on); `tests/benchmarks/test_rss_sampler_bench.py` (read latency).

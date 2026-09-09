@@ -86,8 +86,8 @@ _Avoid_: timeline, profile, output file
 One row in a trace. An **event** names the track it is drawn on: a
 **process**'s row for its marks and its RSS, an **interpreter**'s for that
 interpreter's collections, or that interpreter's **loss** row.
-_Avoid_: lane, thread (none of the three is one), tid, row (in output; fine
-in prose)
+_Avoid_: lane, thread (none of the three is one), tid, row (in output; fine in
+prose)
 
 **Process track**:
 A process's own row, and what its other rows hang under: its thread rows, its
@@ -114,10 +114,11 @@ A slice bounding a process's observed lifetime, on the shared `Processes` row
 or on the process's own.
 _Avoid_: lifetime (unqualified; see below), duration, extent
 
-**Intern id**: The number a packet writes in place of a string the trace has
-already spelled out: a slice name, a category, or the name of a debug
-annotation. Perfetto spells it `iid` on the wire and gcmon does not, because
-an **iid** here is an interpreter.
+**Intern id**:
+The number a packet writes in place of a string the trace has already spelled
+out: a slice name, a category, or the name of a debug annotation. Perfetto
+spells it `iid` on the wire and gcmon does not, because an **iid** here is an
+interpreter.
 _Avoid_: iid (that is the interpreter), string id, symbol, handle, reference
 
 ### The things gcmon counts
@@ -149,20 +150,20 @@ _Avoid_: section, group, table (the whole thing is the table), totals (the
 per-ring `PauseTotals` and `LossTotals` are companion figures on a row, and
 lifetime totals are an interval; neither is a block)
 
-**Pid epoch**: Which process held a pid, counting from 1 and advancing when
-gcmon sees one exit. Spelled `pid_epoch`, and part of every key a run keeps to
-the end, so a successor on a recycled pid never writes into its predecessor's
-figures.
+**Pid epoch**:
+Which process held a pid, counting from 1 and advancing when gcmon sees one
+exit. Spelled `pid_epoch`, and part of every key a run keeps to the end, so a
+successor on a recycled pid never writes into its predecessor's figures.
 _Avoid_: index (that is CPython's write cursor into a ring buffer, and nothing
 else), generation (the collector owns it), epoch (bare, reads as a point in
 time)
 
-**Loss window**: An interval whose records were overwritten before any poll
-read them, bounded by the two poll instants either side of it. In a name,
-**loss** is the window itself and **lost** is what was in it: a `LossTrack`
-names the row it is drawn on, `lost_count` the records it swallowed. The
-window has a width of its own, so a `loss_duration` and a `lost_pause_ns` are
-different numbers.
+**Loss window**:
+An interval whose records were overwritten before any poll read them, bounded
+by the two poll instants either side of it. In a name, **loss** is the window
+itself and **lost** is what was in it: a `LossTrack` names the row it is drawn
+on, `lost_count` the records it swallowed. The window has a width of its own,
+so a `loss_duration` and a `lost_pause_ns` are different numbers.
 _Avoid_: missing data, dropped events, gap (in output; fine in prose about the
 arithmetic), `loss_count` for a count of records
 
@@ -183,19 +184,21 @@ or not its record survived to be read. Reconstructed from the target's
 cumulative counters, and exact in the arithmetic sense.
 _Avoid_: true, real, total
 
-**Lifetime totals**: Everything one interpreter has collected since it
-started, monitored window included. Always written with the qualifier: bare
-**lifetime** means the span above, the interval gcmon observed a process over,
-which the `Lifetime` slice on that process's row draws. The source names the
-counters underneath rather than the interval (`CumulativeCounters`,
-`StreamingStats.observe_cumulative`, `cumulative_totals_by_gen`), so the bare
-word is left to the span everywhere outside this prose.
+**Lifetime totals**:
+Everything one interpreter has collected since it started, monitored window
+included. Always written with the qualifier: bare **lifetime** means the span
+above, the interval gcmon observed a process over, which the `Lifetime` slice
+on that process's row draws. The source names the counters underneath rather
+than the interval (`CumulativeCounters`, `StreamingStats.observe_cumulative`,
+`cumulative_totals_by_gen`), so the bare word is left to the span everywhere
+outside this prose.
 _Avoid_: lifetime (bare), cumulative total (the counters underneath are
 cumulative, the interval is not), since-start count
 
-**Observed span**: The interval from the first record gcmon read on a ring to
-the last. What happened before it counts as neither sampled nor lost, because
-gcmon cannot tell "ran before we attached" from "was overwritten".
+**Observed span**:
+The interval from the first record gcmon read on a ring to the last. What
+happened before it counts as neither sampled nor lost, because gcmon cannot
+tell "ran before we attached" from "was overwritten".
 _Avoid_: monitoring window (that is wall time, and wider), capture
 
 ### How complete a capture is
@@ -205,6 +208,7 @@ Sampled count over exact count, in `[0, 1]`. Printed as the `Cov` column and
 as a percentage in the footer and the advisory.
 _Avoid_: completeness, hit rate, fidelity
 
-**Scale factor**: The multiplier taking a sampled pause sum to the exact one.
-Printed as the `F` column. It corrects a sum, never a percentile.
+**Scale factor**:
+The multiplier taking a sampled pause sum to the exact one. Printed as the `F`
+column. It corrects a sum, never a percentile.
 _Avoid_: correction factor, weight, extrapolation

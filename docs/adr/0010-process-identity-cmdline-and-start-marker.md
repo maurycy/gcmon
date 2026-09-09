@@ -26,8 +26,8 @@ trace.
 
 **The process track was often invisible.** The Perfetto UI renders a track's
 `description` only when the track has at least one event on it. The process
-track is OS-scoped and receives events only from `InstantEvent`s, since Begin,
-End and Counter events live on child tracks. A trace with no instant events
+track is OS-scoped, and nothing but an instant was drawn on it then: every
+slice and every counter went on a child track. A trace with no instant events
 for a pid therefore had an empty process track, and the UI hid its
 description.
 

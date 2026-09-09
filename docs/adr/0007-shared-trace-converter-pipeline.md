@@ -28,12 +28,11 @@ A single pipeline `TGCStatsInfo → list[TraceEvent]` lives in
 `src/gcmon/exporters/trace_converter.py`. It owns the only copy of the
 sub-phase logic and the naming strings.
 
-`TraceEvent`, the union of the begin, end, instant and counter events plus
-`ProcessMeta` and `ThreadMeta` in `src/gcmon/model/trace_event.py`, is the
-contract between the converter and the backends. Each backend consumes that
-list and does nothing but encode: Chrome to JSON, Perfetto to protobuf.
-Neither inspects `TGCStatsInfo` fields any more. Track UUID management stays
-where it was, and cmdline handling is untouched.
+`TraceEvent`, the union in `src/gcmon/model/trace_event.py`, is the contract
+between the converter and the backends. Each backend consumes that list and
+does nothing but encode: Chrome to JSON, Perfetto to protobuf. Neither
+inspects `TGCStatsInfo` fields any more. Track UUID management stays where it
+was, and cmdline handling is untouched.
 
 The refactor also settled two behaviours:
 
@@ -53,12 +52,14 @@ exporter-agnostic and keeps the shared converter pure: filter once, emit
 everywhere.
 
 **Amended 2026-08-26 by
-[ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md).** There were meta
-events here, and `ProcessMeta` preceding `ThreadMeta` for a pid was called
-part of the public contract of the event stream. It is not a contract a
-producer keeps any more: an event names the `Track` it is drawn on, the
-encoder derives the descriptors from that, and the ordering follows by
-construction. Everything else here stands.
+[ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md).** The union is
+`Slice | Instant | Counter` now, where it held a begin, an end, an instant, a
+counter and two meta events. `ProcessMeta` preceding `ThreadMeta` for a pid
+was called part of the public contract of the event stream. It is not a
+contract a producer keeps any more: an event names the `Track` it is drawn on,
+the encoder derives the descriptors from that, and the ordering follows by
+construction. A span is one `Slice` carrying both its ends. Everything else
+here stands.
 
 ## Consequences
 
@@ -94,8 +95,8 @@ construction. Everything else here stands.
 
 - `src/gcmon/exporters/trace_converter.py` converts one record, and a whole
   batch, to `TraceEvent`s.
-- `src/gcmon/model/trace_event.py` holds the `TraceEvent` union and its
-  factories.
+- `src/gcmon/model/trace_event.py` holds the `TraceEvent` union and the
+  structs in it.
 - `src/gcmon/exporters/perfetto_format.py` encodes those events, emitting a
   counter track's descriptor and its UUID together so the call site does not
   look the UUID up twice.

@@ -48,10 +48,12 @@ When a share key is set, the `CounterDescriptor` submessage contains **only**
 field 7. No other `CounterDescriptor` field (`type`, `categories`, `unit`,
 `unit_multiplier`, `is_incremental`, `unit_name`) is written.
 
-**`heap_size` and `rss` get no share key.** They are the top-level counters
-from [ADR-0004](0004-toplevel-shared-counters.md), parented to the process
-track, with no peers to share an axis with. A key there would be a no-op, and
-omitting it keeps the wire format minimal.
+**`heap_size` and `rss` get no share key.** Both are drawn on the process
+track rather than inside the group, `heap_size` by the metric set and `rss` by
+the `ProcessTrack` that owns it
+([ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)), so neither has
+a peer to share an axis with. A key there would be a no-op, and omitting it
+keeps the wire format minimal.
 
 ## Consequences
 

@@ -1,7 +1,9 @@
 # ADR-0009: Store `TraceEvent.ts` in nanoseconds; convert at the encoder
 
 - **Status:** Accepted
-- **Date:** 2026-06-25
+- **Date:** 2026-06-25, amended:
+  - 2026-08-26: the factories went with the event types they built, see
+    [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)
 
 ## Context
 
@@ -26,9 +28,8 @@ answer. The question is where the conversion belongs.
 
 ## Decision
 
-`TraceEvent.ts` is nanoseconds. The four event factories take `ts_ns` and
-assign it verbatim. The converter no longer divides; `TGCStatsInfo` values
-flow through unchanged.
+`TraceEvent.ts` is nanoseconds, and so are the two ends a `Slice` carries. The
+converter no longer divides; `TGCStatsInfo` values flow through unchanged.
 
 **Conversion happens at the encoder, once, per format:**
 
@@ -70,8 +71,8 @@ nanoseconds, unless you are looking at bytes on disk.
 
 ## Implementation
 
-- `src/gcmon/model/trace_event.py` holds the four factories, each taking
-  `ts_ns`.
+- `src/gcmon/model/trace_event.py` holds the event structs, whose timestamp
+  fields are nanoseconds throughout.
 - `src/gcmon/support/time_units.py` held the ns→µs conversion until its one
   caller went.
 - `src/gcmon/exporters/perfetto_format.py` passes `event.ts` straight to the
