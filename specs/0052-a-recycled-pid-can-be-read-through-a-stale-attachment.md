@@ -6,10 +6,11 @@
 - **Origin:** spec 0048 section 6, retired, see [RETIRED.md](RETIRED.md);
   filed once [ADR-0020](../docs/adr/0020-attach-to-a-process-once.md) existed
   to cite
-- **Respects:** [ADR-0020](../docs/adr/0020-attach-to-a-process-once.md) (an
-  attachment is dropped on every failed read, and revalidating on each read is
-  rejected), [ADR-0017](../docs/adr/0017-monitor-owns-the-pid-lifecycle.md)
-  (the pid epoch is what keeps a successor out of its predecessor's figures)
+- **Respects:**
+  - [ADR-0020](../docs/adr/0020-attach-to-a-process-once.md): an attachment is
+    dropped on every failed read, and revalidating on each read is rejected.
+  - [ADR-0017](../docs/adr/0017-monitor-owns-the-pid-lifecycle.md): the pid
+    epoch is what keeps a successor out of its predecessor's figures.
 
 ## 1. Problem
 

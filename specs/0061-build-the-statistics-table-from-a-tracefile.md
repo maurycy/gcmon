@@ -6,17 +6,18 @@
 - **Origin:** design session 2026-08-23 on comparing two tracefiles; the
   comparison in spec 0063 needs a table it can build twice
 - **Respects:**
-  [ADR-0001](../docs/adr/0001-hand-rolled-perfetto-protobuf-encoder.md) (the
-  encoder is hand-rolled and `perfetto` stays out of the *monitoring*
-  runtime), [ADR-0026](../docs/adr/0026-two-subsystems-over-a-shared-base.md)
-  (the reader and `report` are analysis-subsystem code, and why `perfetto` on
-  the analysis path is not the decision ADR-0001 took),
-  [ADR-0009](../docs/adr/0009-nanoseconds-canonical-time-unit.md) (nanoseconds
-  inside gcmon),
-  [ADR-0016](../docs/adr/0016-the-ring-is-the-statistics-unit.md) (the ring is
-  the unit),
-  [ADR-0018](../docs/adr/0018-stats-requires-a-view-and-keeps-no-bare-alias.md)
-  (the view words come from one enum)
+  - [ADR-0001](../docs/adr/0001-hand-rolled-perfetto-protobuf-encoder.md): the
+    encoder is hand-rolled and `perfetto` stays out of the *monitoring*
+    runtime.
+  - [ADR-0026](../docs/adr/0026-two-subsystems-over-a-shared-base.md): the
+    reader and `report` are analysis-subsystem code, and why `perfetto` on the
+    analysis path is not the decision ADR-0001 took.
+  - [ADR-0009](../docs/adr/0009-nanoseconds-canonical-time-unit.md):
+    nanoseconds inside gcmon.
+  - [ADR-0016](../docs/adr/0016-the-ring-is-the-statistics-unit.md): the ring
+    is the unit.
+  - [ADR-0018](../docs/adr/0018-stats-requires-a-view-and-keeps-no-bare-alias.md):
+    the view words come from one enum.
 
 ## 1. Problem statement
 

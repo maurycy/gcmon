@@ -6,11 +6,11 @@
 - **Origin:** design session 2026-08-23; pyperf's `compare_to` answers this
   question for benchmark timings and nothing answers it for GC
 - **Respects:**
-  [ADR-0015](../docs/adr/0015-gc-loss-spans-on-their-own-track.md) (a scale
-  factor corrects a sum and never a quantile; the argument extends to the
-  geometric mean),
-  [ADR-0016](../docs/adr/0016-the-ring-is-the-statistics-unit.md),
-  [ADR-0018](../docs/adr/0018-stats-requires-a-view-and-keeps-no-bare-alias.md)
+  - [ADR-0015](../docs/adr/0015-gc-loss-spans-on-their-own-track.md): a scale
+    factor corrects a sum and never a quantile; the argument extends to the
+    geometric mean.
+  - [ADR-0016](../docs/adr/0016-the-ring-is-the-statistics-unit.md)
+  - [ADR-0018](../docs/adr/0018-stats-requires-a-view-and-keeps-no-bare-alias.md)
 
 ## 1. Problem statement
 

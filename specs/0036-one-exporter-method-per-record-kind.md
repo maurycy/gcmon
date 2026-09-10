@@ -7,18 +7,18 @@
   0029 ([RETIRED.md](RETIRED.md)), whose buffering duplication this removes by
   construction; section 4 carries forward every constraint 0029 established.
 - **Respects:**
-  [ADR-0008](../docs/adr/0008-buffered-exporter-and-encoder-protocol.md) (the
-  exporter buffers and the encoder serializes, and a record after `close()` is
-  dropped: sections 4.4 and 4.5),
-  [ADR-0011](../docs/adr/0011-process-lifetime-and-ordering.md) (liveness
-  arrives batched, once per tick: 4.1),
-  [ADR-0013](../docs/adr/0013-rss-sampling.md) (RSS on the process track
-  rather than a thread's: 4.2),
-  [ADR-0015](../docs/adr/0015-gc-loss-spans-on-their-own-track.md) (a loss
-  window is drawn on its own track, which `convert_loss_to_trace_format`
-  decides and 4.1 does not touch),
-  [ADR-0025](../docs/adr/0025-create-every-process-in-one-place.md) (the
-  monitor hands the exporter a `Process`, never a bare pid: 4.1)
+  - [ADR-0008](../docs/adr/0008-buffered-exporter-and-encoder-protocol.md):
+    the exporter buffers and the encoder serializes, and a record after
+    `close()` is dropped: sections 4.4 and 4.5.
+  - [ADR-0011](../docs/adr/0011-process-lifetime-and-ordering.md): liveness
+    arrives batched, once per tick: 4.1.
+  - [ADR-0013](../docs/adr/0013-rss-sampling.md): RSS on the process track
+    rather than a thread's: 4.2.
+  - [ADR-0015](../docs/adr/0015-gc-loss-spans-on-their-own-track.md): a loss
+    window is drawn on its own track, which `convert_loss_to_trace_format`
+    decides and 4.1 does not touch.
+  - [ADR-0025](../docs/adr/0025-create-every-process-in-one-place.md): the
+    monitor hands the exporter a `Process`, never a bare pid: 4.1.
 
 ## 1. Problem statement
 

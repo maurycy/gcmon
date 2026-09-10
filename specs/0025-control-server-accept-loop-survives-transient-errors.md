@@ -6,8 +6,8 @@
 - **Effort:** XS
 - **Origin:** post-v0.2.0 code review (old spec 18, REQ-8)
 - **Respects:**
-  [ADR-0014](../docs/adr/0014-perfetto-integration-test-strategy.md) (stress
-  tests are the only probabilistic suite; do not add a `sleep`)
+  - [ADR-0014](../docs/adr/0014-perfetto-integration-test-strategy.md): stress
+    tests are the only probabilistic suite; do not add a `sleep`.
 
 ## 1. Problem
 

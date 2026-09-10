@@ -6,11 +6,11 @@
 - **Origin:** post-v0.2.0 code review (old spec 18, REQ-2, 7, 9, 10, 11, 12,
   14)
 - **Respects:**
-  [ADR-0001](../docs/adr/0001-hand-rolled-perfetto-protobuf-encoder.md) (wire
-  constants mirror the `.proto`; policy does not),
-  [ADR-0005](../docs/adr/0005-counter-y-axis-share-key.md),
-  [ADR-0011](../docs/adr/0011-process-lifetime-and-ordering.md) (`_io_lock`
-  serializes encoder state)
+  - [ADR-0001](../docs/adr/0001-hand-rolled-perfetto-protobuf-encoder.md):
+    wire constants mirror the `.proto`; policy does not.
+  - [ADR-0005](../docs/adr/0005-counter-y-axis-share-key.md)
+  - [ADR-0011](../docs/adr/0011-process-lifetime-and-ordering.md): `_io_lock`
+    serializes encoder state.
 
 ## 1. Problem statement
 

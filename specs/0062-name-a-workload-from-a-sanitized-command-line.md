@@ -6,13 +6,13 @@
 - **Origin:** design session 2026-08-23 on comparing two tracefiles; the
   comparison in spec 0063 needs rows that mean the same thing in two files
 - **Respects:**
-  [ADR-0010](../docs/adr/0010-process-identity-cmdline-and-start-marker.md)
-  (the command line is a debug annotation on the process slice, and absent
-  where it cannot be read),
-  [ADR-0016](../docs/adr/0016-the-ring-is-the-statistics-unit.md) (the ring
-  stays the unit statistics are accumulated for),
-  [ADR-0018](../docs/adr/0018-stats-requires-a-view-and-keeps-no-bare-alias.md)
-  (the view words come from one enum)
+  - [ADR-0010](../docs/adr/0010-process-identity-cmdline-and-start-marker.md):
+    the command line is a debug annotation on the process slice, and absent
+    where it cannot be read.
+  - [ADR-0016](../docs/adr/0016-the-ring-is-the-statistics-unit.md): the ring
+    stays the unit statistics are accumulated for.
+  - [ADR-0018](../docs/adr/0018-stats-requires-a-view-and-keeps-no-bare-alias.md):
+    the view words come from one enum.
 
 ## 1. Problem statement
 

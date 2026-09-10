@@ -6,9 +6,10 @@
 - **Origin:** reading `Python/remote_debug.h` at 3.15.0b4 while writing
   [Remote reads, per platform](../docs/internals/remote-reads.md), 2026-08-20.
   Unverified on hardware: this was found in the source, not in a run
-- **Respects:** [ADR-0020](../docs/adr/0020-attach-to-a-process-once.md) (an
-  attachment is dropped on every failed read, so the re-attach cadence is what
-  turns a per-attachment leak into growth)
+- **Respects:**
+  - [ADR-0020](../docs/adr/0020-attach-to-a-process-once.md): an attachment is
+    dropped on every failed read, so the re-attach cadence is what turns a
+    per-attachment leak into growth.
 
 ## 1. Problem
 

@@ -8,12 +8,12 @@
   about; see
   [ADR-0024](../docs/adr/0024-an-event-names-the-track-it-is-drawn-on.md).
 - **Respects:**
-  [ADR-0007](../docs/adr/0007-shared-trace-converter-pipeline.md) (one
-  conversion pipeline),
-  [ADR-0008](../docs/adr/0008-buffered-exporter-and-encoder-protocol.md)
-  (`combine` uses an encoder without an exporter),
-  [ADR-0021](../docs/adr/0021-write-one-trace-format.md) (which formats there
-  are)
+  - [ADR-0007](../docs/adr/0007-shared-trace-converter-pipeline.md): one
+    conversion pipeline.
+  - [ADR-0008](../docs/adr/0008-buffered-exporter-and-encoder-protocol.md):
+    `combine` uses an encoder without an exporter.
+  - [ADR-0021](../docs/adr/0021-write-one-trace-format.md): which formats
+    there are.
 
 ## 1. Problem statement
 

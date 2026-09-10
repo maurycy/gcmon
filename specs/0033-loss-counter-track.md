@@ -5,16 +5,17 @@
 - **Kind:** feature (enhancement)
 - **Effort:** S
 - **Origin:** grilling session, 2026-08-08, recommendation 3
-- **Respects:** [ADR-0003](../docs/adr/0003-gc-metrics-group-track.md)
-  (`GC Metrics` group),
-  [ADR-0024](../docs/adr/0024-an-event-names-the-track-it-is-drawn-on.md)
-  (which counters are drawn outside the group),
-  [ADR-0005](../docs/adr/0005-counter-y-axis-share-key.md)
-  (`y_axis_share_key`),
-  [ADR-0007](../docs/adr/0007-shared-trace-converter-pipeline.md) (one
-  conversion pipeline),
-  [ADR-0015](../docs/adr/0015-gc-loss-spans-on-their-own-track.md) (the
-  `GC Loss` track)
+- **Respects:**
+  - [ADR-0003](../docs/adr/0003-gc-metrics-group-track.md): `GC Metrics`
+    group.
+  - [ADR-0024](../docs/adr/0024-an-event-names-the-track-it-is-drawn-on.md):
+    which counters are drawn outside the group.
+  - [ADR-0005](../docs/adr/0005-counter-y-axis-share-key.md):
+    `y_axis_share_key`.
+  - [ADR-0007](../docs/adr/0007-shared-trace-converter-pipeline.md): one
+    conversion pipeline.
+  - [ADR-0015](../docs/adr/0015-gc-loss-spans-on-their-own-track.md): the
+    `GC Loss` track.
 
 ## 1. Problem statement
 

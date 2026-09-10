@@ -8,8 +8,8 @@
 - **Origin:** built while implementing GC event loss detection, now
   [ADR-0015](../docs/adr/0015-gc-loss-spans-on-their-own-track.md)
 - **Respects:**
-  [ADR-0015](../docs/adr/0015-gc-loss-spans-on-their-own-track.md) (what gcmon
-  reconstructs from an incomplete sample)
+  - [ADR-0015](../docs/adr/0015-gc-loss-spans-on-their-own-track.md): what
+    gcmon reconstructs from an incomplete sample.
 
 ## 1. Summary
 

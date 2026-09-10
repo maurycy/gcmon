@@ -4,9 +4,11 @@
 - **Kind:** feature (cleanup)
 - **Effort:** M
 - **Origin:** code structure review of `src/gcmon`, 2026-08-15
-- **Respects:** [ADR-0021](../docs/adr/0021-write-one-trace-format.md) (which
-  formats exist), [ADR-0013](../docs/adr/0013-rss-sampling.md) (RSS behind a
-  flag with an interval)
+- **Respects:**
+  - [ADR-0021](../docs/adr/0021-write-one-trace-format.md): which formats
+    exist.
+  - [ADR-0013](../docs/adr/0013-rss-sampling.md): RSS behind a flag with an
+    interval.
 
 ## 1. Problem statement
 

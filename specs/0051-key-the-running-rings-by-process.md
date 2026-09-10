@@ -6,12 +6,12 @@
 - **Origin:** 0039 section 4.6, moved out 2026-08-19; 0046 raised it and left
   it open ([RETIRED.md](RETIRED.md))
 - **Respects:**
-  [ADR-0016](../docs/adr/0016-the-ring-is-the-statistics-unit.md) (the ring is
-  the unit statistics are kept in),
-  [ADR-0017](../docs/adr/0017-monitor-owns-the-pid-lifecycle.md) (per-pid
-  state has one owner and one prune),
-  [ADR-0025](../docs/adr/0025-create-every-process-in-one-place.md) (a
-  `Process` is what identifies a target, and it carries the pid epoch)
+  - [ADR-0016](../docs/adr/0016-the-ring-is-the-statistics-unit.md): the ring
+    is the unit statistics are kept in.
+  - [ADR-0017](../docs/adr/0017-monitor-owns-the-pid-lifecycle.md): per-pid
+    state has one owner and one prune.
+  - [ADR-0025](../docs/adr/0025-create-every-process-in-one-place.md): a
+    `Process` is what identifies a target, and it carries the pid epoch.
 
 ## 1. Problem statement
 

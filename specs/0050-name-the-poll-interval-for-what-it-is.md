@@ -4,11 +4,12 @@
 - **Kind:** feature (ergonomics)
 - **Effort:** S
 - **Origin:** split out of spec 0049, 2026-08-17; 0049 landed the same day
-- **Respects:** [ADR-0013](../docs/adr/0013-rss-sampling.md) (`--rss-interval`
-  is decoupled from the poll interval and stays a separate option),
-  [ADR-0019](../docs/adr/0019-schedule-tick-starts-on-a-fixed-grid.md) (the
-  interval is between tick starts; this renames the number, not what the loop
-  does with it)
+- **Respects:**
+  - [ADR-0013](../docs/adr/0013-rss-sampling.md): `--rss-interval` is
+    decoupled from the poll interval and stays a separate option.
+  - [ADR-0019](../docs/adr/0019-schedule-tick-starts-on-a-fixed-grid.md): the
+    interval is between tick starts; this renames the number, not what the
+    loop does with it.
 
 ## 1. Problem statement
 

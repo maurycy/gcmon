@@ -6,13 +6,13 @@
 - **Origin:** carried over from the pre-2026-08 spec set (old spec 20),
   rewritten
 - **Respects:**
-  [ADR-0010](../docs/adr/0010-process-identity-cmdline-and-start-marker.md)
-  (cmdline as a debug annotation on the process slice),
-  [ADR-0011](../docs/adr/0011-process-lifetime-and-ordering.md) (the
-  `Processes` track and its slices),
-  [ADR-0021](../docs/adr/0021-write-one-trace-format.md) (`--format` takes
-  `perfetto`, `jsonl` and `stdout`, and a Perfetto-only feature is allowed to
-  be Perfetto-only)
+  - [ADR-0010](../docs/adr/0010-process-identity-cmdline-and-start-marker.md):
+    cmdline as a debug annotation on the process slice.
+  - [ADR-0011](../docs/adr/0011-process-lifetime-and-ordering.md): the
+    `Processes` track and its slices.
+  - [ADR-0021](../docs/adr/0021-write-one-trace-format.md): `--format` takes
+    `perfetto`, `jsonl` and `stdout`, and a Perfetto-only feature is allowed
+    to be Perfetto-only.
 
 ## 1. Problem statement
 

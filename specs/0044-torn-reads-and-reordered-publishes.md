@@ -10,10 +10,10 @@
   `## What gcmon trusts the target for`, which names both hazards and
   mitigates neither
 - **Respects:**
-  [ADR-0015](../docs/adr/0015-gc-loss-spans-on-their-own-track.md) (what gcmon
-  reconstructs from an incomplete sample),
-  [0024](0024-cpython-report-remote-readable-gc-stats.md) (the upstream report
-  both hazards come from)
+  - [ADR-0015](../docs/adr/0015-gc-loss-spans-on-their-own-track.md): what
+    gcmon reconstructs from an incomplete sample.
+  - [0024](0024-cpython-report-remote-readable-gc-stats.md): the upstream
+    report both hazards come from.
 
 ## 1. Problem
 

@@ -5,10 +5,10 @@
 - **Effort:** L
 - **Origin:** code structure review of `src/gcmon`, 2026-08-15
 - **Respects:**
-  [ADR-0007](../docs/adr/0007-shared-trace-converter-pipeline.md) (one
-  conversion pipeline; this extends its decision rather than changing it),
-  [ADR-0009](../docs/adr/0009-nanoseconds-canonical-time-unit.md) (nanoseconds
-  internally)
+  - [ADR-0007](../docs/adr/0007-shared-trace-converter-pipeline.md): one
+    conversion pipeline; this extends its decision rather than changing it.
+  - [ADR-0009](../docs/adr/0009-nanoseconds-canonical-time-unit.md):
+    nanoseconds internally.
 
 ## 1. Problem statement
 

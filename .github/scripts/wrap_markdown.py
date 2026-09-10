@@ -37,6 +37,10 @@ is reported and left alone; put it in a fence instead.
 The tool compares the word sequence and the verbatim lines before and after,
 and writes nothing when either moved. Pass ``--check`` to report without
 writing, which is what CI would call.
+
+A line still over the width once a file is wrapped is over on one unbreakable
+token, a link or a URL, since anything else would have been broken. Those are
+counted when the file is written and never fail the run.
 """
 
 from __future__ import annotations

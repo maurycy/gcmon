@@ -7,12 +7,12 @@
   statistic `compare` needs (spec 0063) turned out to be missing from the
   table it would be comparing
 - **Respects:**
-  [ADR-0015](../docs/adr/0015-gc-loss-spans-on-their-own-track.md) (a scale
-  factor corrects a sum and never a quantile),
-  [ADR-0016](../docs/adr/0016-the-ring-is-the-statistics-unit.md) (the ring is
-  the unit statistics are reported for),
-  [ADR-0018](../docs/adr/0018-stats-requires-a-view-and-keeps-no-bare-alias.md)
-  (the view words come from one enum)
+  - [ADR-0015](../docs/adr/0015-gc-loss-spans-on-their-own-track.md): a scale
+    factor corrects a sum and never a quantile.
+  - [ADR-0016](../docs/adr/0016-the-ring-is-the-statistics-unit.md): the ring
+    is the unit statistics are reported for.
+  - [ADR-0018](../docs/adr/0018-stats-requires-a-view-and-keeps-no-bare-alias.md):
+    the view words come from one enum.
 
 ## 1. Problem statement
 

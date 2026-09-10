@@ -4,10 +4,12 @@
 - **Kind:** feature (cleanup)
 - **Effort:** S
 - **Origin:** code structure review of `src/gcmon`, 2026-08-15
-- **Respects:** [ADR-0011](../docs/adr/0011-process-lifetime-and-ordering.md)
-  (a monitored pid's lifetime),
-  [ADR-0021](../docs/adr/0021-write-one-trace-format.md); neither is affected;
-  listed because both name the monitored process
+- **Respects:**
+  - [ADR-0011](../docs/adr/0011-process-lifetime-and-ordering.md): a monitored
+    pid's lifetime. Not affected, and listed because it names the monitored
+    process.
+  - [ADR-0021](../docs/adr/0021-write-one-trace-format.md): not affected, and
+    listed for the same reason.
 
 ## 1. Problem statement
 
