@@ -820,6 +820,56 @@ class TestTrackDescriptors:
         for iid in (0, 1, 2):
             assert f"Thread {iid}" in rows, f"missing 'Thread {iid}' in DEFAULT_PID's threads; got {sorted(rows)}"
 
+    def test_thread_tid_is_the_interpreter_id(
+        self,
+        trace_processor: TraceProcessor,
+    ) -> None:
+        """``thread.tid`` is the interpreter id for every interpreter, so a
+        query attributes GC activity to one without asking which row it is
+        (ADR-0011).
+        """
+        rows = list(
+            trace_processor.query(
+                "SELECT p.name AS pname, th.name AS tname, th.tid AS tid "
+                "FROM thread th JOIN process p ON th.upid = p.upid "
+                "WHERE th.name LIKE 'Thread %' ORDER BY p.name, th.name"
+            )
+        )
+
+        assert [(r.pname, r.tname, r.tid) for r in rows] == [
+            (f"Process {DEFAULT_PID}", "Thread 0", 0),
+            (f"Process {DEFAULT_PID}", "Thread 1", 1),
+            (f"Process {DEFAULT_PID}", "Thread 2", 2),
+            (f"Process {_SECOND_PID}", "Thread 0", 0),
+        ], f"unexpected thread rows: {[dict(r.__dict__) for r in rows]}"
+
+    def test_the_trace_processor_keeps_a_thread_whose_tid_is_the_pid(
+        self,
+        trace_processor: TraceProcessor,
+    ) -> None:
+        """A process descriptor gives the trace processor a thread carrying
+        the row's pid as its ``tid``, and that is the thread it calls the
+        process's main one. Row pids count from 1 and interpreter ids from 0,
+        so it is an interpreter of gcmon's wherever the two numberings meet,
+        and a nameless row with no ``thread_track`` wherever they do not.
+        Which interpreter it lands on says nothing about that interpreter.
+        """
+        rows = list(
+            trace_processor.query(
+                "SELECT p.name AS pname, COALESCE(th.name, '') AS tname, th.tid AS tid, "
+                "(tt.id IS NULL) AS untracked "
+                "FROM thread th JOIN process p ON th.upid = p.upid "
+                "LEFT JOIN thread_track tt ON tt.utid = th.utid "
+                "WHERE th.is_main_thread = 1 AND p.name LIKE 'Process %' "
+                "ORDER BY p.name, th.tid"
+            )
+        )
+
+        assert [(r.pname, r.tname, r.tid, r.untracked) for r in rows] == [
+            (f"Process {DEFAULT_PID}", "Thread 1", 1, 0),
+            (f"Process {_SECOND_PID}", "", 2, 1),
+        ], f"unexpected main-thread rows: {[dict(r.__dict__) for r in rows]}"
+
 
 class TestDiagnosticTrackSchema:
     """Diagnostic: dump the track table to understand what columns are
@@ -840,11 +890,6 @@ class TestDiagnosticTrackSchema:
         rows = list(trace_processor.query("SELECT * FROM process"))
         for r in rows:
             print(f"PROCESS {dict(r.__dict__)}")
-
-    def test_dump_thread_table(self, trace_processor: TraceProcessor) -> None:
-        rows = list(trace_processor.query("SELECT * FROM thread"))
-        for r in rows:
-            print(f"THREAD {dict(r.__dict__)}")
 
 
 class TestInstantEvents:
@@ -1857,13 +1902,13 @@ class TestReusedPidDrawsTwoOfEveryRow:
         self,
         reused_pid_trace_processor: TraceProcessor,
     ) -> None:
-        """Each thread carries the ``tid`` of its own process's row, which
-        is what puts interpreter 0 under the right one: a tid equal to the
-        operating system's pid would name a main thread both processes
-        claim (ADR-0011)."""
+        """Both processes run an interpreter 0 and so share a ``tid``. What
+        keeps their pauses apart is the thread row: a ``utid`` each, under a
+        ``upid`` each, since the descriptor names the row pid gcmon counted
+        for that process (ADR-0011)."""
         rows = list(
             reused_pid_trace_processor.query(
-                f"SELECT p.name AS pname, th.utid AS utid, th.tid AS tid, s.ts AS ts "
+                f"SELECT p.name AS pname, th.utid AS utid, th.upid AS upid, th.tid AS tid, s.ts AS ts "
                 f"FROM slice s "
                 f"JOIN thread_track tt ON s.track_id = tt.id "
                 f"JOIN thread th ON tt.utid = th.utid "
@@ -1877,8 +1922,8 @@ class TestReusedPidDrawsTwoOfEveryRow:
             (_REUSE_SECOND_NAME, _REUSE_SECOND_START),
         ]
         assert len({r.utid for r in rows}) == 2, f"expected a thread row per process, got {rows}"
-        assert len({r.tid for r in rows}) == 2, f"two processes share a main-thread tid: {rows}"
-        assert _REUSED_PID not in {r.tid for r in rows}
+        assert len({r.upid for r in rows}) == 2, f"expected a process row per process, got {rows}"
+        assert {r.tid for r in rows} == {0}, f"each pause is interpreter 0's, so each tid is 0: {rows}"
 
     def test_each_process_draws_its_counters_on_its_own_tracks(
         self,
