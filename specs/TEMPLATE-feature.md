@@ -13,7 +13,9 @@
 - **Effort:** XS | S | M | L
 - **Origin:** `<where this came from>`
 - **Respects:**
-  `<ADR links whose decisions this must not contradict, or "none">`
+  - `<ADR link>`: `<what it constrains here, and which clause this work amends
+    if it amends one>`
+  - `<one bullet per record, or the whole field is "none">`
 
 ## 1. Problem statement
 

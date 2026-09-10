@@ -72,6 +72,12 @@ Links run from an ADR to a page, never back: a page names no ADR and no spec.
 
 - Numbers measured on one machine: a collection rate, a bar's width, an error
   bound. They date the text to the machine that produced them.
+- A count of the list beside it. It derives one fact twice with nothing to
+  keep the halves agreeing (`specs/CONVENTIONS.md` rule 8), and a reader can
+  check a name where a bare number tells them nothing. "The pause row, the
+  loss row and the `heap_size` counter are renamed" beats "three track names
+  change". A count that is the measurement stays: two hops to reach a track's
+  owner, N interpreters and N groups.
 - The journey. What was searched, what broke, what was tried. The decision is
   the part worth keeping, and the record already holds it.
 - A clause after the claim giving its reason or its use, whatever it opens

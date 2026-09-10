@@ -50,7 +50,10 @@ tower, a side or a half. Timestamps are nanoseconds inside gcmon, and the
 encoder converts them
 ([ADR-0009](../docs/adr/0009-nanoseconds-canonical-time-unit.md)). Link the
 ADRs a spec must not contradict in its header, and if implementing it
-overturns one, amend the ADR rather than the code alone.
+overturns one, amend the ADR rather than the code alone. Give each record its
+own bullet under `Respects:` rather than a comma run, with what it constrains
+beside it: a sentence naming four records leaves no room to say which one the
+work amends.
 
 **5. Say what is out of scope**, with the reason for each; that is what keeps
 a spec landable. An alternative left open ("the implementer picks one") is a
@@ -65,10 +68,10 @@ reader you did not write.
 
 **7. Run the design against every ADR you linked.** Rule 4 says to link the
 ADRs a spec must not contradict. Linking is the cheap half: check the design
-against each one before you write section 4, and name there what each
-constrains. The failure this catches is a spec defeated by a record in its own
-header. A record you cannot write that line for is one you listed without
-reading.
+against each one before you write section 4, and name what each constrains, in
+its `Respects:` bullet or in section 4. The failure this catches is a spec
+defeated by a record in its own header. A record you cannot write that line
+for is one you listed without reading.
 
 **8. Derive a fact once, rather than twice with a test between them.** A spec
 that computes the same fact in two places and proposes a test to keep them
