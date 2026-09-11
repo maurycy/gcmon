@@ -29,6 +29,8 @@
   - 2026-09-02: a rank became one draw off a counter
   - 2026-09-02: a row moved off the operating system's pid onto one gcmon
     counts
+  - 2026-09-11: the thread descriptor went, see
+    [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
 
 ## Context
 
@@ -84,12 +86,14 @@ share a BEGIN.
 - Perfetto-only. JSONL is unchanged.
 
 **A root `TrackDescriptor` at `uuid = 0`** is emitted once per trace with
-`process_ordering = EXPLICIT` and `thread_ordering = EXPLICIT` (fields 19 and
-20) and nothing else: no name, no parent, no sub-message. The UI reads the two
-hints only on the canary channel of `ui.perfetto.dev` (Flags -> Release
-channel -> Canary), and a trace processor older than 0.57 ignores them and
-orders tracks its own way. gcmon writes them whatever the reader, so a trace
-stays forward-compatible.
+`process_ordering = EXPLICIT` (field 19) and nothing else: no name, no parent,
+no sub-message. There is no thread ordering to ask for, since nothing gcmon
+draws is a thread track
+([ADR-0027](0027-group-every-row-an-interpreter-owns.md)). The UI reads the
+hint only on the canary channel of `ui.perfetto.dev` (Flags -> Release channel
+-> Canary), and a trace processor older than 0.57 ignores it and orders tracks
+its own way. gcmon writes it whatever the reader, so a trace stays
+forward-compatible.
 
 **Process tracks are ranked by first observation**, ties broken by ascending
 process, sequential from 0. Every process with a recorded span gets a rank,
@@ -119,18 +123,17 @@ from its own first observation.** The trace processor keys process identity on
 do not reliably draw a row each.
 
 **A row is written under a pid gcmon counts from 1, not the operating
-system's.** The thread descriptor carries that pid, and the `tid` beside it is
-the interpreter id, interpreter 0 included. The trace processor reads a
-thread's process off the descriptor's pid, so the `tid` says nothing but which
-interpreter. `thread.is_main_thread` is the price: the trace processor sets it
-from a `tid` equal to the pid, so the flag goes to whichever interpreter's id
-equals its process's row pid, and in every other process to a nameless row of
-the trace processor's own. No query of gcmon's reads it. The alternative was a
-`tid` that means an interpreter in one row and a pid in the next.
+system's.** The `ProcessDescriptor` is the only place it reaches the trace:
+gcmon writes no `ThreadDescriptor`, and everything an interpreter owns is a
+plain custom track under that process
+([ADR-0027](0027-group-every-row-an-interpreter-owns.md)). The trace processor
+still builds one nameless thread per process out of that descriptor, with a
+`tid` equal to the pid, and `thread.is_main_thread` marks it. No query of
+gcmon's reads it.
 
-**Every process draws a full set of rows of its own**: process track, thread
-track per interpreter, `GC Loss` track, counter group and `Lifetime` slice,
-named `Process <pid>` and `Process <pid>#N` to match its `Processes` span.
+**Every process draws a full set of rows of its own**: process track, a group
+per interpreter holding that interpreter's rows, and a `Lifetime` slice, named
+`Process <pid>` and `Process <pid>#N` to match its `Processes` span.
 `start_timestamp_ns` stamps a row where its process started. Measured against
 the trace processor the suite pins in `tests.perfetto_prebuilt`.
 
@@ -261,9 +264,9 @@ yet, and two crossing slices on one track come back at widths neither was
 given with nothing reported.
 
 The Perfetto UI hides a row holding no events, so a bar that never reached the
-file takes its whole row with it, thread rows and all. A process already
-retired keeps its row; one still running does not, and neither does the
-minimap.
+file takes its whole row with it, its interpreters' rows and all. A process
+already retired keeps its row; one still running does not, and neither does
+the minimap.
 
 The exception is the control plane, which files an instant by timestamp and
 can still name a retired process (ADR-0025). One arriving after the row was
@@ -372,7 +375,7 @@ iteration.
 - **A zero-GC process draws a full row**, since the monitor reads its command
   line when it creates the process rather than on the encoder's write
   ([ADR-0010](0010-process-identity-cmdline-and-start-marker.md)) and
-  finalization gives it a descriptor off its span alone. Only the thread rows,
+  finalization gives it a descriptor off its span alone. Only the pause rows,
   the loss rows and the counters are missing, because it produced nothing to
   draw on them.
 - **Deep nesting is now the normal shape.** Processes still alive when the
@@ -489,7 +492,7 @@ iteration.
 - **Fixing the command line alone**, the one field that was wrong rather than
   merged: the `#2` span and the track above it named different programs.
   Rejected: there is no correct value to write into a field two processes
-  share, and the thread row, the counters, the start stamp and the lifetime
+  share, and the pause row, the counters, the start stamp and the lifetime
   slice stay merged behind it.
 - **Emitting liveness as a `TraceEvent`.** Rejected: at 10 Hz × N pids, a
   60-second run with ten children carries ~6,000 extra events, visible on the
@@ -518,10 +521,9 @@ iteration.
   it at the flush after its tick closes. Rejected: it buys ordering across
   groups at the price of the rows a killed run keeps
   ([ADR-0010](0010-process-identity-cmdline-and-start-marker.md)), and only
-  the whole subtree can move. A process descriptor arriving after its own
-  thread descriptor loses the per-process split, since the pid is already
-  bound to a row, and a counter event on a track described later is dropped
-  outright.
+  the whole subtree can move. A process descriptor arriving after the rows
+  beneath it loses the per-process split, since the pid is already bound to a
+  row, and a counter event on a track described later is dropped outright.
 
 ## Implementation
 
@@ -530,11 +532,10 @@ iteration.
   the finalization the encoder calls at close. The root and the process
   descriptors live there because finalization writes them, a process known
   only from liveness being described there or nowhere.
-- `src/gcmon/exporters/perfetto_proto.py` carries `process_ordering` at field
-  19 and `thread_ordering` at field 20. Fields 6 and 7 on the same message are
-  `chrome_process` and `chrome_thread`, so a wrong number writes a different
-  message and fails silently
-  ([ADR-0001](0001-hand-rolled-perfetto-protobuf-encoder.md)).
+- `src/gcmon/exporters/perfetto_proto.py` carries the `process_ordering` field
+  number, 19. Fields 6 and 7 on the same message are `chrome_process` and
+  `chrome_thread`, so a wrong number writes a different message and fails
+  silently ([ADR-0001](0001-hand-rolled-perfetto-protobuf-encoder.md)).
 - `src/gcmon/exporters/perfetto_track_state.py` holds the span accumulator,
   the ranks and the row pids. Every key it holds is filed under the process,
   which is what splits the rows a reused pid draws.

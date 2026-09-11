@@ -16,20 +16,22 @@ deflate capture opens on any Perfetto.
 
 *A gcmon capture in the Perfetto UI.*
 
-A trace carries these, on one track per interpreter:
+A trace carries these:
 
-- **`GC Pause(gen)` slices**, one per GC run gcmon read, carrying that run's
-  counters as args.
+- **`GC Pauses` track**: one row per interpreter, under that interpreter's
+  group, holding one **`GC Pause(gen)` slice** per GC run gcmon read, carrying
+  that run's counters as args.
 - **Sub-step slices** nested inside a pause: Mark Alive, Fill increment,
   Deduce Unreachable, Handle Weakrefs Callbacks, Finalize Garbage, Handle
   Resurrected, Clear Weakrefs, Delete Garbage.
 - **Counter tracks** per generation, `G{gen}`, carrying `collected`,
-  `candidates`, `duration` and `uncollectable`, with `Thread {iid} heap_size`
-  as a process-level counter beside them, one per interpreter.
+  `candidates`, `duration` and `uncollectable`, inside that interpreter's
+  `GC Metrics` group, with `heap_size` beside the group rather than inside it,
+  one per interpreter.
 - **Counter Y-axis sharing**: one metric shares an axis across generations, so
   `G0 collected`, `G1 collected` and `G2 collected` line up.
-- **`GC Loss` track**: one row per interpreter, `GC Loss {iid}`, under that
-  process's own track; see [GC Loss slices](#gc-loss-slices).
+- **`GC Loss` track**: one row per interpreter, `GC Loss`, under that
+  interpreter's group; see [GC Loss slices](#gc-loss-slices).
 - **`rss` counter** per process under `--rss`, in bytes, sampled at
   `--rss-interval` (default 1s).
 - **`Processes` track**: a minimap of the session, one slice per monitored
@@ -40,9 +42,9 @@ A trace carries these, on one track per interpreter:
   width**, which overlapping processes cut short and sometimes to nothing;
   `clipped` says which slices were cut. See [Perfetto SQL](perfetto-sql.md).
 - **One process track per process**, `Process 12345` and `Process 12345#2`,
-  each carrying that process's own pause rows, `GC Loss` rows, counters, start
-  time and command line. The PID on the row is gcmon's, not the operating
-  system's; see [The `Lifetime` slice](#the-lifetime-slice).
+  each carrying that process's own `Python Interpreters` group, counters,
+  start time and command line. The PID on the row is gcmon's, not the
+  operating system's; see [The `Lifetime` slice](#the-lifetime-slice).
 - **Process ordering**: the tracks sort by when gcmon first observed each
   process, earliest at the top, and a process it read no collections from
   takes a position like any other. A process gcmon reaches only after it has
@@ -100,7 +102,8 @@ figure that covers a whole run; see [Statistics](statistics.md).
 
 A target whose collector runs faster than gcmon polls loses records; see
 [How gcmon reads a process](monitoring.md). Each interval gcmon went blind in
-gets one slice on a `GC Loss {iid}` track of its own.
+gets one slice on a `GC Loss` track of its own, under that interpreter's
+group.
 
 **One span per poll interval**, from one read of the target to the next, so
 consecutive spans meet without overlapping and the row reads as a sequence.

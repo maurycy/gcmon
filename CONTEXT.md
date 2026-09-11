@@ -84,21 +84,33 @@ _Avoid_: timeline, profile, output file
 
 **Track**:
 One row in a trace. An **event** names the track it is drawn on: a
-**process**'s row for its marks and its RSS, an **interpreter**'s for that
-interpreter's collections, or that interpreter's **loss** row.
+**process**'s row for its marks and its RSS, an **interpreter**'s **pause
+row** for that interpreter's collections, or its **loss** row.
 _Avoid_: lane, thread (none of the three is one), tid, row (in output; fine in
 prose)
 
+**Interpreter group**:
+The `Interpreter {iid}` row every track one **interpreter** owns hangs under:
+its pause row, its loss row, its `heap_size` and its **counter group**. One
+per **iid**, holding no events of its own.
+_Avoid_: thread group, iid track, interpreter track (that is the pause row)
+
+**Interpreter list**:
+The `Python Interpreters` row holding a process's **interpreter groups**, one
+per process, under the **process track**. The groups inside it sort by
+**iid**.
+_Avoid_: interpreters track, iids group
+
 **Process track**:
-A process's own row, and what its other rows hang under: its thread rows, its
-loss rows, its counter group, and the counters drawn beside the group rather
-than inside it. Named `Process 12345`, or `Process 12345#2` for the second
-process to hold the pid.
+A process's own row, and what its other rows hang under: the list of its
+interpreters, and the counters drawn beside that list rather than inside it.
+Named `Process 12345`, or `Process 12345#2` for the second process to hold the
+pid.
 _Avoid_: process group, pid track, parent track
 
 **Counter group**:
 The `GC Metrics` row a process's per-generation counters hang under, one per
-interpreter, itself under the process track.
+interpreter, itself under that interpreter's group.
 _Avoid_: metrics track, group (unqualified), counter track (that is one
 counter's own row)
 
@@ -133,8 +145,8 @@ _Avoid_: buffer, per-generation stats, slot array
 **Interpreter**:
 One CPython interpreter inside a process, identified by its **iid**. Each
 keeps its own collector, its own rings and its own cumulative counters, and
-gcmon publishes the iid as a Perfetto `tid`. Perfetto's own `iid` on an
-interned string is a different thing; see **Intern id**.
+gcmon draws every row one owns under a group named after its iid. Perfetto's
+own `iid` on an interned string is a different thing; see **Intern id**.
 _Avoid_: subinterpreter (an iid of 0 is an interpreter too), thread, isolate
 
 **Generation**:

@@ -4,15 +4,18 @@
   [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)
 - **Date:** 2026-06-27, amended:
   - 2026-07-13: `rss` added
+  - 2026-09-11: `heap_size` moved onto the interpreter group, see
+    [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
 
 > Superseded on 2026-08-26. The single-arg display-name rule and the top-level
 > metric set holding both `heap_size` and `rss` are gone: the converter writes
 > every display name, and a counter a `ProcessTrack` owns parents to the
 > process track by construction. Three things below still hold: one
 > `heap_size` series per `(pid, iid)` and one `rss` per pid, `heap_size` drawn
-> a level up with the dropped-rank trade-off that costs, and `heap_size`
-> staying on the `GC Pause(N)` slice args. A `heap_size` track is named
-> `Thread {iid} heap_size` now.
+> outside the `GC Metrics` group, and `heap_size` staying on the `GC Pause(N)`
+> slice args. It is drawn on its interpreter's group rather than a level up
+> beside the process, so the rank it carries there is honored
+> ([ADR-0027](0027-group-every-row-an-interpreter-owns.md)).
 
 ## Context
 
@@ -60,12 +63,12 @@ queryable per-pause from the slice `args` table.
 
 - One continuous `heap_size` series per `(pid, tid)`, and one `rss` series per
   pid.
-- **Accepted trade-off:** because these tracks are parented to the OS-scoped
-  process track, the trace processor drops their `sibling_order_rank` (the
-  rule from [ADR-0003](0003-gc-metrics-group-track.md)). Their position is a
-  UI heuristic; in the Perfetto UI they render *below* the `GC Metrics` group.
-  A rank for `heap_size` is retained for documentation and
-  forward-compatibility but is not honored.
+- **Accepted trade-off:** `rss` is parented to the OS-scoped process track, so
+  the trace processor drops its `sibling_order_rank` (the rule from
+  [ADR-0003](0003-gc-metrics-group-track.md)) and its position is a UI
+  heuristic. `heap_size` no longer pays this: its interpreter's group is a
+  plain custom track and honors the rank it carries there
+  ([ADR-0027](0027-group-every-row-an-interpreter-owns.md)).
 - **Chrome-consumer break:** the converter now emits two `C` events per item
   rather than one. Downstream Chrome-trace tooling that assumed a single
   counter event per GC pause, and read every metric from it, must read the

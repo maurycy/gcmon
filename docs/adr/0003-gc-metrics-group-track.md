@@ -4,6 +4,11 @@
 - **Date:** 2026-06-27, amended:
   - 2026-09-01: the track key became per process, see
     [ADR-0011](0011-process-lifetime-and-ordering.md)
+  - 2026-09-11: `GC Metrics` moved onto the interpreter group, see
+    [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
+  - 2026-09-12: the row that pays the trade-off is named
+    `Python Interpreters`, see
+    [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
 
 ## Context
 
@@ -37,7 +42,8 @@ ranking, not the rank field.**
 ## Decision
 
 Insert an intermediate **non-OS-scoped grouping track named `GC Metrics`**,
-one per `(process, iid)`, parented to the process track, carrying
+one per `(process, iid)`, parented to that interpreter's own group
+([ADR-0027](0027-group-every-row-an-interpreter-owns.md)), carrying
 `child_ordering = EXPLICIT` and no `process` / `thread` / `counter`
 sub-message. Every per-generation counter track's `parent_uuid` points at this
 group instead of at the process track.
@@ -47,13 +53,13 @@ Because the group is a plain custom track, the trace processor honors
 now carry a non-NULL `parent_id` pointing at the `GC Metrics` row, and the
 ranking takes effect *inside* the group.
 
-Ranks come from a single ordered table covering each metric. `heap_size` and
-`rss` come first (they are drawn outside the group, see
-[ADR-0004](0004-toplevel-shared-counters.md) and
-[ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)), then
-`collected`, `uncollectable` (emitted only when non-zero), `candidates`,
-`duration`, and the rest. Inserting a metric shifts the ranks below it, which
-is fine: only the relative order matters.
+Ranks come from a single ordered table covering each metric: `collected`,
+`uncollectable` (emitted only when non-zero), `candidates`, `duration`, and
+the rest. `rss` has an entry too, though a `ProcessTrack` draws it where the
+rank is discarded ([ADR-0004](0004-toplevel-shared-counters.md)); `heap_size`
+has none, because its interpreter's group ranks it
+([ADR-0027](0027-group-every-row-an-interpreter-owns.md)). Inserting a metric
+shifts the ranks below it, which is fine: only the relative order matters.
 
 ## Consequences
 
@@ -61,10 +67,12 @@ is fine: only the relative order matters.
 - **Accepted trade-off:** the same proto rule that breaks ranking under
   OS-scoped parents also governs rendering. Per the `parent_uuid` back-compat
   note, a track whose parent is OS-scoped "inherits the parent's
-  process/thread association and will appear as a *sibling* of the parent." So
-  the `GC Metrics` group renders *alongside* the `Process <pid>` track in the
-  UI rather than nested inside it. The spec owner reviewed this and accepted
-  it, since ordering within the group still works.
+  process/thread association and will appear as a *sibling* of the parent."
+  The row that pays it is the interpreter list, the one custom track a process
+  track parents (ADR-0027): it renders *alongside* the `Process <pid>` track
+  in the UI rather than nested inside it, and the rows below it nest normally.
+  The spec owner reviewed this and accepted it, since ordering within the
+  group still works.
 - The group is collapsible, which keeps the top-level track list short. That
   is why `heap_size` is drawn *outside* the group
   ([ADR-0004](0004-toplevel-shared-counters.md), carried forward by
@@ -78,10 +86,9 @@ is fine: only the relative order matters.
 - **`child_ordering = LEXICOGRAPHIC` with name prefixes**
   (`0_heap_size`, `1_collected`, …). Rejected: it works, but the prefix shows
   up in the track name the user reads.
-- **`process_ordering` / `thread_ordering` on the root descriptor
-  (`uuid = 0`).** Not applicable here: those fields order process tracks
-  against each other and thread tracks against each other, and say nothing
-  about counters. They are used, for the purpose they are meant for, in
+- **`process_ordering` on the root descriptor (`uuid = 0`).** Not applicable
+  here: it orders process tracks against each other and says nothing about
+  counters. It is used, for the purpose it is meant for, in
   [ADR-0011](0011-process-lifetime-and-ordering.md).
 - **Leave counters parented to the process track and accept arbitrary order.**
   Rejected; this is what the earlier iteration did, and the counter list is

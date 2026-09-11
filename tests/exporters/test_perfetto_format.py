@@ -7,8 +7,13 @@ from perfetto.protos.perfetto.trace.perfetto_trace_pb2 import (
     TrackEvent,
 )
 
-from gcmon.exporters.perfetto_format import convert_trace_events_to_perfetto
-from gcmon.exporters.perfetto_process_lifetime import finalize_perfetto_packets
+from gcmon.exporters.perfetto_format import (
+    _COUNTER_RANKS,
+    _INTERPRETER_LIST_NAME,
+    _UNLISTED_COUNTER_RANK,
+    convert_trace_events_to_perfetto,
+)
+from gcmon.exporters.perfetto_process_lifetime import _PROCESS_ROW_SLICE_NAME, finalize_perfetto_packets
 from gcmon.exporters.perfetto_proto import TrackEventType
 from gcmon.exporters.perfetto_track_state import PerfettoTrackState
 from gcmon.exporters.trace_converter import convert_item_to_trace_format, convert_loss_to_trace_format
@@ -17,6 +22,7 @@ from gcmon.model.trace_event import (
     Counter,
     Instant,
     TraceEvent,
+    Track,
 )
 from tests.exporters.perfetto_helpers import (
     convert_item,
@@ -24,11 +30,6 @@ from tests.exporters.perfetto_helpers import (
     parse_track_descriptor,
 )
 from tests.helpers import create_mock_loss_item, interpreter_track, proc, process_track
-
-# Name of the slice drawn on each process's own row over the interval gcmon
-# observed it. Must match ``_PROCESS_ROW_SLICE_NAME`` in
-# ``gcmon.exporters.perfetto_process_lifetime``.
-_PROCESS_ROW_SLICE_NAME: str = "Lifetime"
 
 
 class TestConvertItemToPerfettoPackets:
@@ -151,7 +152,7 @@ class TestConvertItemToPerfettoPackets:
         assert state.has_process_descriptor(proc(100))
         assert state.has_track(interpreter_track(100, 0))
 
-    def test_thread_track_has_sibling_order_rank_zero(self) -> None:
+    def test_pause_track_has_sibling_order_rank_zero(self) -> None:
         state = PerfettoTrackState()
         item = GCStatsInfo(
             gen=0,
@@ -166,20 +167,21 @@ class TestConvertItemToPerfettoPackets:
             duration=0.001,
         )
         descriptors, _ = convert_item(proc(100), item, state, sequence_id=1)
-        proc_uuid = state.get_process_track_uuid(proc(100))
-        thread_uuid = state.get_track_uuid(interpreter_track(100, 0))
-        thread_found = False
+        interpreter_uuid = state.get_or_create_interpreter_group_track_uuid(proc(100), 0)
+        pause_uuid = state.get_track_uuid(interpreter_track(100, 0))
+        pause_found = False
         for desc_bytes in descriptors:
             packet = TracePacket()
             packet.ParseFromString(desc_bytes)
             if packet.HasField("track_descriptor"):
                 td = packet.track_descriptor
-                if td.uuid == thread_uuid:
-                    assert td.parent_uuid == proc_uuid
+                if td.uuid == pause_uuid:
+                    assert td.parent_uuid == interpreter_uuid
                     assert td.sibling_order_rank == 0
                     assert not td.HasField("child_ordering")
-                    thread_found = True
-        assert thread_found
+                    assert not td.HasField("thread")
+                    pause_found = True
+        assert pause_found
 
     def test_counter_tracks_parented_to_counter_group(self) -> None:
         state = PerfettoTrackState()
@@ -197,6 +199,7 @@ class TestConvertItemToPerfettoPackets:
         )
         descriptors, _ = convert_item(proc(100), item, state, sequence_id=1)
         proc_uuid = state.get_process_track_uuid(proc(100))
+        interpreter_uuid = state.get_or_create_interpreter_group_track_uuid(proc(100), 0)
         group_uuid = state.get_or_create_counter_group_track_uuid(interpreter_track(100, 0))
         assert group_uuid != proc_uuid
         group_seen = False
@@ -211,14 +214,16 @@ class TestConvertItemToPerfettoPackets:
                     per_metric_parent[td.name] = td.parent_uuid
                 elif uuid == group_uuid:
                     group_seen = True
-                    assert td.parent_uuid == proc_uuid
+                    assert td.parent_uuid == interpreter_uuid
                     assert td.child_ordering == 3
         assert group_seen, "GC Counters group track descriptor was not emitted"
-        # heap_size is a top-level counter: parented directly to the process.
-        assert per_metric_parent["Thread 0 heap_size"] == proc_uuid
+        # heap_size is a top-level counter: parented to the interpreter's own
+        # group, beside `GC Metrics` rather than inside it.
+        assert per_metric_parent["heap_size"] == interpreter_uuid
+        assert proc_uuid not in per_metric_parent.values()
         # Per-gen counters are parented to the GC Counters group.
         for name, parent_uuid in per_metric_parent.items():
-            if name != "Thread 0 heap_size":
+            if name != "heap_size":
                 assert parent_uuid == group_uuid, f"{name!r} should parent to group"
 
     def test_basic_item_emits_pause_slice(self) -> None:
@@ -489,9 +494,8 @@ class TestConvertItemToPerfettoPackets:
                 break
         assert duration_track_uuid is not None
 
-        # Find the matching TrackDescriptor and assert rank=4 (per-gen rank
-        # for `duration` in the new layout) plus parent resolves to a track
-        # named "GC Metrics".
+        # Find the matching TrackDescriptor, and check it ranks where
+        # `_COUNTER_ORDER` puts `duration` under a parent named "GC Metrics".
         descriptors: dict[int, tuple[int, int, str]] = {}
         for p in descriptors_packets:
             packet = TracePacket()
@@ -506,7 +510,7 @@ class TestConvertItemToPerfettoPackets:
             )
         assert duration_track_uuid in descriptors
         parent, rank, _ = descriptors[duration_track_uuid]
-        assert rank == 5
+        assert rank == _COUNTER_RANKS["duration"]
         assert parent != 0
         assert descriptors[parent][2] == "GC Metrics"
 
@@ -1002,8 +1006,10 @@ class TestATrackIsDescribedOffTheEventsOnIt:
         descriptors, _ = convert_trace_events_to_perfetto(self._pid_events(100), state, sequence_id=1)
         names = self._named(descriptors)
         assert "Process 100" in names
-        assert "Thread 0" in names
-        assert names.index("Process 100") < names.index("Thread 0"), "parent must precede child"
+        assert "GC Pauses" in names
+        assert names.index("Process 100") < names.index("Interpreter 0") < names.index("GC Pauses"), (
+            f"each parent must precede its child; got {names}"
+        )
 
     def test_an_rss_only_pid_gets_a_process_row_and_no_thread_row(self) -> None:
         state = PerfettoTrackState()
@@ -1032,7 +1038,7 @@ class TestATrackIsDescribedOffTheEventsOnIt:
         first, _ = convert_trace_events_to_perfetto(self._pid_events(100), state, sequence_id=1)
         second, _ = convert_trace_events_to_perfetto(self._pid_events(100), state, sequence_id=1)
         assert "Process 100" in self._named(first)
-        assert "Thread 0" in self._named(first)
+        assert "GC Pauses" in self._named(first)
         assert self._named(second) == []
 
     def test_a_second_interpreter_is_described_when_it_first_collects(self) -> None:
@@ -1042,16 +1048,191 @@ class TestATrackIsDescribedOffTheEventsOnIt:
         convert_trace_events_to_perfetto(self._pid_events(100, iid=0), state, sequence_id=1)
         later, _ = convert_trace_events_to_perfetto(self._pid_events(100, iid=1), state, sequence_id=1)
         names = self._named(later)
-        assert names[0] == "Thread 1"
+        assert names[:2] == ["Interpreter 1", "GC Pauses"], f"the group it parents to comes first; got {names}"
         assert "Process 100" not in names
+
+
+class TestTheInterpreterGroupsAreDerived:
+    """The two grouping rows that hold every interpreter's rows (ADR-0027).
+
+    Read off the wire rather than through the trace processor: a group
+    holding no events and no described children is not a row the trace
+    processor builds, so until something moves inside them these
+    descriptors are the only place they exist.
+    """
+
+    def _events(self, pid: int, iid: int = 0) -> list[TraceEvent]:
+        item = GCStatsInfo(
+            gen=0,
+            iid=iid,
+            ts_start=1_000,
+            ts_stop=2_000,
+            heap_size=1000,
+            collections=1,
+            collected=10,
+            uncollectable=0,
+            candidates=5,
+            duration=0.001,
+        )
+        return convert_item_to_trace_format(proc(pid), item)
+
+    def _by_name(self, descriptors: list[bytes]) -> dict[str, TrackDescriptor]:
+        parsed = [parse_track_descriptor(d) for d in descriptors]
+        return {td.name: td for td in parsed if td is not None and td.name}
+
+    def test_a_record_derives_the_list_and_the_group_that_holds_it(self) -> None:
+        state = PerfettoTrackState()
+        descriptors, _ = convert_trace_events_to_perfetto(self._events(100), state, sequence_id=1)
+        described = self._by_name(descriptors)
+
+        listing = described[_INTERPRETER_LIST_NAME]
+        assert listing.parent_uuid == state.get_process_track_uuid(proc(100))
+        assert listing.child_ordering == 3
+        # No rank: the process track is OS-scoped and discards one (ADR-0003).
+        assert not listing.HasField("sibling_order_rank")
+
+        group = described["Interpreter 0"]
+        assert group.parent_uuid == listing.uuid
+        assert group.child_ordering == 3
+        assert group.sibling_order_rank == 0
+
+    def test_the_list_precedes_the_group_it_holds(self) -> None:
+        state = PerfettoTrackState()
+        descriptors, _ = convert_trace_events_to_perfetto(self._events(100), state, sequence_id=1)
+        names = [td.name for td in (parse_track_descriptor(d) for d in descriptors) if td is not None and td.name]
+        assert names.index("Process 100") < names.index(_INTERPRETER_LIST_NAME) < names.index("Interpreter 0"), (
+            f"each parent must precede its child; got {names}"
+        )
+
+    def test_the_list_sorts_below_the_process_row(self) -> None:
+        """A rename has to keep the list under the row it belongs to.
+
+        `dev.perfetto.TraceProcessorTrack` ranks a process's rows by kind and
+        breaks the tie on the lower-cased name, reading no
+        `sibling_order_rank`. Both of these are slice-shaped, so the name is
+        the whole of it (ADR-0027).
+        """
+        state = PerfettoTrackState()
+        descriptors, _ = convert_trace_events_to_perfetto(self._events(100), state, sequence_id=1)
+        parsed = [td for td in (parse_track_descriptor(d) for d in descriptors) if td is not None]
+        process_uuid = state.get_process_track_uuid(proc(100))
+        process_name = next(td.name for td in parsed if td.uuid == process_uuid)
+        listing_name = next(td.name for td in parsed if td.parent_uuid == process_uuid)
+        assert process_name.lower() < listing_name.lower(), f"{listing_name!r} draws above {process_name!r} in the UI"
+
+    def test_a_second_interpreter_shares_the_list_and_gets_its_own_group(self) -> None:
+        state = PerfettoTrackState()
+        convert_trace_events_to_perfetto(self._events(100, iid=0), state, sequence_id=1)
+        later, _ = convert_trace_events_to_perfetto(self._events(100, iid=1), state, sequence_id=1)
+        described = self._by_name(later)
+
+        assert _INTERPRETER_LIST_NAME not in described, "the list is described once per process"
+        group = described["Interpreter 1"]
+        assert group.parent_uuid == state.get_or_create_interpreter_list_track_uuid(proc(100))
+        assert group.sibling_order_rank == 1
+
+    def test_a_loss_row_reaches_the_same_group_as_the_collections(self) -> None:
+        """One group per interpreter, not one per row it owns."""
+        state = PerfettoTrackState()
+        convert_trace_events_to_perfetto(self._events(100, iid=0), state, sequence_id=1)
+        later, _ = convert_trace_events_to_perfetto(
+            convert_loss_to_trace_format(proc(100), create_mock_loss_item(iid=0)),
+            state,
+            sequence_id=1,
+        )
+        described = self._by_name(later)
+        assert "GC Loss" in described, "the loss row still describes itself"
+        assert "Interpreter 0" not in described, "interpreter 0's group is already described"
+        assert _INTERPRETER_LIST_NAME not in described
+
+    def test_a_process_that_only_reported_rss_derives_neither(self) -> None:
+        """A row exists because an event named it (ADR-0024), and nothing
+        an interpreter owns was named here."""
+        state = PerfettoTrackState()
+        descriptors, _ = convert_trace_events_to_perfetto(
+            [Counter(process_track(100), "rss", "rss", 1_000, 4096)],
+            state,
+            sequence_id=1,
+        )
+        described = self._by_name(descriptors)
+        assert _INTERPRETER_LIST_NAME not in described
+        assert not any(name.startswith("Interpreter ") for name in described)
+
+
+class TestTheRowsInsideAnInterpreterGroupAreRanked:
+    """The rows a group holds draw in the order ADR-0027 sets.
+
+    The order is spelled out below rather than read off
+    ``_INTERPRETER_ROW_ORDER``, which would pass whatever that tuple said.
+    Reordering the rows is a decision the record carries, so it costs an
+    edit here too.
+    """
+
+    def _events(self, pid: int = 100, iid: int = 0) -> list[TraceEvent]:
+        """One of every row an interpreter owns: a pause slice, a loss
+        span, the `heap_size` counter and a counter inside GC Metrics."""
+        item = GCStatsInfo(
+            gen=0,
+            iid=iid,
+            ts_start=1_000,
+            ts_stop=2_000,
+            heap_size=1000,
+            collections=1,
+            collected=10,
+            uncollectable=0,
+            candidates=5,
+            duration=0.001,
+        )
+        return [
+            *convert_item_to_trace_format(proc(pid), item),
+            *convert_loss_to_trace_format(proc(pid), create_mock_loss_item(iid=iid)),
+        ]
+
+    def test_they_draw_pauses_loss_heap_size_then_the_metrics_group(self) -> None:
+        state = PerfettoTrackState()
+        descriptors, _ = convert_trace_events_to_perfetto(self._events(), state, sequence_id=1)
+        parsed = [td for td in (parse_track_descriptor(d) for d in descriptors) if td is not None]
+
+        group_uuid = state.get_or_create_interpreter_group_track_uuid(proc(100), 0)
+        rows = sorted((td for td in parsed if td.parent_uuid == group_uuid), key=lambda td: td.sibling_order_rank)
+
+        assert [td.name for td in rows] == ["GC Pauses", "GC Loss", "heap_size", "GC Metrics"]
+        assert [td.sibling_order_rank for td in rows] == [0, 1, 2, 3], "ranks must be distinct for the order to hold"
+
+
+class TestACounterTakesItsRankFromItsMetric:
+    def _counter(self, track: Track, metric: str) -> list[TrackDescriptor]:
+        state = PerfettoTrackState()
+        descriptors, _ = convert_trace_events_to_perfetto(
+            [Counter(track, metric, f"G0 {metric}", 1_000, 42)],
+            state,
+            sequence_id=1,
+        )
+        parsed = [parse_track_descriptor(d) for d in descriptors]
+        return [td for td in parsed if td is not None and td.name == f"G0 {metric}"]
+
+    def test_a_metric_nobody_listed_draws_below_every_listed_one(self) -> None:
+        """A counter gcmon grows later should appear at the bottom of the
+        group rather than above the ones somebody placed."""
+        found = self._counter(interpreter_track(100, 0), "gizmo_count")
+
+        assert found[0].sibling_order_rank == _UNLISTED_COUNTER_RANK
+        assert found[0].sibling_order_rank > max(_COUNTER_RANKS.values())
+
+    def test_a_counter_on_the_process_track_carries_no_rank(self) -> None:
+        """The process track is OS-scoped, so the trace processor throws a
+        child's rank away (ADR-0003). Writing one says otherwise."""
+        found = self._counter(process_track(100), "rss")
+
+        assert not found[0].HasField("sibling_order_rank")
 
 
 class TestLossTrackDescriptor:
     """Nothing but the slices describes the loss track.
 
-    A ``LossTrack`` is not a ``InterpreterTrack``, the same distinction that keeps
-    the row from being drawn as a thread. So the descriptor has to come off
-    the slices themselves, or they land on a uuid nothing ever named.
+    A ``LossTrack`` is not an ``InterpreterTrack``, so a batch holding loss
+    and no collection describes only the loss row. The descriptor has to come
+    off the slices themselves, or they land on a uuid nothing ever named.
     """
 
     def _convert(self, msgs: list[LossMsg], state: PerfettoTrackState, pid: int = 100) -> list[bytes]:
@@ -1073,21 +1254,27 @@ class TestLossTrackDescriptor:
 
         found = self._loss_descriptors(self._convert([self._msg(iid=0)], state))
 
-        assert [td.name for td in found] == ["GC Loss 0"]
+        assert [td.name for td in found] == ["GC Loss"]
 
-    def test_it_is_named_for_its_interpreter(self) -> None:
+    def test_each_interpreter_gets_one_inside_its_own_group(self) -> None:
+        """Two rows, identically named. What tells them apart is the group
+        each parents to, which is what carries the iid (ADR-0027)."""
         state = PerfettoTrackState()
 
         found = self._loss_descriptors(self._convert([self._msg(iid=0), self._msg(iid=1)], state))
 
-        assert [td.name for td in found] == ["GC Loss 0", "GC Loss 1"]
+        assert [td.name for td in found] == ["GC Loss", "GC Loss"]
+        assert [td.parent_uuid for td in found] == [
+            state.get_or_create_interpreter_group_track_uuid(proc(100), 0),
+            state.get_or_create_interpreter_group_track_uuid(proc(100), 1),
+        ]
 
-    def test_it_hangs_off_the_process_track(self) -> None:
+    def test_it_hangs_off_the_interpreter_group(self) -> None:
         state = PerfettoTrackState()
 
         found = self._loss_descriptors(self._convert([self._msg()], state))
 
-        assert found[0].parent_uuid == state.get_process_track_uuid(proc(100))
+        assert found[0].parent_uuid == state.get_or_create_interpreter_group_track_uuid(proc(100), 0)
 
     def test_it_is_a_plain_custom_track(self) -> None:
         """A ``thread`` sub-message would describe an OS thread that does not

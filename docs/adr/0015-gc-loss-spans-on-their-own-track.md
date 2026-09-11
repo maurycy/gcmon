@@ -6,6 +6,8 @@
     [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)
   - 2026-09-01: the track key became per process, see
     [ADR-0011](0011-process-lifetime-and-ordering.md)
+  - 2026-09-11: the loss row moved onto the interpreter group, see
+    [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
 
 ## Context
 
@@ -26,10 +28,12 @@ their placement is guesswork.
 ## Decision
 
 **Loss spans go on a `GC Loss` track of their own, one per `(process, iid)`.**
-The track is a custom slice track parented to the process track, ranked below
-the interpreter's own row. It carries no `thread_name`, which stops Perfetto
-from drawing a track as an OS thread that does not exist. A `LossTrack` names
-it ([ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)), where a
+The track is a custom slice track parented to that interpreter's group, ranked
+below the interpreter's pause row inside it
+([ADR-0027](0027-group-every-row-an-interpreter-owns.md)). It carries no
+OS-association sub-message, which stops Perfetto from drawing a track as a
+thread that does not exist. A `LossTrack` names it
+([ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)), where a
 sentinel tid extending [ADR-0013](0013-rss-sampling.md)'s did before.
 
 **A span is one poll interval**, from the read before the gap to the read that

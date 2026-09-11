@@ -11,8 +11,6 @@ __all__ = [
     "DebugAnnotationField",
     "ProcessDescriptorField",
     "ProcessOrdering",
-    "ThreadDescriptorField",
-    "ThreadOrdering",
     "TraceField",
     "TracePacketField",
     "TrackDescriptorField",
@@ -35,17 +33,17 @@ class TracePacketField(IntEnum):
 
 
 class TrackDescriptorField(IntEnum):
+    """Field numbers gcmon writes."""
+
     UUID = 1
     NAME = 2
     PROCESS = 3
-    THREAD = 4
     PARENT_UUID = 5
     COUNTER = 8
     CHILD_ORDERING = 11
     SIBLING_ORDER_RANK = 12
     DESCRIPTION = 14
     PROCESS_ORDERING = 19
-    THREAD_ORDERING = 20
 
 
 class ChildTracksOrdering(IntEnum):
@@ -58,17 +56,6 @@ class ChildTracksOrdering(IntEnum):
 class ProcessOrdering(IntEnum):
     UNSPECIFIED = 0
     EXPLICIT = 1
-
-
-class ThreadOrdering(IntEnum):
-    UNSPECIFIED = 0
-    EXPLICIT = 1
-
-
-class ThreadDescriptorField(IntEnum):
-    PID = 1
-    TID = 2
-    THREAD_NAME = 5
 
 
 class ProcessDescriptorField(IntEnum):

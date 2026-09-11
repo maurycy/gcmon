@@ -22,18 +22,20 @@ gcmon traces use the standard Perfetto schema:
   - `upid`, the trace processor's own key and the one to group by; `pid`, one
     gcmon writes per process, not the operating system's; `name`
     (`"Process 12345"`); `start_ts`
-- **`thread`**: one row per interpreter, plus a nameless row for each process
-  whose row `pid` no interpreter id meets
-  - `utid`, its own key; `upid`, the process it belongs to; `tid`, the
-    interpreter id; `name` (`"Thread 0"`)
+- **`thread`**: one nameless row per process, which the trace processor builds
+  out of the `ProcessDescriptor`. gcmon writes none of its own
+  - `utid`, its own key; `upid`, the process it belongs to; `tid`, equal to
+    the row's `pid`
 - **`slice`**: GC pauses and sub-steps
   - `name` (`"GC Pause(0)"`), `ts` and `dur` in nanoseconds, `arg_set_id`
 - **`counter`**: counter samples
   - `track_id`, `ts`, `value`
 - **`counter_track`**: one row per counter track
-  - `id`, `name` (`"G0 collected"`, `"Thread 0 heap_size"`)
-- **`process_track`** / **`thread_track`**: process and thread rows
-  - `id`, `pid` / `tid`, and `source_arg_set_id` for the track's own args
+  - `id`, `name` (`"G0 collected"`, `"heap_size"`), `parent_id`
+- **`process_track`**: every row gcmon draws, the process's own and the ones
+  nested under its `Python Interpreters` group, each with the process's `upid`
+  - `id`, `name`, `parent_id`, `upid`, and `source_arg_set_id` for the track's
+    own args
 - **`args`**: key/value arguments for slices and tracks
   - `arg_set_id`, `string_value` / `int_value`
   - `key` / `flat_key`: bare for a track arg (`description`), prefixed for a
@@ -48,13 +50,13 @@ gcmon traces use the standard Perfetto schema:
 > The `debug.pid` annotation on the `Processes` span and on the `Lifetime` bar
 > carries the operating system's PID, and so does the row's name.
 
-> **Note:** `thread.tid` is the interpreter id, the same number as a GC
-> slice's `debug.iid` annotation. Every process also keeps a thread whose
-> `tid` is the row's `pid`, which is the one `thread.is_main_thread` marks.
-> Row pids count from 1 and interpreter ids from 0, so that thread is an
-> interpreter where the two meet, and a row with no name, no `thread_track`
-> and no slices where they do not. The flag says nothing about the interpreter
-> it lands on. Count interpreters by filtering on `thread.name`.
+> **Note:** gcmon writes no thread of its own. Every row an interpreter owns
+> is a plain custom track under a group named `Interpreter {iid}`. The one row
+> in `thread` is the nameless one the trace processor builds per process,
+> carrying the row's `pid` as its `tid` and marked by `thread.is_main_thread`;
+> it has no name, no `thread_track` and no slices. Count interpreters by
+> counting the `Interpreter %` tracks under a process's `Python Interpreters`
+> group.
 
 ## Example: Replicating the Stats Table
 
@@ -80,6 +82,58 @@ WHERE category IS NOT NULL AND category != 'gc.loss'
 GROUP BY name
 ORDER BY IF(parent_id IS NULL, 0, 1), name
 ```
+
+## Example: Naming the Interpreter a Counter Belongs To
+
+Every row an interpreter owns hangs under a group named `Interpreter {iid}`,
+and those under one `Python Interpreters` group per process. Two hops up
+`parent_id` reach the interpreter from a per-generation counter and one from
+`heap_size`, and the group above them carries the process's `upid`. Walk the
+chain rather than matching on a name, which is a label the UI shows:
+
+```sql
+-- Every per-generation counter, with the interpreter and process that own it
+SELECT
+    p.name AS process,
+    ig.name AS interpreter,
+    ct.name AS counter,
+    COUNT(c.id) AS samples
+FROM counter_track ct
+JOIN track gm ON ct.parent_id = gm.id AND gm.name = 'GC Metrics'
+JOIN track ig ON gm.parent_id = ig.id
+JOIN process_track lt ON ig.parent_id = lt.id
+JOIN process p ON lt.upid = p.upid
+LEFT JOIN counter c ON c.track_id = ct.id
+GROUP BY ct.id
+ORDER BY p.name, ig.name, ct.name
+```
+
+`heap_size` sits one hop closer, on the group itself:
+
+```sql
+-- Each interpreter's heap size
+SELECT ig.name AS interpreter, c.ts, c.value
+FROM counter c
+JOIN counter_track ct ON c.track_id = ct.id AND ct.name = 'heap_size'
+JOIN track ig ON ct.parent_id = ig.id
+ORDER BY ig.name, c.ts
+```
+
+A pause takes the same walk, from a row named `GC Pauses` under every
+interpreter's group:
+
+```sql
+-- GC pauses with the interpreter that ran them
+SELECT ig.name AS interpreter, s.name, s.ts, s.dur
+FROM slice s
+JOIN process_track pt ON s.track_id = pt.id AND pt.name = 'GC Pauses'
+JOIN track ig ON pt.parent_id = ig.id
+ORDER BY s.ts
+```
+
+A pause slice carries the same number as a `debug.iid` annotation, which
+`EXTRACT_ARG(s.arg_set_id, 'debug.iid')` reads without the join. A counter
+carries no annotations, and the parent chain is what it has instead.
 
 ## Example: Querying RSS Values
 
@@ -169,9 +223,8 @@ SELECT
 FROM slice span
 JOIN track spant ON span.track_id = spant.id AND spant.name = 'Processes'
 LEFT JOIN process p ON p.name = span.name
-LEFT JOIN thread th ON th.upid = p.upid
-LEFT JOIN thread_track tt ON tt.utid = th.utid
-LEFT JOIN slice gc ON gc.track_id = tt.id AND gc.name GLOB 'GC Pause*'
+LEFT JOIN process_track pt ON pt.upid = p.upid AND pt.name = 'GC Pauses'
+LEFT JOIN slice gc ON gc.track_id = pt.id AND gc.name GLOB 'GC Pause*'
 GROUP BY span.id
 ORDER BY span.ts
 ```

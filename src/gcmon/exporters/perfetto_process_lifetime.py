@@ -21,7 +21,6 @@ from .perfetto_builders import (
 from .perfetto_proto import (
     ChildTracksOrdering,
     ProcessOrdering,
-    ThreadOrdering,
     TrackEventType,
 )
 from .perfetto_track_state import PerfettoTrackState, ProcessSpan
@@ -75,7 +74,6 @@ def _emit_root_descriptor(
         uuid=0,
         name="",
         process_ordering=ProcessOrdering.EXPLICIT,
-        thread_ordering=ThreadOrdering.EXPLICIT,
     )
     return [build_trace_packet(sequence_id, track_descriptor=desc)]
 
@@ -259,7 +257,7 @@ def emit_retired_process_row(
     liveness and RSS both work off the tick's live set. What a run killed
     mid-flight loses shrinks to the processes still running. The Perfetto UI
     hides a row holding no events, so a bar that never reached the file takes
-    its whole row with it, thread tracks and all.
+    its whole row with it, its interpreters' rows and all.
 
     The ``Processes`` slice does not come with it. That one is clipped against
     its siblings and the sweep is global, so it waits for close; a process
