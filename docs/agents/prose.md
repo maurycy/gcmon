@@ -138,6 +138,23 @@ Repair fails the last two tests and stays: the subject a split run-on needs,
 the verb that replaces a nominalisation, the article that makes a sentence
 grammatical. A passage that ends longer than it began was not trimmed.
 
+## Naming the track tree
+
+Three verbs for the relation between a parent track and its child, picked by
+what the sentence is about.
+
+- **parents to** where the claim is about `parent_uuid`, or about a query
+  joining on `track.parent_id`. The field's own word, so the reader translates
+  nothing.
+- **sits in** or **sits inside** where the claim is about what the user sees.
+  The UI nests a child inside its expanded parent.
+- **holds** where the group is the subject: "the rows it holds".
+
+Not `hangs off`. It says nothing `parent` does not, and *off* puts the child
+beside the group where the UI draws it inside. A paragraph that would take one
+of the three verbs three times usually has a clause about position rather than
+parentage; give that one `draws on`.
+
 ## Mechanical
 
 - No em dash. No section sign, which is hard to type on an ordinary keyboard.
