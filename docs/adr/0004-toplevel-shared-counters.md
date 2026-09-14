@@ -102,5 +102,5 @@ queryable per-pause from the slice `args` table.
   parents those tracks directly to the process track.
 - Tests: `tests/exporters/test_perfetto_exporter_integration.py` asserts
   exactly one `heap_size` track and zero `G{N} heap_size` tracks, and
-  `tests/test_convert_cmd_perfetto.py` pins the whole set of counter track
-  names a combined trace carries.
+  `tests/cli/analyze/test_convert_cmd_perfetto.py` pins the whole set of
+  counter track names a combined trace carries.

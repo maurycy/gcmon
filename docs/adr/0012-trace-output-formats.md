@@ -133,8 +133,8 @@ choices stay `["jsonl", "chrome", "perfetto"]`.
 - `src/gcmon/exporters/exporter_factory.py` handles the `chrome+perfetto`
   case.
 - `src/gcmon/cli/_env.py` holds the `GCMON_FORMAT` whitelist.
-- Tests: `tests/test_convert_cmd_perfetto.py` is trace-processor driven and
-  carries the chrome↔perfetto content-equivalence assertions;
+- Tests: `tests/cli/analyze/test_convert_cmd_perfetto.py` is trace-processor
+  driven and carries the chrome↔perfetto content-equivalence assertions;
   `tests/exporters/test_combined_exporter.py` and
   `test_combined_exporter_integration.py` cover the forwarder;
   `tests/cli/monitor/test_monitor_cmd.py` checks end-to-end that both files

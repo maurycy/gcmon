@@ -158,12 +158,12 @@ way: the JSONL bytes must not change.
 ## 5. Seams and testing decisions
 
 - **Seam:** `test_full_gen1_sub_slices_present` in
-  `tests/test_convert_cmd_perfetto.py`, through the trace processor. It is the
-  highest seam available: it queries the eight sub-phase slice names for one
-  generation, so it observes the sub-phases as *slices in a trace*, which is
-  what the table exists to produce, rather than observing the table.
-  `tests/stats/test_metrics.py` and the JSONL golden file cover the two
-  consumers the trace processor cannot see.
+  `tests/cli/analyze/test_convert_cmd_perfetto.py`, through the trace
+  processor. It is the highest seam available: it queries the eight sub-phase
+  slice names for one generation, so it observes the sub-phases as *slices in
+  a trace*, which is what the table exists to produce, rather than observing
+  the table. `tests/stats/test_metrics.py` and the JSONL golden file cover the
+  two consumers the trace processor cannot see.
 - **New seam needed:** none for behaviour. One new test *file* at an existing
   seam, the table-completeness test in section 4, which asserts against
   `data.GCStatsInfo`, not against the table itself.

@@ -115,8 +115,8 @@ an ADR if this graduates.
   non-decreasing. A literal test would pass equally with an off-by-one running
   total.
 - **Prior art:** the existing per-generation counter assertions in the
-  Perfetto exporter tests, and `tests/test_convert_cmd_perfetto.py` for the
-  `combine` path.
+  Perfetto exporter tests, and
+  `tests/cli/analyze/test_convert_cmd_perfetto.py` for the `combine` path.
 - **Cases:**
   1. Three windows on one key produce a non-decreasing counter series whose
      last value is their summed `lost_count`.

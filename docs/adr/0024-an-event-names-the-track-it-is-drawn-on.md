@@ -94,12 +94,12 @@ fuzz suite checks it against the real trace processor.
 ## Alternatives considered
 
 - **Delete the intermediate and emit Perfetto packets from the converter.** It
-  costs the oracle in `tests/test_convert_cmd_perfetto.py`, which needs both
-  halves to exist, and the encoder's unit-test seam. It also puts track state
-  under the exporter's IO lock on every record rather than once per flush,
-  since a converter emitting packets has to allocate uuids as it goes. The
-  fact that would settle it differently: a second encoder never arriving *and*
-  the oracle being retired.
+  costs the oracle in `tests/cli/analyze/test_convert_cmd_perfetto.py`, which
+  needs both halves to exist, and the encoder's unit-test seam. It also puts
+  track state under the exporter's IO lock on every record rather than once
+  per flush, since a converter emitting packets has to allocate uuids as it
+  goes. The fact that would settle it differently: a second encoder never
+  arriving *and* the oracle being retired.
 - **Name what an event is about rather than the row it is drawn on.** A
   `LossTrack` would collapse into `InterpreterTrack` plus a flag, and the flag
   is the sentinel again.

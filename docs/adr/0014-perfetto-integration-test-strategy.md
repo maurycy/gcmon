@@ -148,8 +148,8 @@ do not assert on it.
   layout ([ADR-0015](0015-gc-loss-spans-on-their-own-track.md)).
 - `tests/exporters/test_perfetto_exporter_integration.py` holds the
   trace-processor fixture and the trace-writing helper.
-- `tests/test_convert_cmd_perfetto.py`, the same approach applied to the
-  `combine` paths, and the home of the trace-against-its-events oracle.
+- `tests/cli/analyze/test_convert_cmd_perfetto.py`, the same approach applied
+  to the `combine` paths, and the home of the trace-against-its-events oracle.
 - `tests/monitoring/test_monitored_run_trace.py` pins a whole run as decoded
   `TracePacket` text, which reads every field back through Perfetto's own
   generated schema.

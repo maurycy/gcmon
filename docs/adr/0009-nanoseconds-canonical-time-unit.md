@@ -79,4 +79,4 @@ nanoseconds, unless you are looking at bytes on disk.
   packet timestamp on every branch.
 - Tests: `tests/exporters/test_trace_converter.py` for timestamps preserved in
   nanoseconds through the model; the nanosecond duration comparison in
-  `tests/test_convert_cmd_perfetto.py`.
+  `tests/cli/analyze/test_convert_cmd_perfetto.py`.

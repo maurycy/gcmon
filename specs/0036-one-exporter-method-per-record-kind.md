@@ -215,11 +215,12 @@ already-open stream.
   a right and a wrong field number
   ([ADR-0014](../docs/adr/0014-perfetto-integration-test-strategy.md)).
 - **Prior art:** `tests/cli/analyze/test_convert_cmd.py` for the JSONL
-  round-trip; `tests/test_convert_cmd_perfetto.py` for what a trace means read
-  back through the trace processor. Four fakes subclass `EventsExporter` and
-  all four shrink with the interface: `MockExporter` in `tests/helpers.py`
-  from six methods to four, and `Recorder` in `tests/exporters/loss_row.py`,
-  `LossRecorder` in `tests/monitoring/test_monitor_loss.py` and `Recorder` in
+  round-trip; `tests/cli/analyze/test_convert_cmd_perfetto.py` for what a
+  trace means read back through the trace processor. Four fakes subclass
+  `EventsExporter` and all four shrink with the interface: `MockExporter` in
+  `tests/helpers.py` from six methods to four, and `Recorder` in
+  `tests/exporters/loss_row.py`, `LossRecorder` in
+  `tests/monitoring/test_monitor_loss.py` and `Recorder` in
   `tests/monitoring/test_loss_replay.py` from four to two.
 - **Cases:**
   1. Every record kind reaches every exporter that handles it, and the output
