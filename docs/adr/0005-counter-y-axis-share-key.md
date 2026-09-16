@@ -3,6 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-06-28
 - **Amended by:** [ADR-0011](0011-process-lifetime-and-ordering.md)
+- **Modules:** exporters
 
 ## Context
 

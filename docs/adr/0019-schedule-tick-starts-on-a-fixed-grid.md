@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-20
+- **Modules:** cli, model, monitoring, stats
 
 ## Context
 

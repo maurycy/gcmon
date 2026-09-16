@@ -4,6 +4,7 @@
 - **Date:** 2026-06-27
 - **Amended by:** [ADR-0011](0011-process-lifetime-and-ordering.md),
   [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
+- **Modules:** exporters
 
 ## Context
 

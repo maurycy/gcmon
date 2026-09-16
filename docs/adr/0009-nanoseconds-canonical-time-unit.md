@@ -3,6 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-06-25
 - **Amended by:** [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)
+- **Modules:** exporters, model, support
 
 ## Context
 

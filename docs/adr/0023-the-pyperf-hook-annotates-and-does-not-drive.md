@@ -3,6 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-08-24
 - **Amended by:** [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)
+- **Modules:** model, pyperf
 
 ## Context
 

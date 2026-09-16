@@ -3,6 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-06-08
 - **Amended by:** [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
+- **Modules:** exporters
 
 ## Context
 

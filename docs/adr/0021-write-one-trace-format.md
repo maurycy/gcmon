@@ -4,6 +4,7 @@
 - **Date:** 2026-08-22
 - **Amended by:**
   [ADR-0010](0010-process-identity-cmdline-and-start-marker.md)
+- **Modules:** cli, exporters
 
 ## Context
 
@@ -104,10 +105,10 @@ new output format is a second `EventEncoder` implementation.
   slices overlap on that pid's track. The encoder resolves a command line
   against whatever holds the pid on this machine now, which for a reissued pid
   is an unrelated process. Both predate this record and both were reachable
-  through `--output-format perfetto` before. ADR-0012 rejected a custom
-  cmdline provider for `combine` on the grounds that "historical pids have no
-  cmdline to find"; a reissued pid falsifies that, and the fix is one argument
-  at the call site.
+  through `--output-format perfetto` before. `combine` takes the default
+  cmdline provider, on the grounds that historical pids have no cmdline to
+  find; a reissued pid falsifies that, and the fix is one argument at the call
+  site.
 - `TraceEvent` kept its Chrome-derived shape through this change. It is
   ADR-0007's format-independent intermediate and the Perfetto converter's
   input, and reshaping it around Perfetto's own vocabulary was a separate

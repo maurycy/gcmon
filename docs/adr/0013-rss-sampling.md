@@ -4,6 +4,7 @@
 - **Date:** 2026-07-13
 - **Amended by:** [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md),
   [ADR-0025](0025-create-every-process-in-one-place.md)
+- **Modules:** cli, exporters, monitoring
 
 ## Context
 

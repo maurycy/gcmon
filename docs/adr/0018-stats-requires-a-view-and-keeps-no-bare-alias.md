@@ -3,6 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-08-18
 - **Amended by:** [ADR-0021](0021-write-one-trace-format.md)
+- **Modules:** cli, stats
 
 ## Context
 

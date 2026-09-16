@@ -3,6 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-08-31
 - **Amended by:** [ADR-0011](0011-process-lifetime-and-ordering.md)
+- **Modules:** cli, control, exporters, model, monitoring
 
 ## Context
 

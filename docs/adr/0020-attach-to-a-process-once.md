@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-21
+- **Modules:** monitoring
 
 ## Context
 

@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-09-02
+- **Modules:** analysis, cli, exporters, monitoring
 
 ## Context
 

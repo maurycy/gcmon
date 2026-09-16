@@ -6,6 +6,7 @@
   [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
 - **Supersedes:** [ADR-0004](0004-toplevel-shared-counters.md),
   [ADR-0006](0006-begin-end-slice-pairs.md)
+- **Modules:** exporters, model
 
 ## Context
 

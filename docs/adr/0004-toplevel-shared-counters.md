@@ -4,6 +4,7 @@
   [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)
 - **Date:** 2026-06-27
 - **Amended by:** [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
+- **Modules:** exporters
 
 > Superseded on 2026-08-26. The single-arg display-name rule and the top-level
 > metric set holding both `heap_size` and `rss` are gone: the converter writes

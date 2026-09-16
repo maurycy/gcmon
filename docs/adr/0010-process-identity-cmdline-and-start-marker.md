@@ -4,6 +4,7 @@
 - **Date:** 2026-06-08
 - **Amended by:** [ADR-0011](0011-process-lifetime-and-ordering.md),
   [ADR-0025](0025-create-every-process-in-one-place.md)
+- **Modules:** exporters, monitoring
 
 ## Context
 

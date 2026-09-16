@@ -4,6 +4,7 @@
 - **Date:** 2026-06-14
 - **Amended by:** [ADR-0021](0021-write-one-trace-format.md),
   [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)
+- **Modules:** exporters
 
 ## Context
 
@@ -45,28 +46,24 @@ with no annotation left still earns its declaration is a separate question,
 and open.
 
 **Meta building is atomic.** The check and the emit happen inside a single
-critical section under the state lock, closing the race. This is the property
-the two previous implementations were reaching for and missing.
+critical section under the state lock, which is what closes the race between
+two threads reaching a brand-new pid.
 
-The split settled three further questions:
+The split settles three further questions:
 
 - **One place holds the seen-pid set**, `PerfettoTrackState` in the encoder
   ([ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)). Exactly one
   `ProcessMeta` per pid reaches the wire, a cmdline is registered at most
   once, and nothing needs a double-checked-locking dance around that
   registration.
-- **Cmdline registration ran under the I/O lock.** The old design ran the slow
-  `psutil.Process(pid).cmdline()` call outside any lock to avoid serializing
-  threads, which is what needed the double-checked locking. Moving it inside
-  `write_events` cost one serialized call per pid. The monitor reads it now,
-  once, where it creates the process
+- **The encoder records a command line rather than reading one.** The monitor
+  reads it once, where it creates the process
   ([ADR-0010](0010-process-identity-cmdline-and-start-marker.md),
-  [ADR-0025](0025-create-every-process-in-one-place.md)), and the encoder only
-  records what arrives.
-- **`JsonEventEncoder` wrote `[]\n` on close only if nothing was ever
-  written.** If any `write_events` succeeded it wrote `\n]\n` instead. Both
-  paths produced a valid JSON array. `ProtobufEventEncoder` writes no file at
-  all for a run with nothing in it.
+  [ADR-0025](0025-create-every-process-in-one-place.md)). A slow
+  `psutil.Process(pid).cmdline()` call inside the encoder would run either
+  under the I/O lock, serializing one call per pid, or outside every lock and
+  back into double-checked locking.
+- **A run with nothing in it writes no file at all.**
 
 ## Consequences
 

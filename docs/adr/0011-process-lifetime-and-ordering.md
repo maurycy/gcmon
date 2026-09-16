@@ -8,6 +8,7 @@
   [ADR-0019](0019-schedule-tick-starts-on-a-fixed-grid.md),
   [ADR-0025](0025-create-every-process-in-one-place.md),
   [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
+- **Modules:** exporters, monitoring
 
 ## Context
 

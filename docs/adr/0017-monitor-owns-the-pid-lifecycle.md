@@ -4,6 +4,7 @@
 - **Date:** 2026-08-17
 - **Amended by:** [ADR-0021](0021-write-one-trace-format.md),
   [ADR-0025](0025-create-every-process-in-one-place.md)
+- **Modules:** monitoring
 
 ## Context
 

@@ -3,6 +3,7 @@
 - **Status:** Superseded by
   [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)
 - **Date:** 2026-06-14
+- **Modules:** exporters, model
 
 > Superseded on 2026-08-26. Both halves of the argument are gone: the two
 > backends this reconciled became one

@@ -17,6 +17,8 @@ gets cut on review, and asking for more costs one line.
 | Internal work: refactors, performance, tests | the standing `### Internal` line | an entry of its own |
 | A new user-facing documentation file | `### Documentation` | edits to a page that exists |
 | Why the design has this shape | `docs/adr/` | user docs, docstrings, comments |
+| Where a decision lives in the code | the record's `Modules` field | a file path in an ADR's prose |
+| What a record used to say, and when it changed | git | a dated note in the record |
 | Work specified but not built | `specs/` | ADRs |
 | How to drive gcmon, how to read its output | `docs/*.md` | CPython internals |
 | A CPython or OS internal the design rests on | `docs/internals/` | `docs/*.md` and the ADRs |

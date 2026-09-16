@@ -2,6 +2,7 @@
 
 - **Status:** Superseded by [ADR-0021](0021-write-one-trace-format.md)
 - **Date:** 2026-06-25
+- **Modules:** cli, exporters
 
 > gcmon writes one trace format now, and `chrome+perfetto` went with the
 > second one. [ADR-0021](0021-write-one-trace-format.md) states the half of

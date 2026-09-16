@@ -6,6 +6,7 @@
   [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md),
   [ADR-0025](0025-create-every-process-in-one-place.md),
   [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
+- **Modules:** monitoring, pyperf, stats
 
 ## Context
 

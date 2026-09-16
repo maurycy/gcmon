@@ -36,7 +36,7 @@ Single-context repo (most repos), which is what this repo is:
 
 ```
 /
-├── CONTEXT.md                          ← not yet written
+├── CONTEXT.md                          ← the vocabulary
 ├── docs/adr/
 │   ├── 0008-buffered-exporter-and-encoder-protocol.md
 │   └── 0011-process-lifetime-and-ordering.md
@@ -65,15 +65,30 @@ When your output names a domain concept (in an issue title, a refactor
 proposal, a hypothesis, a test name), use the term as defined in `CONTEXT.md`.
 Don't drift to synonyms the glossary explicitly avoids.
 
-Until `CONTEXT.md` exists, `specs/CONVENTIONS.md` holds the vocabulary rules:
-one entry read out of the target's ring is a **record**, one thing written
-into a trace is an **event**, an interpreter is identified by its **iid**, an
-interval whose records never reached gcmon is a **loss window**, and a
-`Processes`-track slice is a **span**.
+`specs/CONVENTIONS.md` rule 4 holds the same vocabulary as a rule a spec is
+held to.
 
 If the concept you need isn't in the glossary yet, that's a signal: either
 you're inventing language the project doesn't use (reconsider) or there's a
 real gap (note it for `/domain-modeling`).
+
+## Writing or editing a record
+
+[`docs/adr/README.md`](../adr/README.md) is the authority on the format, and a
+new record copies [`0000-template.md`](../adr/0000-template.md). Two things to
+get right:
+
+- **A record has no Implementation section.** Context, Decision, Consequences
+  and Alternatives are the whole of it. It anchors into the source through the
+  `Modules` field in its header, at the granularity that survives a file
+  moving inside a package, and `tests/infra/test_adr_headers.py` fails when a
+  named package is gone or when the index drifts from the headers. A file path
+  in the prose goes stale on the next rename. Point the other way instead,
+  from a docstring citing ADR-NNNN.
+- **A record carries no history.** A clause that is refined is rewritten in
+  place, present tense. The `Amended by` field names the records that later
+  reshaped this one, git holds what changed and when, and a superseded record
+  is trimmed to what it still decides.
 
 ## Flag ADR conflicts
 

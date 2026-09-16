@@ -3,6 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-06-12 (the stress marker)
 - **Amended by:** [ADR-0026](0026-two-subsystems-over-a-shared-base.md)
+- **Modules:** tests
 
 ## Context
 

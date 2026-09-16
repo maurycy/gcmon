@@ -6,10 +6,11 @@ rejected, and the constraints the decision puts on future work. Read one when
 you want to know why a piece of the design looks the way it does.
 
 An ADR does not document *what* the code does. The code and its tests are the
-authority on that. Each ADR anchors into the source by module path and by the
-names the outside world sees (a slice or arg name in a trace, a JSONL field, a
-CLI flag, a `--stats` column), so you can check the two against each other.
-Renaming one of those is itself a decision, and the record moves with it.
+authority on that. Each ADR anchors into the source by the modules in its
+header and by the names the outside world sees (a slice or arg name in a
+trace, a JSONL field, a CLI flag, a `--stats` column), so you can check the
+two against each other. Renaming one of those is itself a decision, and the
+record moves with it.
 
 Forward-looking work that has been specified but not yet built lives in
 [`specs/`](../../specs/README.md), not here: one file per open item, deleted
@@ -37,6 +38,11 @@ record below.
 - **Amended by:** the records that later reshaped this one, ascending, where
   any exist. It is the reverse of the link the amending record already
   carries, and nothing else supplies that direction.
+- **Modules:** the packages under `src/gcmon/` the decision shapes, ascending,
+  or `tests` for a record about the suite. This is the record's anchor into
+  the source, at the granularity that survives a file moving inside a package.
+  The index below reads from it, and `tests/infra/test_adr_headers.py` fails
+  when the two drift or when a named package is gone.
 - **Sections:** Decision holds the rules, one to a bullet, each of which
   something in the code obeys. Consequences holds what follows from them and
   never restates one: "there is now one prune" is the decision, not a
@@ -50,7 +56,7 @@ record below.
   collection rate, a bar's width, a byte count, an error bound. Those date a
   record to the machine that produced them and settle nothing the shape does
   not settle on its own.
-- **Anchors:** module paths, class names and the names outside the module
+- **Anchors:** the Modules field, class names and the names outside the module
   boundary. A record names no function or method: architecture does not turn
   on what a helper is called, and a record that tracks internal names goes
   stale on every refactor. Point the other way instead, from a docstring
