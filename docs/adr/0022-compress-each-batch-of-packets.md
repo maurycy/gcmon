@@ -111,22 +111,3 @@ flush, and the highest cannot run there.
 - **A minimum size below which a batch is written plain.** A one-packet batch
   comes out larger than it went in. Rejected: the branch costs more in
   untested code than it saves in bytes.
-
-## Implementation
-
-- `src/gcmon/exporters/encoder.py` holds the write path a flush and the
-  closeout share, the two levels, and the import that resolves the codec.
-- `src/gcmon/exporters/perfetto_proto.py` holds
-  `TracePacketField.ZSTD_COMPRESSED_PACKETS` and `COMPRESSED_PACKETS`, one per
-  branch.
-- `tests/perfetto_prebuilt.py` pins the trace processor the suite drives, to a
-  build that reads field 133.
-- Tests: `tests/exporters/test_perfetto_compression.py` covers the compressed
-  batch, the flush boundary, the liveness-only closeout, what a killed run
-  still opens and what an interpreter without libzstd writes instead;
-  `tests/exporters/test_perfetto_proto.py` checks the field numbers against
-  the generated descriptor; `tests/helpers.py` holds the reader every Perfetto
-  test reads through, and `test_inflating_the_batches_yields_the_packets`
-  inflates a real run's batches by an independent route to check it;
-  `tests/benchmarks/test_bench_trace_write.py` measures the write path on the
-  CodSpeed job.

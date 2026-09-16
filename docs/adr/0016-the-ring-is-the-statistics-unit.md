@@ -1,15 +1,11 @@
 # ADR-0016: Report statistics per ring, and drop the per-process row from the `--stats` table
 
 - **Status:** Accepted
-- **Date:** 2026-08-15, amended:
-  - 2026-08-26: `heap_size` gained its interpreter on the trace, see
-    [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)
-  - 2026-08-31: the epoch moved onto a `Process` the monitor creates, see
-    [ADR-0025](0025-create-every-process-in-one-place.md)
-  - 2026-09-11: `heap_size` lost its interpreter from the track name, see
-    [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
-  - 2026-09-01: the track keys it cites became per process, see
-    [ADR-0011](0011-process-lifetime-and-ordering.md)
+- **Date:** 2026-08-15
+- **Amended by:** [ADR-0011](0011-process-lifetime-and-ordering.md),
+  [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md),
+  [ADR-0025](0025-create-every-process-in-one-place.md),
+  [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
 
 ## Context
 
@@ -218,22 +214,3 @@ run-wide, the scope `Total` reports.
   so that a dead one can keep its heading, and on a target that recycles pids
   the table thins as the run goes on. The epoch costs one integer per pid and
   gives both processes what they earned.
-
-## Implementation
-
-- `src/gcmon/stats/streaming_stats.py` keys sampled metrics, loss and lifetime
-  totals on the ring, bounds the active set, and answers both a ring's totals
-  and a fold over them. One entry holds all three, so a ring's numbers settle
-  together, and a key is the process and the interpreter rather than three
-  numbers.
-- `src/gcmon/stats/stats_output.py` builds the table's two levels and the
-  footer notes, and owns the `PID:IID` spelling.
-- `src/gcmon/monitoring/monitor.py` passes the iid it has in hand when
-  recording loss, holds the advisory's once-per-run latch, and settles a pid's
-  rings where it drops that pid's monitor state.
-- `src/gcmon/pyperf/hook.py` keys loss per ring when replaying a capture from
-  JSONL, so the offline path reconstructs what the live path recorded.
-- `tests/stats/test_stats_output.py` pins the table's two levels and the
-  footer wording; `tests/stats/test_stats.py` pins the per-ring arithmetic,
-  the settling and the bound; `tests/monitoring/test_loss_replay.py` pins that
-  a replayed capture agrees with the live one.

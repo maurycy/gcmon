@@ -13,9 +13,8 @@ each time.
 
 Attaching scans the target's loaded modules for the runtime section and
 validates what it finds; a read is a handful of remote memory copies. The gap
-is two orders of magnitude; see the benchmarks below. gcmon therefore spent
-almost all of every poll re-deriving what it had derived on the poll before,
-once per process per tick.
+is two orders of magnitude. gcmon therefore spent almost all of every poll
+re-deriving what it had derived on the poll before, once per process per tick.
 
 CPython 3.15 offers both shapes: a free function that attaches, reads and
 detaches, and a `GCMonitor` object that attaches once and reads many times.
@@ -27,7 +26,9 @@ detaches, and a `GCMonitor` object that attaches once and reads many times.
 in the same pass that drops that pid's cursors and streaming statistics.
 [ADR-0017](0017-monitor-owns-the-pid-lifecycle.md)'s rule extends to it
 unchanged: cursors and attachment share a lifetime, and nothing prunes either
-one anywhere else.
+one anywhere else. Child discovery stays outside the reader: it is stateless,
+caches nothing, and answers a question about the process tree rather than
+about a ring.
 
 **`debug=True` is passed explicitly, and it selects an exception type rather
 than a log level.** Under `debug=False` a dead target surfaces as
@@ -90,6 +91,9 @@ cursor makes a number wrong; a stale attachment invents the data.
   Widening the translation to swallow either would turn a bug into a silent
   "target unavailable" and burn the startup timeout hiding it.
 
+- **The gap the decision rests on is measured**, a held read against a fresh
+  attach, so a change that reattaches per poll fails a benchmark rather than
+  quietly costing an order of magnitude.
 - **The first poll of each process still pays for the attach**, and
   `Read Time` carries that cost rather than excluding it. An operator sees one
   outlier per process, and the cost of reading alone after it.
@@ -121,23 +125,3 @@ cursor makes a number wrong; a stale attachment invents the data.
   the platform-specific error vocabulary the seam exists to contain. Returning
   an empty result instead of raising was also rejected: it loses the cause the
   debug log prints.
-
-## Implementation
-
-- `src/gcmon/monitoring/events_reader.py` holds `EventsReader`,
-  `RemoteEventsReader` and `TargetUnavailable`, and is the only module in the
-  package that imports a stateful handle from `_remote_debugging`.
-  `get_child_pids` stays where it is: it is stateless, caches nothing, and
-  answers a question about the process tree rather than about a ring.
-- `src/gcmon/monitoring/monitor.py` takes the reader as a required keyword
-  argument, calls it inside the `time.monotonic_ns` brackets that feed
-  `Read Time`, and prunes it alongside the cursors.
-  [ADR-0015](0015-gc-loss-spans-on-their-own-track.md) fixes the read-start
-  instant as the one that closes the previous poll's interval, so that bracket
-  did not move.
-- Tests: `tests/monitoring/test_events_reader.py` for the lifetime, against a
-  counting stand-in for the attachment and against real subprocesses;
-  `tests/benchmarks/test_bench_events_reader.py` for the gap the decision
-  rests on, a held read measured against a fresh attach;
-  `tests/monitoring/test_monitor.py` for both arms of a poll, since a test
-  watching one arm passes with the two swapped, and for the prune.

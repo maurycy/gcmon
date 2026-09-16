@@ -1,9 +1,8 @@
 # ADR-0009: Store `TraceEvent.ts` in nanoseconds; convert at the encoder
 
 - **Status:** Accepted
-- **Date:** 2026-06-25, amended:
-  - 2026-08-26: the factories went with the event types they built, see
-    [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)
+- **Date:** 2026-06-25
+- **Amended by:** [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)
 
 ## Context
 
@@ -68,15 +67,3 @@ nanoseconds, unless you are looking at bytes on disk.
 - **A nanosecond mode for the Chrome output.** Out of scope. The Chrome Trace
   Event format is a public spec with microsecond timestamps; deviating would
   break the viewers.
-
-## Implementation
-
-- `src/gcmon/model/trace_event.py` holds the event structs, whose timestamp
-  fields are nanoseconds throughout.
-- `src/gcmon/support/time_units.py` held the ns→µs conversion until its one
-  caller went.
-- `src/gcmon/exporters/perfetto_format.py` passes `event.ts` straight to the
-  packet timestamp on every branch.
-- Tests: `tests/exporters/test_trace_converter.py` for timestamps preserved in
-  nanoseconds through the model; the nanosecond duration comparison in
-  `tests/cli/analyze/test_convert_cmd_perfetto.py`.

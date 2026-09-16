@@ -1,13 +1,9 @@
 # ADR-0013: Sample RSS in a standalone `RssSampler`, on the process track rather than a thread's
 
 - **Status:** Accepted
-- **Date:** 2026-07-13, amended:
-  - 2026-08-02: caller note added
-  - 2026-08-17: `tick` took the instant in nanoseconds, which removed the
-    per-sample clock read and narrowed "one clock read per tick" to one
-    *stamping* read
-  - 2026-08-31: `tick` took processes rather than pids, see
-    [ADR-0025](0025-create-every-process-in-one-place.md)
+- **Date:** 2026-07-13
+- **Amended by:** [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md),
+  [ADR-0025](0025-create-every-process-in-one-place.md)
 
 ## Context
 
@@ -72,16 +68,12 @@ sampled.** The live set is cleared each iteration, so a pid must pass a fresh
 poll to be sampled. No stale pids, and a process that dies between the poll
 and the RSS read yields nothing.
 
-**Amended 2026-08-26 by
-[ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md).** There was a
-sentinel `tid = -1` here, and a counter track keyed `(pid, -1, "rss", "rss")`.
-The decision underneath is confirmed rather than overturned: RSS belongs to
-the process and must not conjure a thread. An RSS sample names a
-`ProcessTrack(process)` now, so that is what the row is rather than a number
-reserved to stand for it, and there is no thread descriptor to suppress. The
-track is still parented directly to the process track, outside the
-`GC Metrics` group, with the display name `rss` -- by construction now rather
-than by membership of a metric set.
+**RSS belongs to the process and conjures no thread.** A sample names a
+`ProcessTrack(process)`
+([ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)), so the row is
+the process rather than a number reserved to stand for one, and there is no
+thread descriptor to suppress. The track parents to the process row, outside
+the `GC Metrics` group, with the display name `rss`, all by construction.
 
 **Opt-in, with a decoupled interval.** `--rss` / `GCMON_RSS` (truthy: `1`,
 `true`, `yes`, `on`) enables it; `--rss-interval` / `GCMON_RSS_INTERVAL`
@@ -134,23 +126,3 @@ defaults to 1.0 s, independent of the 0.1 s GC poll rate.
 - **A guard-and-import at each sample.** Rejected: the availability answer
   cannot change during a run, so checking once at construction is cheaper and
   clearer.
-
-## Implementation
-
-- `src/gcmon/monitoring/rss_sampler.py` holds `RssSampler`, its
-  `tick(now_ns, live)` entry point, the interval check, and the default
-  sampler catching `NoSuchProcess` / `AccessDenied`.
-- `src/gcmon/exporters/perfetto_exporter.py` turns a sample into a `Counter`
-  on a `ProcessTrack`. There is no sentinel and no thread meta to suppress.
-- `src/gcmon/exporters/perfetto_format.py` parents a `ProcessTrack`'s counter
-  to the process row, and carries `"rss"` in the rank table.
-- `src/gcmon/monitoring/monitor_loop.py` takes one stamping read per tick and
-  hands the instant to the monitor and then to the sampler; the monitor
-  collects the live pids and reports liveness
-  ([ADR-0017](0017-monitor-owns-the-pid-lifecycle.md)).
-  `src/gcmon/cli/monitor/loop_runner.py` constructs the sampler.
-- `src/gcmon/cli/monitor/_env.py` reads `GCMON_RSS` and `GCMON_RSS_INTERVAL`.
-- Tests: `tests/monitoring/test_rss_sampler.py` (interval timing, live-pid
-  filtering, injected sampler, psutil-unavailable fallback);
-  `tests/exporters/test_perfetto_counter_tracks.py` (the row the sample lands
-  on); `tests/benchmarks/test_rss_sampler_bench.py` (read latency).

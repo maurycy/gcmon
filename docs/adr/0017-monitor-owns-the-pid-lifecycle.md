@@ -1,11 +1,9 @@
 # ADR-0017: Give the monitor every piece of per-pid state, and leave the loop the clock
 
 - **Status:** Accepted
-- **Date:** 2026-08-17, amended:
-  - 2026-08-22: the pinned trace became the Perfetto one, see
-    [ADR-0021](0021-write-one-trace-format.md)
-  - 2026-08-31: the process registry joined the state the prune owns, see
-    [ADR-0025](0025-create-every-process-in-one-place.md)
+- **Date:** 2026-08-17
+- **Amended by:** [ADR-0021](0021-write-one-trace-format.md),
+  [ADR-0025](0025-create-every-process-in-one-place.md)
 
 ## Context
 
@@ -55,6 +53,14 @@ cursor and re-exports its whole ring.
 
 - A test drives one method and asserts on its report, instead of reproducing
   the loop's orchestration against a mock.
+- Asserting the pruned state is empty would prove the prune ran, not that it
+  was right. The evidence is a pid that leaves and returns holding an
+  unrelated counter: it emits records and no loss window, while the same ring
+  without the departure opens one. Both halves of policy-stays-cursors-go need
+  an assertion each, since a test watching one half passes with the other
+  inverted.
+- The pinned whole-run trace was written before this change and passed through
+  it untouched, which is the evidence that operators see the same trace.
 - Liveness reporting moved off `MonitorLoop`, so
   [ADR-0011](0011-process-lifetime-and-ordering.md) was amended rather than
   contradicted, and its constraints hold unchanged.
@@ -77,27 +83,3 @@ cursor and re-exports its whole ring.
   waiting, and the stop event is what the signal handler sets. The count of
   modules was never the problem; the boundary ran through the per-pid state
   instead of around it.
-
-## Implementation
-
-- `src/gcmon/monitoring/monitor.py` holds the tick, the prune and
-  `PollReport`, and is the only caller of
-  `src/gcmon/monitoring/process_registry.py`'s writes.
-  `src/gcmon/monitoring/monitor_loop.py` holds the clock, the stop event, the
-  rate and the sampler call. `src/gcmon/monitoring/wait_policy.py` holds the
-  no-wait factory, a function rather than the class object, which satisfies
-  `WaitPolicyFactory` structurally but not to a type checker.
-- `tests/monitoring/test_monitor.py` drives ticks against a scripted child
-  listing and asserts at the exporter. A pid that leaves and returns holding
-  an unrelated counter emits records and no loss window; the same ring without
-  the departure does open one, which is what gives the first assertion teeth.
-  Asserting the state dicts are empty would prove the prune ran, not that it
-  was right. Both halves of policy-stays-cursors-go are covered, since a test
-  watching one half passes with the other inverted.
-- `tests/monitoring/test_monitored_run_trace.py` runs the whole loop over the
-  capture in `tests/captures.py` on a scripted clock and pins the output
-  against `tests/fixtures/monitored_run_perfetto_trace.txt`, read back through
-  Perfetto's own generated schema
-  ([ADR-0014](0014-perfetto-integration-test-strategy.md)). Written before
-  this change and passed through it untouched, which is the evidence that
-  operators see the same trace.

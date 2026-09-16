@@ -1,9 +1,8 @@
 # ADR-0018: Require a value on `--stats`, and keep no bare alias
 
 - **Status:** Accepted
-- **Date:** 2026-08-18, amended:
-  - 2026-08-22: `GCMON_FORMAT` took the same shape, see
-    [ADR-0021](0021-write-one-trace-format.md)
+- **Date:** 2026-08-18
+- **Amended by:** [ADR-0021](0021-write-one-trace-format.md)
 
 ## Context
 
@@ -65,6 +64,15 @@ and "a table" is two, so `off` names something and `on` does not. A blank
 the table's first column. `full` is a size word, and the only candidate that
 reads as the larger of a pair.
 
+**One enum owns the vocabulary.** `StatsView` feeds argparse's `choices` and
+maps a typed word to a view, to no table for the off words, or to an error, so
+the usage line and the parser cannot drift apart. No table is the absence of a
+member rather than a member of its own: there is nothing to render for it, and
+one member cannot carry four words.
+
+[CLI usage](../cli.md#--stats) lists the words the flag and the variable take;
+[Statistics](../statistics.md) reads what the two views print.
+
 ## Consequences
 
 Every existing `--stats` invocation stops at parse time, with a message naming
@@ -84,6 +92,15 @@ view to choose. They also give the flag something it could not say: the
 variable sets a default for every run in the shell, and `--stats=no` declines
 it for one. `GCMON_RSS` has the same shape and no such escape, since `--rss`
 is a `store_true` with no off spelling.
+
+The refusal is raised where the options are built rather than where the
+variable is read. Every `get_env_*` runs while the parser is being built,
+before logging is configured, so the reading cannot report what it rejects;
+`rate`, `duration` and `flush_threshold` are turned down at the same later
+point.
+
+The narrower view carries the wider one's cells unchanged, so a change that
+alters a cell in one alters it in both.
 
 `GCMON_STATS` is the first gcmon environment variable that can fail a run.
 Every other `get_env_*` fell back on an unreadable value: `GCMON_FORMAT=bogus`
@@ -135,29 +152,3 @@ without saying which, and that is the question worth stopping for.
 Rejected for this variable: consistency with the flag is worth more than
 consistency with the other variables, because the failure mode is a long
 capture that prints no table at the end.
-
-## Implementation
-
-`src/gcmon/cli/monitor/monitoring_options.py` declares `--stats` and refuses a
-bad `GCMON_STATS`; `src/gcmon/cli/monitor/_env.py` reads the raw value. The
-refusal does not sit with the reading, because every `get_env_*` runs while
-the parser is being built, before logging is configured. The options builder
-turns it down instead, alongside `rate`, `duration` and `flush_threshold`,
-once logging exists.
-
-`StatsView` in `src/gcmon/stats/views.py` holds the view, beside the
-`TableFormat` behind `--table-format`, and each member's value is the word the
-operator types. The enum owns the vocabulary: it feeds argparse `choices`, and
-maps a typed word to a view, to `None` for the words in `STATS_OFF_WORDS`, or
-to `ValueError`. The usage line and the parser cannot drift apart, and
-`monitoring_options` keeps only the flag and the message naming `GCMON_STATS`.
-No table is `None` rather than a member: there is nothing to render for it,
-and one member cannot carry four words.
-
-[CLI usage](../cli.md#--stats) lists the words the flag and the variable take;
-[Statistics](../statistics.md) reads what the two views print.
-`tests/stats/test_views.py` pins the vocabulary, every word the flag takes and
-every word it refuses. `tests/stats/test_stats_output.py` locks in that the
-narrower view carries the wider one's cells unchanged, line for line where the
-ring labels fit under the `PID:IID` header, and cell for cell where they do
-not and the first column pads one wider.

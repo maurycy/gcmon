@@ -89,6 +89,14 @@ summary rather than the loop.
 - `--rate` has a lower bound where it had none. gcmon accepted anything under
   a millisecond before and could never hold it, so the run that used to start
   now does not.
+- The grid arithmetic and the run report sit in `model` rather than beside the
+  loop. `_env` and the option parser both import `stats.views`, so putting
+  either next to `monitor_loop` would pull the monitor in behind every
+  environment read. The per-poll report stays beside what produces it and
+  needs neither.
+- The loop is tested against a scripted clock and a stop event that records
+  what it was asked to wait for, never against elapsed wall time, which would
+  assert the operating system rather than gcmon.
 
 ## Alternatives considered
 
@@ -122,30 +130,3 @@ summary rather than the loop.
   the answer is meaningless in the first few ticks, when the advisory is most
   likely to fire, so it would need a warm-up threshold with nothing to justify
   it.
-
-## Implementation
-
-- Two leaf modules carry what has to reach the option parser without dragging
-  the loop behind it. `_env` and the parser both import `stats.views`, so
-  importing `monitor_loop` there would pull the monitor in behind every
-  environment read. `src/gcmon/model/schedule.py` holds `MIN_IDLE_NS`,
-  `MIN_RATE_NS` and the grid arithmetic; `src/gcmon/model/run_report.py` holds
-  the run report and `OVERRUN_SHARE`, which crosses from the loop to the
-  summary. The per-poll report sits in `src/gcmon/monitoring/monitor.py`,
-  beside what produces it, and needs neither.
-- `src/gcmon/monitoring/monitor_loop.py` holds the two clock reads.
-- `src/gcmon/stats/stats_output.py` states the tick counts and selects the
-  remedy; `src/gcmon/monitoring/monitor.py` carries the advisory that no
-  longer prescribes one.
-- `src/gcmon/cli/monitor/_env.py` parses one rate spelling for both `--rate`
-  and `GCMON_RATE`; `src/gcmon/cli/monitor/monitoring_options.py` reports what
-  it rejects and applies the same minimum to a rate arriving from anywhere
-  else.
-- Tests: `tests/model/test_schedule.py` for the grid, the skip and the floor,
-  asserted on the arithmetic directly; `tests/monitoring/test_monitor_loop.py`
-  for the rest, driven by a scripted clock and a stop event that records what
-  it was asked to wait for, never by elapsed wall time, which would assert the
-  operating system rather than gcmon; `tests/stats/test_stats_output.py` for
-  the summary line and the two remedies;
-  `tests/monitoring/test_monitor_coverage.py` for the advisory keeping to what
-  it knows.

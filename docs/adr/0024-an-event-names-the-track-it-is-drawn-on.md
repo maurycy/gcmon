@@ -1,11 +1,9 @@
 # ADR-0024: An event names the track it is drawn on
 
 - **Status:** Accepted
-- **Date:** 2026-08-26, amended:
-  - 2026-08-31: a track named a process rather than a pid, see
-    [ADR-0025](0025-create-every-process-in-one-place.md)
-  - 2026-09-11: the `heap_size` qualifier went, see
-    [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
+- **Date:** 2026-08-26
+- **Amended by:** [ADR-0025](0025-create-every-process-in-one-place.md),
+  [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
 - **Supersedes:** [ADR-0004](0004-toplevel-shared-counters.md),
   [ADR-0006](0006-begin-end-slice-pairs.md)
 
@@ -106,23 +104,3 @@ fuzz suite checks it against the real trace processor.
 - **Qualify `heap_size` only when a process has more than one interpreter.**
   Rejected as unimplementable rather than undesirable: gcmon is a streaming
   writer and does not know at descriptor time whether a sibling will appear.
-
-## Implementation
-
-- `src/gcmon/model/trace_event.py` holds the three track structs, the `Track`
-  and `TraceEvent` unions, and `Slice` / `Instant` / `Counter`.
-- `src/gcmon/exporters/perfetto_format.py` derives a track's descriptors,
-  expands a `Slice` into its pair, and holds the top-level metric set.
-- `src/gcmon/exporters/perfetto_track_state.py` keys its uuid tables on a
-  `Track`.
-- `src/gcmon/exporters/trace_converter.py` writes every display name.
-- `src/gcmon/exporters/perfetto_process_lifetime.py` folds a slice into its
-  pid's `Processes` span at both ends.
-- Tests: `TestATrackIsDescribedOffTheEventsOnIt` in
-  `tests/exporters/test_perfetto_format.py`; `TestTwoInterpretersHeapSizes` in
-  `tests/exporters/test_perfetto_exporter_integration.py`;
-  `TestMetaDedupRaceClosed` in
-  `tests/exporters/test_exporter_thread_safety.py`; and
-  `TestASliceExpandsIntoAPair` and `TestTheTraceProcessorBuildsTheNesting` in
-  `tests/exporters/test_perfetto_slice_expansion.py`, the second asking the
-  real trace processor about the ties the expansion rests on.

@@ -1,11 +1,8 @@
 # ADR-0001: Hand-roll the Perfetto protobuf encoder; keep `perfetto` out of the runtime dependency tree
 
 - **Status:** Accepted
-- **Date:** 2026-06-08, amended:
-  - 2026-08-01: `perfetto_format.py` split into five modules, and its tests to
-    match
-  - 2026-09-08: the dependency argument narrowed to the pyperf hook, see
-    ADR-0026
+- **Date:** 2026-06-08
+- **Amended by:** [ADR-0026](0026-two-subsystems-over-a-shared-base.md)
 
 ## Context
 
@@ -100,8 +97,10 @@ helpers.
   meaning field number and wire type, instead of round-tripping through
   gcmon's own enums. A round-trip test reads back through the same constant it
   wrote with, so it is equally happy with a correct and an incorrect value; it
-  would not have caught any of the field-number bugs above. The end-to-end
-  guard is ADR-0014's trace-processor tests.
+  would not have caught any of the field-number bugs above. The numbers
+  themselves are read back out of the `perfetto` package's generated
+  descriptors, which is the only assertion that notices an upstream
+  renumbering. The end-to-end guard is ADR-0014's trace-processor tests.
 - Byte-level parity with the official package was verified once: over a full
   GC trace both encoders produced identical output, and the trace processor
   reported matching rows across the `track`, `process`, `thread`, `slice`, and
@@ -120,17 +119,3 @@ helpers.
   field 10.** Rejected: field 1 is now a `uint64` IID. A string written there
   is either dropped or read as a garbage IID that could collide with a real
   interned name.
-
-## Implementation
-
-- `src/gcmon/exporters/protobuf_encoder.py` holds the wire primitives, with
-  64-bit sign extension so a negative value encodes in full rather than being
-  masked to 32 bits.
-- `src/gcmon/exporters/perfetto_proto.py` holds every field number and enum
-  value, and nothing else.
-- `src/gcmon/exporters/perfetto_builders.py` builds each sub-message
-  field-by-field.
-- Wire-level regression tests: `tests/exporters/test_perfetto_builders.py`
-  asserts raw field numbers and wire types rather than round-tripping, and
-  `tests/exporters/test_perfetto_proto.py` reads the numbers back out of the
-  `perfetto` package's generated descriptors rather than trusting gcmon's own.

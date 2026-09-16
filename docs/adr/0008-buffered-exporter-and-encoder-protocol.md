@@ -2,6 +2,8 @@
 
 - **Status:** Accepted
 - **Date:** 2026-06-14
+- **Amended by:** [ADR-0021](0021-write-one-trace-format.md),
+  [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)
 
 ## Context
 
@@ -22,40 +24,25 @@ adding events for a brand-new pid could both pass the check and both emit a
 
 ## Decision
 
-**`BufferedTraceExporter`** (`_buffered_exporter.py`) owns the lifecycle: the
-two locks, the buffer and flush threshold, `add_event` / `add_instant_event` /
-`close`, and building a pid's meta events.
+**`PerfettoExporter` owns the lifecycle:** the two locks, the buffer and flush
+threshold, and `add_event` / `add_instant_event` / `close`.
 
 **`EventEncoder`** (a `Protocol` in `encoder.py`) owns format-specific byte
 production through three methods: `open(path)`, `write_events(events)`,
-`close()`. Two implementations existed at the time: `JsonEventEncoder` for
-Chrome Trace Event JSON and `ProtobufEventEncoder` for Perfetto binary. Only
-the second is left ([ADR-0021](0021-write-one-trace-format.md)); the protocol
-stays, because `combine` drives the encoder with no exporter around it.
+`close()`. `ProtobufEventEncoder` is its one implementation
+([ADR-0021](0021-write-one-trace-format.md)), and the protocol stays because
+`combine` drives the encoder with no exporter around it.
 
-`TraceExporter` and `PerfettoExporter` become thin subclasses that construct
-the right encoder. Their public constructor signatures are unchanged.
+The exporter constructs its encoder, and its public constructor signature is
+unchanged.
 
-**Amended 2026-08-26: the base class goes.** `BufferedTraceExporter` merged
-into `PerfettoExporter`, and `_buffered_exporter.py` with it. The argument
-above is a duplication argument -- two exporters independently implementing
-one lifecycle -- and [ADR-0021](0021-write-one-trace-format.md) left one
-exporter, so the base had a fan-out of one. It had also shrunk: meta building
-moved to the encoder under
-[ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md), taking the
-seen-pid set and the atomic check-and-emit with it, so what merged was a
-buffer, two locks and four one-line `_enqueue` calls. The subclass's second
-handle to the encoder goes with it: that attribute existed only because the
-base held the encoder as an `EventEncoder`, and one class holds it at its own
-type.
-
-**The `EventEncoder` protocol stays declared, and is now typed against
-nothing.** Both callers -- `PerfettoExporter` and `combine` -- name
+**The `EventEncoder` protocol stays declared, and is typed against nothing.**
+Both callers -- `PerfettoExporter` and `combine` -- name
 `ProtobufEventEncoder`. What ADR-0021 defended when it kept this split is the
 encoder being a separate class that runs with no exporter, no buffer and no
-lock around it, and the merge leaves that untouched. Whether a protocol with
-no annotation left still earns its declaration is a separate question, and
-open.
+lock around it, and dropping the base left that untouched. Whether a protocol
+with no annotation left still earns its declaration is a separate question,
+and open.
 
 **Meta building is atomic.** The check and the emit happen inside a single
 critical section under the state lock, closing the race. This is the property
@@ -63,12 +50,11 @@ the two previous implementations were reaching for and missing.
 
 The split settled three further questions:
 
-- **The seen-pid set lived in the base, not the encoder**, which is what let
-  the encoder rely on exactly one `ProcessMeta` per pid arriving, register a
-  cmdline at most once, and drop the double-checked-locking dance around that
-  registration. The set followed meta building to the encoder
-  ([ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)), where
-  `PerfettoTrackState` holds it.
+- **One place holds the seen-pid set**, `PerfettoTrackState` in the encoder
+  ([ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)). Exactly one
+  `ProcessMeta` per pid reaches the wire, a cmdline is registered at most
+  once, and nothing needs a double-checked-locking dance around that
+  registration.
 - **Cmdline registration ran under the I/O lock.** The old design ran the slow
   `psutil.Process(pid).cmdline()` call outside any lock to avoid serializing
   threads, which is what needed the double-checked locking. Moving it inside
@@ -101,6 +87,15 @@ The split settled three further questions:
 
 ## Alternatives considered
 
+- **A buffering base class the exporters share.** What this record decided
+  first, and rejected once [ADR-0021](0021-write-one-trace-format.md) left one
+  exporter: the base had a fan-out of one. Meta building had moved to the
+  encoder under [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md),
+  taking the seen-pid set and the atomic check-and-emit with it, so what
+  remained to merge was a buffer, two locks and four one-line `_enqueue`
+  calls. The second handle to the encoder went with it: that attribute existed
+  only because the base held the encoder as an `EventEncoder`, and one class
+  holds it at its own type.
 - **A common base class with abstract encode methods instead of a separate
   protocol object.** Rejected: composition lets the encoder run without an
   exporter, which is what `combine` needs.
@@ -111,14 +106,3 @@ The split settled three further questions:
 - **Fold `JsonlExporter` / `StdoutExporter` into the same base.** Not done:
   they consume raw `TGCStatsInfo`, not `TraceEvent`, so the data shapes
   differ. This remains open work.
-
-## Implementation
-
-- `src/gcmon/exporters/perfetto_exporter.py` holds the buffer and the two
-  locks the base held, merged in by this record's amendment.
-- `src/gcmon/exporters/encoder.py` declares the `EventEncoder` protocol, its
-  one implementation, and the command line that one records against a process.
-- Tests: `tests/exporters/test_exporter_thread_safety.py` fires two threads at
-  a brand-new pid to pin the dedup race; the structural tests in
-  `tests/exporters/test_perfetto_exporter.py` decode the output; the stress
-  suite runs at `--count 20`.

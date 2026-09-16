@@ -1,36 +1,13 @@
 # ADR-0011: Show process lifetimes on one shared track, ordered by first observation
 
 - **Status:** Accepted
-- **Date:** 2026-06-27, amended:
-  - 2026-06-28: ordering added
-  - 2026-07-31: laminar clipping added
-  - 2026-08-01: emission simplified to unnested BEGIN/END pairs
-  - 2026-08-02: sort moved into the sweep, and the once-per-trace guard made
-    explicit
-  - 2026-08-02: monitor-reported liveness landed and the counter carve-out was
-    removed
-  - 2026-08-05: pointer to
-    [ADR-0015](0015-gc-loss-spans-on-their-own-track.md) added
-  - 2026-08-17: the reporting site moved from `MonitorLoop` to
-    `EventsMonitor`, see [ADR-0017](0017-monitor-owns-the-pid-lifecycle.md)
-  - 2026-08-17: the RSS round stopped adding start jitter, see
-    [ADR-0013](0013-rss-sampling.md)
-  - 2026-08-20: "one clock read" narrowed to one *stamping* read, see
-    [ADR-0019](0019-schedule-tick-starts-on-a-fixed-grid.md)
-  - 2026-08-31: the span became one per process, and the liveness stamp moved
-    to the end of the poll phase, see
-    [ADR-0025](0025-create-every-process-in-one-place.md)
-  - 2026-09-01: the process track was split per process
-  - 2026-09-02: each process's own row gained a `Lifetime` slice drawing the
-    observed pair
-  - 2026-09-02: a retired process's row began going out at the next flush
-  - 2026-09-02: the bar gained the interpreter count and the capture totals
-  - 2026-09-02: `clipped` moved onto the span the sweep shortens
-  - 2026-09-02: a rank became one draw off a counter
-  - 2026-09-02: a row moved off the operating system's pid onto one gcmon
-    counts
-  - 2026-09-11: the thread descriptor went, see
-    [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
+- **Date:** 2026-06-27
+- **Amended by:** [ADR-0013](0013-rss-sampling.md),
+  [ADR-0015](0015-gc-loss-spans-on-their-own-track.md),
+  [ADR-0017](0017-monitor-owns-the-pid-lifecycle.md),
+  [ADR-0019](0019-schedule-tick-starts-on-a-fixed-grid.md),
+  [ADR-0025](0025-create-every-process-in-one-place.md),
+  [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
 
 ## Context
 
@@ -408,6 +385,9 @@ iteration.
   in file order.
 - Consumers enumerating slices must filter `track.name == 'Processes'`, since
   these slices are Perfetto-only.
+- The emission-order claims are settled by a randomized differential test that
+  asserts the rejected orderings break, so the case that passes cannot pass by
+  the order being irrelevant.
 - [ADR-0015](0015-gc-loss-spans-on-their-own-track.md) needs no sweep: its
   loss spans are one per poll interval and meet without overlapping. Its
   `GC Loss` track is separate so a reader can tell intervals gcmon recorded
@@ -524,39 +504,3 @@ iteration.
   the whole subtree can move. A process descriptor arriving after the rows
   beneath it loses the per-process split, since the pid is already bound to a
   row, and a counter event on a track described later is dropped outright.
-
-## Implementation
-
-- `src/gcmon/exporters/perfetto_process_lifetime.py` holds this decision: the
-  `Processes` track name, the clipping sweep, the emission of both rows and
-  the finalization the encoder calls at close. The root and the process
-  descriptors live there because finalization writes them, a process known
-  only from liveness being described there or nowhere.
-- `src/gcmon/exporters/perfetto_proto.py` carries the `process_ordering` field
-  number, 19. Fields 6 and 7 on the same message are `chrome_process` and
-  `chrome_thread`, so a wrong number writes a different message and fails
-  silently ([ADR-0001](0001-hand-rolled-perfetto-protobuf-encoder.md)).
-- `src/gcmon/exporters/perfetto_track_state.py` holds the span accumulator,
-  the ranks and the row pids. Every key it holds is filed under the process,
-  which is what splits the rows a reused pid draws.
-- The liveness path runs from `src/gcmon/monitoring/monitor_loop.py`, which
-  stamps the tick ([ADR-0019](0019-schedule-tick-starts-on-a-fixed-grid.md)),
-  through `src/gcmon/monitoring/monitor.py`, which reports the live set
-  ([ADR-0017](0017-monitor-owns-the-pid-lifecycle.md)), to the no-op on
-  `src/gcmon/exporters/exporter.py` that
-  `src/gcmon/exporters/perfetto_exporter.py` overrides under the I/O lock,
-  forwarding to `src/gcmon/exporters/encoder.py`.
-- The sweep and finalization are covered in
-  `tests/exporters/test_perfetto_process_lifetime.py`, the accumulator and the
-  row pids in `tests/exporters/test_perfetto_track_state.py`, the ranks and
-  `start_timestamp_ns` in `tests/exporters/test_perfetto_ordering.py`.
-  `tests/exporters/test_perfetto_emission_order_fuzz.py`, marked `fuzz` and
-  run by its own CI job, settles the emission-order claims and both sides of
-  the 512-deep nesting limit; the orderings rejected above are asserted to
-  break, so the positive case cannot pass by the order being irrelevant.
-  `tests/exporters/test_perfetto_exporter_integration.py` reads the trace back
-  through the real trace processor
-  ([ADR-0014](0014-perfetto-integration-test-strategy.md)), and
-  `tests/monitoring/test_monitored_run_trace.py` pins a whole run's trace.
-  Liveness reaches those from `tests/monitoring/test_monitor.py` and
-  `tests/monitoring/test_monitor_loop.py`.

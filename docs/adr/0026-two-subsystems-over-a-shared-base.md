@@ -99,10 +99,3 @@ install time on someone else's machine.
 `exporters`. Rejected because there is nothing to split. `JsonlExporter`
 serializes through `model.protocol.to_mapping` and never calls `write_jsonl`,
 whose only caller is `combine_files`. The module is analysis-side entire.
-
-## Implementation
-
-- `tests/architecture/test_layering.py` holds the table, `FOLDED` and
-  `layer_of`.
-- `src/gcmon/analysis/`, `src/gcmon/cli/monitor/`, `src/gcmon/cli/analyze/`,
-  `src/gcmon/cli/shared/`.

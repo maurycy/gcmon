@@ -25,18 +25,18 @@ record below.
   `Superseded by ADR-NNNN`. A record is unbuilt while its decision is taken
   and the code has not caught up: its anchors name modules that do not exist
   yet, and the spec it names is the work that creates them. Drop the qualifier
-  in the commit that lands the spec. Leave a superseded record in place; the
-  history is worth keeping. Do not delete or rewrite one. Write a new record
-  that supersedes it and link both ways.
+  in the commit that lands the spec. Leave a superseded record at its number
+  so every reference to it still resolves, and write a new record that
+  supersedes it, linking both ways. Trim the old one to what it still decides:
+  a note saying what the successor took over, and a body only for the clauses
+  the successor does not already state with their reasoning.
 - **Date:** when the change shipped, not when you wrote the file. An unbuilt
   record dates the decision instead, and takes the merge date when the work
-  lands. A record that has not shipped yet has no history to keep, so rewrite
-  it in place rather than appending a note about what you changed. One that
-  has shipped grows a sublist instead: `2026-06-27, amended:` on the Date
-  line, then a `YYYY-MM-DD: what changed` bullet per amendment, oldest first.
-  Date each from its own merge, since a branch that runs for days drifts off
-  the date in the draft, and end it `see ADR-NNNN` where another record drove
-  the change. Two amendments that shipped the same day get a bullet each.
+  lands. A record carries one date and no history of its own: a clause that is
+  refined is rewritten in place, and git holds what changed and when.
+- **Amended by:** the records that later reshaped this one, ascending, where
+  any exist. It is the reverse of the link the amending record already
+  carries, and nothing else supplies that direction.
 - **Sections:** Decision holds the rules, one to a bullet, each of which
   something in the code obeys. Consequences holds what follows from them and
   never restates one: "there is now one prune" is the decision, not a

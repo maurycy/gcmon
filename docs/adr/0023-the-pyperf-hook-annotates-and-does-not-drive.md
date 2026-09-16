@@ -1,9 +1,8 @@
 # ADR-0023: Mark the benchmark from the pyperf hook, and drive nothing
 
 - **Status:** Accepted
-- **Date:** 2026-08-24, amended:
-  - 2026-08-26: an instant gained args, see
-    [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)
+- **Date:** 2026-08-24
+- **Amended by:** [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)
 
 ## Context
 
@@ -62,6 +61,10 @@ rather than milliseconds. ADR-0011 covers that: the trace processor sorts by
 timestamp, and a freshly discovered child's first event can predate gcmon
 polling it.
 
+One module writing and reading the grammar means a round trip agrees with
+itself on a changed separator, so the grammar is pinned as a literal string
+instead.
+
 pyperf's metadata holds nothing to trend across this change, and nothing in
 tree reads the marks: until a reader exists they are for the Perfetto UI.
 
@@ -115,14 +118,3 @@ record makes.
 `sys.argv` would name the region without waiting for teardown, at the price of
 a second copy of the sanitizer, in another language, with nothing keeping the
 two in step.
-
-## Implementation
-
-`src/gcmon/pyperf/hook.py` holds the hook and the refusal;
-`src/gcmon/model/marks.py` holds the grammar, formatter and parser together.
-`ControlClient.instant_msg` carries the captured timestamp, and the control
-server passes it through to the exporter unchanged.
-
-`tests/pyperf/test_pyperf_hook.py` drives a real client into a real control
-server. `tests/model/test_marks.py` pins the grammar as a literal string: a
-round trip alone passes on a changed separator.

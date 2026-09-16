@@ -1,10 +1,9 @@
 # ADR-0021: Write one trace format, and read only JSONL back
 
 - **Status:** Accepted
-- **Date:** 2026-08-22, amended:
-  - 2026-09-02: the list of what the Chrome format lacked follows the
-    `Lifetime` slice, see
-    [ADR-0010](0010-process-identity-cmdline-and-start-marker.md)
+- **Date:** 2026-08-22
+- **Amended by:**
+  [ADR-0010](0010-process-identity-cmdline-and-start-marker.md)
 
 ## Context
 
@@ -142,23 +141,3 @@ new output format is a second `EventEncoder` implementation.
   trace processor's JSON reader a test dependency for something nothing ships.
   The oracle now reads the trace back against the `list[TraceEvent]` it was
   built from.
-
-## Implementation
-
-- `src/gcmon/cli/monitor/monitoring_options.py` holds `FORMATS`, which the
-  parser's `choices` and the `GCMON_FORMAT` refusal both read, and
-  `RSS_CAPABLE_FORMATS`.
-- `src/gcmon/cli/monitor/_env.py` holds the `GCMON_FORMAT` reading and the
-  default output path.
-- `src/gcmon/cli/analyze/convert_cmd.py` holds `combine`'s arguments.
-- `src/gcmon/analysis/combine.py` holds the two output paths and the
-  normalization split.
-- `src/gcmon/analysis/jsonl_io.py` holds the Chrome-file check.
-- Tests: `tests/cli/monitor/test_monitor_cmd.py` and
-  `tests/cli/monitor/test_monitoring_options.py` cover the refusals;
-  `tests/cli/analyze/test_convert_cmd.py` covers `combine`'s arguments and
-  what it writes; `tests/cli/analyze/test_convert_cmd_perfetto.py` carries the
-  encoder's oracle, which reads a `.pftrace` through the trace processor and
-  compares it against the events it was built from;
-  `tests/monitoring/test_monitored_run_trace.py` pins a whole run as decoded
-  `TracePacket` text.

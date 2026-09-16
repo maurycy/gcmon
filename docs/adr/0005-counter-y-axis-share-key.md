@@ -1,9 +1,8 @@
 # ADR-0005: Use the metric name itself as `CounterDescriptor.y_axis_share_key`
 
 - **Status:** Accepted
-- **Date:** 2026-06-28, amended:
-  - 2026-09-01: the track key became per process, see
-    [ADR-0011](0011-process-lifetime-and-ordering.md)
+- **Date:** 2026-06-28
+- **Amended by:** [ADR-0011](0011-process-lifetime-and-ordering.md)
 
 ## Context
 
@@ -85,20 +84,3 @@ keeps the wire format minimal.
 - **Setting `unit` / `unit_name` at the same time.** Deferred to a separate
   change; a wire-level test locks the current minimal submessage, so the scope
   creep would be caught.
-
-## Implementation
-
-- `src/gcmon/exporters/perfetto_proto.py` carries `y_axis_share_key` as field
-  7 of `CounterDescriptor`.
-- `src/gcmon/exporters/perfetto_builders.py` decides what reaches the wire: a
-  populated submessage when the key is truthy, an empty one otherwise, and
-  nothing at all for a track that is not a counter.
-- `src/gcmon/exporters/perfetto_format.py` passes the metric name as the share
-  key on the grouped branch and omits it on the top-level branch.
-- Tests: `tests/exporters/test_perfetto_builders.py` covers field 8 at the
-  wire level (empty-submessage fallback, non-counter ignore, empty-string
-  normalization, only-field-7 guard);
-  `tests/exporters/test_perfetto_counter_tracks.py` checks the same values as
-  reached through a convert pass;
-  `tests/exporters/test_perfetto_exporter_integration.py` holds the `xfail`'d
-  SQL pair.

@@ -1,12 +1,8 @@
 # ADR-0002: Allocate track UUIDs sequentially and parent every track explicitly
 
 - **Status:** Accepted
-- **Date:** 2026-06-08, amended:
-  - 2026-06-18: UUID allocator revised
-  - 2026-09-11: the thread track became a group per interpreter, see
-    [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
-  - 2026-09-12: the interpreter list is named `Python Interpreters`, see
-    [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
+- **Date:** 2026-06-08
+- **Amended by:** [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
 
 ## Context
 
@@ -87,22 +83,3 @@ wire** (`parent_uuid=None`, which the encoder skips), never `parent_uuid=0`.
 - **`child_ordering = EXPLICIT` on thread tracks.** Rejected as a no-op once
   counters were reparented away from the thread; thread tracks have no
   children.
-
-## Implementation
-
-- `src/gcmon/exporters/perfetto_track_state.py` holds the counter, seeded to
-  `1`, and the lazy memoized lookups that hand out the process, interpreter
-  group and per-row UUIDs.
-- `src/gcmon/exporters/perfetto_proto.py` carries the `ProcessDescriptor`
-  field numbers (`PID = 1`, `CMDLINE = 2`, `PROCESS_NAME = 6`,
-  `START_TIMESTAMP_NS = 7`); the sub-message itself is written at
-  `TrackDescriptor` field 3.
-- `src/gcmon/exporters/perfetto_format.py` emits each interpreter's rows with
-  `parent_uuid` set to that interpreter's group and a `sibling_order_rank`
-  inside it.
-- `src/gcmon/exporters/perfetto_builders.py` omits `parent_uuid` from the wire
-  when it is `None`.
-- Tests: `tests/exporters/test_perfetto_track_state.py` for uuid allocation,
-  `tests/exporters/test_perfetto_format.py` for the emitted hierarchy,
-  `tests/exporters/test_perfetto_exporter_integration.py` (the trace-processor
-  `track` table assertions confirm the parent links survive parsing).

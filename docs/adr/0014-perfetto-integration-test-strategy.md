@@ -1,11 +1,8 @@
 # ADR-0014: Validate traces against the real trace processor; deselect slow suites by marker
 
 - **Status:** Accepted
-- **Date:** 2026-06-12 (the stress marker), amended:
-  - 2026-06-18: trace-processor tests added
-  - 2026-08-02: fuzz marker added
-  - 2026-09-02: architecture marker added, see
-    [ADR-0026](0026-two-subsystems-over-a-shared-base.md)
+- **Date:** 2026-06-12 (the stress marker)
+- **Amended by:** [ADR-0026](0026-two-subsystems-over-a-shared-base.md)
 
 ## Context
 
@@ -41,28 +38,21 @@ module level. The first run downloads the trace-processor binary; later runs
 use the cache.
 
 **Only the optional suites are gated by marker**, registered in
-`pyproject.toml` and deselected by the default `addopts`:
+`pyproject.toml` and deselected by the default `addopts`. The commands and the
+CI jobs are in [testing](../testing.md); each marker exists for its own
+reason.
 
-```
--m 'not stress and not benchmark and not fuzz and not architecture'
-```
-
-- `stress`, for probabilistic concurrency tests. CI runs them in a separate
-  `stress-test` job (`-m stress --count 20`, plus `-k "control" --count 40`),
-  which does not block the always-on suite.
-- `benchmark`, for CodSpeed performance benchmarks, run by their own workflow.
-- `fuzz`, for randomized differential tests that load a trace per trial. CI
-  runs them in a separate `fuzz-test` job on Linux only. Unlike `stress` these
-  are **not** probabilistic: seeds are fixed, so a failure reproduces and
-  repeating a trial re-runs the same trace. That is why the job passes no
-  `--count`; widen coverage by raising the trial count in the test. They earn
-  a marker for cost, not flakiness; the trace processor starts once per trial,
-  which is seconds rather than the milliseconds the default suite budgets for.
-- `architecture`, for the layer and lock-order checks
-  ([ADR-0026](0026-two-subsystems-over-a-shared-base.md)). CI runs them in a
-  separate `architecture` job. They are deselected for the opposite reason to
-  the other three: they cost nothing and answer a question about structure
-  rather than behaviour, which the rest of the suite cannot fail on.
+- `stress` is probabilistic, so it earns repetition rather than a place in a
+  suite that has to pass on every run.
+- `benchmark` measures where the rest of the suite asserts.
+- `fuzz` earns a marker for cost, not flakiness. Seeds are fixed, so a failure
+  reproduces and repeating a trial re-runs the same trace. The trace processor
+  starts once per trial, which is seconds rather than the milliseconds the
+  default suite budgets for.
+- `architecture` is deselected for the opposite reason to the other three
+  ([ADR-0026](0026-two-subsystems-over-a-shared-base.md)). It costs nothing
+  and answers a question about structure rather than behaviour, which the rest
+  of the suite cannot fail on.
 
 **The trace is asserted against the events it was built from.** While gcmon
 wrote two formats, the suites were parametrized over Chrome JSON and Perfetto
@@ -82,13 +72,6 @@ are sub-second on a warm binary cache and keep tests isolated.
 argument populated exercises the whole structure and each field-number code
 path. Real captured batches are slower and add noise without reaching new
 code.
-
-**Stress tests use `threading.Barrier` for thread release** and
-`join(timeout=…)` only as a watchdog, never `time.sleep` for synchronization.
-Worker threads capture exceptions into a list asserted empty after the join,
-and no worker asserts on shared state. The contract is "no deadlock, no
-uncaught exception". The OS scheduler decides the interleaving, so the tests
-do not assert on it.
 
 ## Consequences
 
@@ -134,26 +117,3 @@ do not assert on it.
   by a send reconnects silently, and that `BrokenPipeError` clears the
   connection for the next call. Those assertions are stricter than "no
   exception under contention."
-
-## Implementation
-
-- `pyproject.toml` holds `perfetto` in `[tool.poetry.group.dev.dependencies]`,
-  the four marker registrations, and the `addopts` deselection.
-- `.github/workflows/ci.yml`, the always-on `test` job, plus the separate
-  `stress-test`, `fuzz-test` and `architecture` jobs.
-- The two `fuzz`-marked files:
-  `tests/exporters/test_perfetto_emission_order_fuzz.py` pins ADR-0011's
-  emission-order claims, positive case and negative control both, and
-  `tests/exporters/test_perfetto_loss_track.py` settles the loss track's
-  layout ([ADR-0015](0015-gc-loss-spans-on-their-own-track.md)).
-- `tests/exporters/test_perfetto_exporter_integration.py` holds the
-  trace-processor fixture and the trace-writing helper.
-- `tests/cli/analyze/test_convert_cmd_perfetto.py`, the same approach applied
-  to the `combine` paths, and the home of the trace-against-its-events oracle.
-- `tests/monitoring/test_monitored_run_trace.py` pins a whole run as decoded
-  `TracePacket` text, which reads every field back through Perfetto's own
-  generated schema.
-- `tests/control/test_control_client_thread_safety.py` covers concurrent sends
-  and the send/close race, both marked `stress`.
-- `tests/exporters/test_exporter_thread_safety.py` covers the meta-dedup race
-  from [ADR-0008](0008-buffered-exporter-and-encoder-protocol.md).

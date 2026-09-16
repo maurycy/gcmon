@@ -24,19 +24,12 @@ that look unrelated to what is missing.
 poetry run just test
 ```
 
-Four suites are **deselected by default** and run only when you name their
-marker, so a passing `pytest` covers less than it looks:
-
-| Marker | Command | What it covers |
-|---|---|---|
-| `stress` | `poetry run just stress` | thread safety of the exporter and control-client pipelines |
-| `fuzz` | `poetry run just fuzz` | randomized differential tests against the real trace processor |
-| `architecture` | `poetry run just architecture` | the code's structure, read without running it |
-| `benchmark` | `poetry run just bench` | CodSpeed performance benchmarks |
-
-CI runs the stress and fuzz suites in jobs of their own, so a change that
-passes locally can still fail there. Coverage has a floor of 80% (`fail_under`
-in `pyproject.toml`).
+The `stress`, `fuzz`, `architecture` and `benchmark` suites are **deselected
+by default** and run only when you name their marker, so a passing `pytest`
+covers less than it looks. [`docs/testing.md`](docs/testing.md) has the
+command for each, the CI job that runs it, and the conventions a test in it
+keeps. CI runs the stress and fuzz suites in jobs of their own, so a change
+that passes locally can still fail there.
 
 ## Type checking and linting
 

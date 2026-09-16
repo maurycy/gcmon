@@ -1,13 +1,9 @@
 # ADR-0010: Duplicate the process cmdline per consumer, and force the process track to render
 
 - **Status:** Accepted
-- **Date:** 2026-06-08, amended:
-  - 2026-06-27: `Start Process` marker added
-  - 2026-08-31: collection moved to the monitor and became once per process,
-    see [ADR-0025](0025-create-every-process-in-one-place.md)
-  - 2026-09-01: the descriptor and the marker became per process, see
-    [ADR-0011](0011-process-lifetime-and-ordering.md)
-  - 2026-09-02: the marker became the `Lifetime` slice
+- **Date:** 2026-06-08
+- **Amended by:** [ADR-0011](0011-process-lifetime-and-ordering.md),
+  [ADR-0025](0025-create-every-process-in-one-place.md)
 
 ## Context
 
@@ -112,19 +108,3 @@ line, and that is the only way to have none.
   survives is the emission, not the collection.
 - **Make `psutil` a hard dependency.** Rejected: gcmon is installed next to
   the process it monitors, and graceful degradation costs one `try`/`except`.
-
-## Implementation
-
-- `src/gcmon/exporters/perfetto_proto.py` carries the `ProcessDescriptor`
-  field numbers (`PID = 1`, `CMDLINE = 2`, `PROCESS_NAME = 6`) and
-  `TrackDescriptor.description` at field 14.
-- `src/gcmon/exporters/perfetto_process_lifetime.py` emits the process
-  descriptor the `description` hangs on, draws the `Lifetime` slice that keeps
-  the track rendered, and puts the cmdline on its BEGIN and on the `Processes`
-  slice's BEGIN, the latter alongside the `real_start_ts` / `real_end_ts`
-  annotations ([ADR-0011](0011-process-lifetime-and-ordering.md)).
-- `src/gcmon/monitoring/process_registry.py` holds the read, with its lazy
-  `import psutil`, behind a provider the CLI wires in.
-- `src/gcmon/monitoring/monitor.py` sends the result to the exporter as it
-  creates the process, and `src/gcmon/exporters/perfetto_track_state.py` keeps
-  it for both emission sites.

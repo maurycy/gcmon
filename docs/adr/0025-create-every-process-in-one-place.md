@@ -1,10 +1,8 @@
 # ADR-0025: Create every process in one place, and carry it instead of a pid
 
 - **Status:** Accepted
-- **Date:** 2026-08-31, amended:
-  - 2026-09-02: a record became filed under the process the read came back
-    from, and one dated inside a retired life dropped, see
-    [ADR-0011](0011-process-lifetime-and-ordering.md)
+- **Date:** 2026-08-31
+- **Amended by:** [ADR-0011](0011-process-lifetime-and-ordering.md)
 
 ## Context
 
@@ -116,6 +114,11 @@ wait behind it.
   `tests/architecture/test_lock_order.py` is where that import fails.
 - **The registry keeps every departure for the life of the run**, because that
   is what `at` answers from.
+- **The command-line provider is injected, never defaulted.** A test naming a
+  pid the machine does not have then reads nothing, rather than whatever
+  process happens to hold that number.
+- **A run builds its registry before the target starts**, because the control
+  server has to be listening by then.
 
 ## Alternatives considered
 
@@ -151,31 +154,3 @@ wait behind it.
 - **Key the statistics on `(pid, iid, epoch)` and leave the exporters on
   pids.** What ADR-0016 shipped. Rejected: three fields where one value does,
   and the trace still could not say which process a slice belonged to.
-
-## Implementation
-
-- `src/gcmon/model/process.py` holds `Process` and the `ProcessLookup`
-  protocol. It is in `model` because every layer above `support` names one.
-- `src/gcmon/monitoring/process_registry.py` holds the registry, the lock, the
-  departure history and the `psutil` read behind an injected provider. It is
-  in `monitoring` because that is the layer that writes to it, and the
-  provider is injected rather than defaulted so a test naming a pid the
-  machine does not have reads nothing instead of whatever holds that number.
-- `src/gcmon/exporters/exporter.py` carries `add_process_cmdline`, a no-op
-  everywhere but the Perfetto path. `exporters` cannot import `monitoring`:
-  the monitor hands it to the registry as the sink, and `PerfettoTrackState`
-  keeps what arrives until the descriptor and the span are emitted.
-- `src/gcmon/monitoring/monitor.py` creates as it polls and retires where it
-  drops a pid's state, both halves of
-  [ADR-0017](0017-monitor-owns-the-pid-lifecycle.md)'s prune.
-- `src/gcmon/control/control_server.py` resolves the pid on the wire through
-  the protocol and drops what resolves to nothing.
-- `src/gcmon/cli/monitor/loop_runner.py` builds the one registry a run has,
-  before the target starts, because the control server has to be listening by
-  then.
-- `tests/model/test_process.py` pins the struct to the pair, the ordering and
-  the suffix; `tests/monitoring/test_process_registry.py` pins creation, the
-  prune and what `at` answers on each side of a departure;
-  `tests/architecture/test_layering.py` is where the `control`-to-`monitoring`
-  edge fails, and `tests/architecture/test_lock_order.py` is where an exporter
-  naming `ProcessLookup` does. Both are deselected by default.

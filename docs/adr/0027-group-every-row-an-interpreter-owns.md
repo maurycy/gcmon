@@ -1,9 +1,7 @@
 # ADR-0027: Group every row an interpreter owns under one track
 
 - **Status:** Accepted
-- **Date:** 2026-09-11, amended:
-  - 2026-09-12: the group is named `Python Interpreters`, so the UI sorts it
-    after `Process <pid>`
+- **Date:** 2026-09-11
 
 ## Context
 
@@ -105,6 +103,8 @@ something, and a row exists because an event names it
   pid, and `thread.is_main_thread` marks it. gcmon cannot drop it while it
   writes processes, and nothing in gcmon produces it to grep for.
 - A query reaches a pause through `process_track` rather than `thread_track`.
+- The grouping forces a two-hop parent join on a query;
+  [Perfetto SQL](../perfetto-sql.md) teaches it.
 - The trace processor builds no `track` row for a descriptor whose whole
   subtree carries no event, the process track included. Nothing has to
   suppress the two groups for a process that collected nothing: they are
@@ -128,16 +128,16 @@ something, and a row exists because an event names it
   `dev.perfetto.TraceProcessorTrack` ranks a process's children by kind and
   breaks ties on the lower-cased name, reading no `sibling_order_rank`.
   `Process <pid>` and the group are both slice-shaped, so the name decides
-  which of the two leads; `rss` is a counter, which the same plugin ranks
-  below every slice, so it comes last whatever anything is called. Checked
-  against Perfetto v58.2, the version `tests/perfetto_prebuilt.py` pins.
+  which of the two leads, and `Process <pid>` sorts first; `rss` is a counter,
+  which the same plugin ranks below every slice, so it comes last whatever
+  anything is called. Checked against Perfetto v58.2, the version
+  `tests/perfetto_prebuilt.py` pins.
 - Clauses elsewhere are void and move with this record: ADR-0003's parenting
   of `GC Metrics` to the process track, ADR-0011's thread-descriptor clause,
-  ADR-0024's `heap_size` qualifier, the top-level clause ADR-0004 keeps in its
-  supersession note, ADR-0015's parenting of the loss row, and the track kinds
-  ADR-0002 and ADR-0016 enumerate. ADR-0003's finding stands, and this record
-  is built on it: a custom group buys back the ordering an OS-scoped parent
-  discards.
+  ADR-0024's `heap_size` qualifier, the top-level placement ADR-0004 decided,
+  ADR-0015's parenting of the loss row, and the track kinds ADR-0002 and
+  ADR-0016 enumerate. ADR-0003's finding stands, and this record is built on
+  it: a custom group buys back the ordering an OS-scoped parent discards.
 
 ## Alternatives considered
 
@@ -173,25 +173,3 @@ something, and a row exists because an event names it
 - **Renumber row pids so no iid can equal one.** Moves the collision without
   addressing the thread that should not exist, and ADR-0011 owns the pid
   scheme for reasons that have nothing to do with interpreters.
-
-## Implementation
-
-- `src/gcmon/exporters/perfetto_format.py` derives an interpreter's group, the
-  process's `Python Interpreters` group and the rows inside both, and holds
-  the ranks and the track names.
-- `src/gcmon/exporters/perfetto_track_state.py` keys a uuid per interpreter
-  group and one per `Python Interpreters` group, beside the tables it already
-  keys on a `Track`.
-- `src/gcmon/exporters/perfetto_builders.py` no longer encodes a
-  `ThreadDescriptor`, and `src/gcmon/exporters/perfetto_proto.py` drops the
-  field numbers behind it: `ThreadDescriptorField` and `ThreadOrdering`, and
-  the `thread` and `thread_ordering` entries in `TrackDescriptorField`.
-- `src/gcmon/exporters/trace_converter.py` writes `heap_size` as the display
-  name.
-- `src/gcmon/model/trace_event.py` keeps its shape: no event names a group,
-  and `InterpreterTrack` and `LossTrack` name the same two rows as before.
-- Tests: `tests/exporters/test_perfetto_exporter_integration.py` asserts the
-  hierarchy through the trace processor, that a `GC Metrics` row exists per
-  interpreter rather than per process, and that no row in `thread` carries a
-  name or a slice.
-- `docs/perfetto-sql.md` teaches the two-hop parent join.

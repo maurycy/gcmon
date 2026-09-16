@@ -1,13 +1,10 @@
 # ADR-0015: Draw reconstructed GC loss on a per-interpreter track, one span per poll interval
 
 - **Status:** Accepted
-- **Date:** 2026-08-05, amended:
-  - 2026-08-26: the sentinel tid became a `LossTrack`, see
-    [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)
-  - 2026-09-01: the track key became per process, see
-    [ADR-0011](0011-process-lifetime-and-ordering.md)
-  - 2026-09-11: the loss row moved onto the interpreter group, see
-    [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
+- **Date:** 2026-08-05
+- **Amended by:** [ADR-0011](0011-process-lifetime-and-ordering.md),
+  [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md),
+  [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
 
 ## Context
 
@@ -233,25 +230,3 @@ survives the ring wrapping.
 - **A flag to disable loss detection.** Rejected: a reader who does not know
   what fraction of the records a capture holds cannot interpret any other
   number in it.
-
-## Implementation
-
-- `src/gcmon/model/loss.py` holds the arithmetic, one accumulator per
-  `(pid, iid, gen)`.
-- `src/gcmon/model/data.py` holds the loss record.
-- `src/gcmon/monitoring/monitor.py` keeps each pid's poll instant beside its
-  rings, so dropping a pid drops both and a reused pid inherits no interval.
-- `src/gcmon/exporters/trace_converter.py` takes loss through the shared
-  pipeline as its third record type and restores span order for a capture read
-  back from JSONL. `src/gcmon/exporters/perfetto_format.py` and
-  `src/gcmon/exporters/perfetto_builders.py` write the track and the
-  generation groups.
-- `src/gcmon/stats/streaming_stats.py` records every gap.
-- `tests/model/test_loss.py` and `tests/monitoring/test_monitor_loss.py` check
-  the arithmetic against synthetic sessions, and
-  `tests/monitoring/test_loss_replay.py` against a real capture replayed
-  behind a simulated ring. `tests/analysis/test_combine_loss_round_trip.py`
-  resolves the loss row as a stack, live and through `combine`.
-  `tests/exporters/test_perfetto_loss_track.py`, marked `fuzz`, settles the
-  track layout against the real trace processor per
-  [ADR-0014](0014-perfetto-integration-test-strategy.md).

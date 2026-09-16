@@ -1,14 +1,9 @@
 # ADR-0003: Parent per-generation counters to a non-OS-scoped `GC Metrics` group track
 
 - **Status:** Accepted
-- **Date:** 2026-06-27, amended:
-  - 2026-09-01: the track key became per process, see
-    [ADR-0011](0011-process-lifetime-and-ordering.md)
-  - 2026-09-11: `GC Metrics` moved onto the interpreter group, see
-    [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
-  - 2026-09-12: the row that pays the trade-off is named
-    `Python Interpreters`, see
-    [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
+- **Date:** 2026-06-27
+- **Amended by:** [ADR-0011](0011-process-lifetime-and-ordering.md),
+  [ADR-0027](0027-group-every-row-an-interpreter-owns.md)
 
 ## Context
 
@@ -93,14 +88,3 @@ shifts the ranks below it, which is fine: only the relative order matters.
 - **Leave counters parented to the process track and accept arbitrary order.**
   Rejected; this is what the earlier iteration did, and the counter list is
   long enough that the order is worth fixing.
-
-## Implementation
-
-- `src/gcmon/exporters/perfetto_format.py` names the group track, emits its
-  descriptor once per `(process, iid)` with a docstring recording *why* the
-  group is a plain custom track, holds the rank table, and parents each
-  per-generation counter to the group UUID.
-- Tests: `tests/exporters/test_perfetto_format.py` covers the parenting;
-  `tests/exporters/test_perfetto_exporter_integration.py` asserts the counter
-  rows' `parent_id` is non-NULL and equals the group row, the assertion that
-  would have caught the original bug.

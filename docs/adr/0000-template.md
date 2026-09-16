@@ -21,7 +21,3 @@ puts on future maintainers.
 ## Alternatives considered
 
 Options rejected, with the reason each was rejected.
-
-## Implementation
-
-Anchors into the current code and the tests that lock the behaviour in.

@@ -1,8 +1,8 @@
 # ADR-0007: Convert GC stats to `TraceEvent` once, in a shared pipeline
 
 - **Status:** Accepted
-- **Date:** 2026-06-14, amended:
-  - 2026-08-05: `LossMsg` noted as the third record type
+- **Date:** 2026-06-14
+- **Amended by:** [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)
 
 ## Context
 
@@ -29,10 +29,13 @@ A single pipeline `TGCStatsInfo → list[TraceEvent]` lives in
 sub-phase logic and the naming strings.
 
 `TraceEvent`, the union in `src/gcmon/model/trace_event.py`, is the contract
-between the converter and the backends. Each backend consumes that list and
-does nothing but encode: Chrome to JSON, Perfetto to protobuf. Neither
-inspects `TGCStatsInfo` fields any more. Track UUID management stays where it
-was, and cmdline handling is untouched.
+between the converter and the backends. It is `Slice | Instant | Counter`: an
+event names the `Track` it is drawn on, the encoder derives the descriptors
+from that, and the ordering follows by construction
+([ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)). A span is one
+`Slice` carrying both its ends. A backend consumes that list and does nothing
+but encode, and inspects no `TGCStatsInfo` field. Track UUID management stays
+where it was, and cmdline handling is untouched.
 
 The refactor also settled two behaviours:
 
@@ -50,16 +53,6 @@ backend, which previously emitted zero-duration events for such records and
 now drops them the way Perfetto always did. Filtering at the producer is
 exporter-agnostic and keeps the shared converter pure: filter once, emit
 everywhere.
-
-**Amended 2026-08-26 by
-[ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md).** The union is
-`Slice | Instant | Counter` now, where it held a begin, an end, an instant, a
-counter and two meta events. `ProcessMeta` preceding `ThreadMeta` for a pid
-was called part of the public contract of the event stream. It is not a
-contract a producer keeps any more: an event names the `Track` it is drawn on,
-the encoder derives the descriptors from that, and the ordering follows by
-construction. A span is one `Slice` carrying both its ends. Everything else
-here stands.
 
 ## Consequences
 
@@ -90,19 +83,3 @@ here stands.
   and every Perfetto feature would need a Chrome representation first.
 - **Keep the invalid-timestamp filter in the exporters.** Rejected: two copies
   of a filter is how the exporters diverged in the first place.
-
-## Implementation
-
-- `src/gcmon/exporters/trace_converter.py` converts one record, and a whole
-  batch, to `TraceEvent`s.
-- `src/gcmon/model/trace_event.py` holds the `TraceEvent` union and the
-  structs in it.
-- `src/gcmon/exporters/perfetto_format.py` encodes those events, emitting a
-  counter track's descriptor and its UUID together so the call site does not
-  look the UUID up twice.
-- `src/gcmon/monitoring/monitor.py` keeps the per-`(pid, iid, gen)`
-  `collections` cursor and applies the `ts_start < ts_stop` validity guard
-  before anything reaches the converter.
-- Tests: `tests/monitoring/test_monitor.py` covers the records the poll drops,
-  and `tests/exporters/test_perfetto_format.py` the events that survive to
-  conversion.
