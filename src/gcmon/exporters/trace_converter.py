@@ -424,6 +424,8 @@ def convert_to_trace_format(items: Mapping[int, Sequence[TItem]]) -> list[TraceE
                 pid_events.extend(convert_loss_to_trace_format(process, item))
             elif is_instant(item):
                 pid_events.append(Instant(ProcessTrack(process), item.name, item.ts))
+            else:
+                raise NotImplementedError(f"Unknown item type: {type(item)}")
 
         events.extend(pid_events)
 

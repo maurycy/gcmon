@@ -1,9 +1,16 @@
 import pytest
 
-from gcmon.exporters.trace_converter import convert_item_to_trace_format, duration_text, seen_text
+from gcmon.exporters.trace_converter import (
+    convert_item_to_trace_format,
+    convert_to_trace_format,
+    duration_text,
+    seen_text,
+)
 from gcmon.model.names import GENERATIONS, HEAP_SIZE
-from gcmon.model.trace_event import Counter
-from tests.helpers import create_mock_stats_item, proc
+from gcmon.model.protocol import TItem
+from gcmon.model.trace_event import Counter, Instant, Slice
+from tests.data_helpers import create_instant_msg
+from tests.helpers import create_mock_loss_item, create_mock_stats_item, proc
 
 
 class TestDurationText:
@@ -91,3 +98,20 @@ class TestAGenerationTheCounterTableNeverHeld:
         """
         beyond = set(self._counters(max(GENERATIONS) + 1).values())
         assert beyond & set(self._counters(max(GENERATIONS)).values()) == {HEAP_SIZE}
+
+
+class TestAnItemOfNoKnownKind:
+    """`TItem` is a union of three, and the guards that take it apart read
+    attributes rather than types, so nothing stops a fourth thing arriving.
+    Converting it to nothing would drop a record silently, which is a row a
+    reader never learns is missing; `to_mapping` refuses the same way."""
+
+    def test_converting_one_refuses_rather_than_dropping_it(self) -> None:
+        with pytest.raises(NotImplementedError, match="Unknown item type"):
+            convert_to_trace_format({1: ["neither a record nor an instant nor a loss"]})  # type: ignore[list-item]
+
+    def test_the_three_kinds_it_knows_convert(self) -> None:
+        """The refusal above only says something about a fourth kind if the
+        three real ones reach their branches, so all three go in together."""
+        capture: list[TItem] = [create_mock_stats_item(), create_mock_loss_item(), create_instant_msg()]
+        assert {type(e) for e in convert_to_trace_format({1: capture})} == {Slice, Counter, Instant}
