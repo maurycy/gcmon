@@ -14,8 +14,14 @@ from gcmon.monitoring.monitor import EventsMonitor
 from gcmon.monitoring.target_process import ExternalProcess
 from gcmon.monitoring.wait_policy import no_wait_policy
 from gcmon.stats.streaming_stats import StreamingStats
+from gcmon.support.vocabulary import PROGRAM_NAME
 from tests.data_helpers import create_instant_msg
-from tests.helpers import FakeEventsReader, MockExporter, create_mock_stats_item
+from tests.helpers import (
+    FakeEventsReader,
+    MockExporter,
+    create_mock_incremental_item,
+    create_mock_stats_item,
+)
 
 DEFAULT_PID: int = 12345
 
@@ -29,7 +35,7 @@ def _caplog_gcmon(caplog: pytest.LogCaptureFixture) -> Generator[pytest.LogCaptu
     logger (e.g. the pyperf hook entry point) does not leak across tests and
     duplicate log records to stderr in subsequent tests.
     """
-    logger = logging.getLogger("gcmon")
+    logger = logging.getLogger(PROGRAM_NAME)
     original_level = logger.level
     original_handlers = list(logger.handlers)
     try:
@@ -99,7 +105,7 @@ def mock_process() -> Mock:
         Mock subprocess.Popen instance with common attributes.
     """
     process = Mock(spec=subprocess.Popen)
-    process.pid = 12345
+    process.pid = DEFAULT_PID
     process.returncode = 0
     process.communicate.return_value = (b"stdout data", b"stderr data")
     return process
@@ -112,7 +118,7 @@ def exporter() -> MockExporter:
 
 @pytest.fixture
 def process() -> ExternalProcess:
-    return ExternalProcess(pid=12345)
+    return ExternalProcess(pid=DEFAULT_PID)
 
 
 @pytest.fixture
@@ -141,7 +147,7 @@ def monitor(
 def make_monitor(
     exporter: MockExporter, stats: StreamingStats, reader: FakeEventsReader
 ) -> Callable[..., EventsMonitor]:
-    def _make(pid: int = 12345, exp: MockExporter | None = None) -> EventsMonitor:
+    def _make(pid: int = DEFAULT_PID, exp: MockExporter | None = None) -> EventsMonitor:
         proc = ExternalProcess(pid=pid)
         return EventsMonitor(proc, exp or exporter, stats, reader=reader, wait_policy_factory=no_wait_policy)
 
@@ -158,8 +164,7 @@ def env_module() -> types.ModuleType:
 
 @pytest.fixture
 def simple_item() -> GCStatsInfo:
-    return GCStatsInfo(
-        gen=0,
+    return create_mock_stats_item(
         iid=1,
         ts_start=1_000_000,
         ts_stop=2_000_000,
@@ -168,13 +173,12 @@ def simple_item() -> GCStatsInfo:
         collected=50,
         uncollectable=0,
         candidates=10,
-        duration=0.005,
     )
 
 
 @pytest.fixture
 def incremental_item() -> GCStatsInfo:
-    return GCStatsInfo(
+    return create_mock_incremental_item(
         gen=1,
         iid=2,
         ts_start=3_000_000,

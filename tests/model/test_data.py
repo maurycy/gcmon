@@ -1,6 +1,7 @@
 import msgspec
 import pytest
 
+from gcmon.control.protocol import START_EVENT
 from gcmon.model.data import (
     GCStatsInfo,
     GenLoss,
@@ -9,7 +10,16 @@ from gcmon.model.data import (
     from_mapping,
     instant_msg,
 )
-from gcmon.model.protocol import TMapping, has_deduce_unreachable, has_incremental, has_mark_alive, to_mapping
+from gcmon.model.names import GEN, GENS, IID, LOST_COUNT, OBSERVED_COUNT, PID, TS_START, TS_STOP
+from gcmon.model.protocol import (
+    TMapping,
+    has_deduce_unreachable,
+    has_incremental,
+    has_mark_alive,
+    is_gc_stats,
+    is_instant,
+    to_mapping,
+)
 
 
 class TestGCStatsInfo:
@@ -29,7 +39,7 @@ class TestGCStatsInfo:
 class TestInstantMsg:
     def test_instant_msg_creation(self, instant_item: InstantMsg) -> None:
         assert instant_item.type == "i"
-        assert instant_item.name == "start GC monitor"
+        assert instant_item.name == START_EVENT
         assert instant_item.ts == 5_000_000
 
     def test_instant_msg_with_explicit_ts(self) -> None:
@@ -92,7 +102,7 @@ class TestFromMapping:
         result = from_mapping(instant_dict)
         assert isinstance(result, InstantMsg)
         assert result.type == "i"
-        assert result.name == "start GC monitor"
+        assert result.name == START_EVENT
         assert result.ts == 5_000_000
 
     def test_from_mapping_empty_raises(self) -> None:
@@ -117,18 +127,18 @@ class TestLossMsg:
         ``convert_to_trace_format`` and the normalizers from claiming it."""
         msg = LossMsg(iid=0, ts_start=1_000, ts_stop=2_000, gens=[])
 
-        assert not hasattr(msg, "collections")
-        assert not hasattr(msg, "type")
+        assert not is_gc_stats(msg)
+        assert not is_instant(msg)
 
     def test_from_mapping_returns_loss_msg(self) -> None:
         result = from_mapping(
             {
-                "pid": 42,
+                PID: 42,
                 "tid": -2,
-                "iid": 1,
-                "ts_start": 1_000,
-                "ts_stop": 2_000,
-                "gens": [{"gen": 2, "observed_count": 3, "lost_count": 76}],
+                IID: 1,
+                TS_START: 1_000,
+                TS_STOP: 2_000,
+                GENS: [{GEN: 2, OBSERVED_COUNT: 3, LOST_COUNT: 76}],
             }
         )
 

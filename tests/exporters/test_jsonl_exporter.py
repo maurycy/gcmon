@@ -3,8 +3,23 @@
 import json
 
 from gcmon.analysis.jsonl_io import read_jsonl
+from gcmon.control.protocol import START_EVENT, STOP_EVENT
 from gcmon.exporters import JsonlExporter
 from gcmon.model.data import GCStatsInfo
+from gcmon.model.names import (
+    CANDIDATES,
+    COLLECTED,
+    COLLECTIONS,
+    DURATION,
+    GEN,
+    HEAP_SIZE,
+    IID,
+    PID,
+    TS_START,
+    TYPE,
+    UNCOLLECTABLE,
+)
+from gcmon.support.vocabulary import ENCODING
 from tests.conftest import DEFAULT_PID
 from tests.data_helpers import create_instant_msg
 from tests.exporters.conftest import ExporterFactory, JsonlFileReader
@@ -45,16 +60,16 @@ class TestJsonlExporter:
         events = read_jsonl(path)
         assert len(events) == 1
         event = events[0]
-        assert event["pid"] == 12345
-        assert event["iid"] == 0
-        assert event["gen"] == 0
-        assert event["ts_start"] == 1000000
-        assert event["collections"] == 10
-        assert event["collected"] == 5
-        assert event["uncollectable"] == 0
-        assert event["candidates"] == 15
-        assert event["heap_size"] == 1024
-        assert event["duration"] == 0.001
+        assert event[PID] == 12345
+        assert event[IID] == 0
+        assert event[GEN] == 0
+        assert event[TS_START] == 1000000
+        assert event[COLLECTIONS] == 10
+        assert event[COLLECTED] == 5
+        assert event[UNCOLLECTABLE] == 0
+        assert event[CANDIDATES] == 15
+        assert event[HEAP_SIZE] == 1024
+        assert event[DURATION] == 0.001
 
     def test_add_event_multiple_events(
         self, mock_stats_item: GCStatsInfo, jsonl_exporter: ExporterFactory, read_jsonl: JsonlFileReader
@@ -68,7 +83,7 @@ class TestJsonlExporter:
         events = read_jsonl(path)
         assert len(events) == 3
         for event in events:
-            assert event["pid"] == 12345
+            assert event[PID] == 12345
 
     def test_close_flushes_events(self, mock_stats_item: GCStatsInfo, jsonl_exporter: ExporterFactory) -> None:
         exporter, path = jsonl_exporter(threshold=1000)
@@ -107,7 +122,7 @@ class TestJsonlExporter:
         events = read_jsonl(path)
         assert len(events) == 2
         for event in events:
-            assert "pid" in event
+            assert PID in event
 
     def test_interpreter_id_in_output(self, jsonl_exporter: ExporterFactory, read_jsonl: JsonlFileReader) -> None:
         exporter, path = jsonl_exporter(threshold=1)
@@ -115,7 +130,7 @@ class TestJsonlExporter:
         exporter.add_event(proc(DEFAULT_PID), stats_item)
         exporter.close()
         event = read_jsonl(path)[0]
-        assert event["iid"] == 5678
+        assert event[IID] == 5678
 
     def test_pid_in_output(
         self, mock_stats_item: GCStatsInfo, jsonl_exporter: ExporterFactory, read_jsonl: JsonlFileReader
@@ -124,7 +139,7 @@ class TestJsonlExporter:
         exporter.add_event(proc(99999), mock_stats_item)
         exporter.close()
         event = read_jsonl(path)[0]
-        assert event["pid"] == 99999
+        assert event[PID] == 99999
 
     def test_close_multiple_calls_safe(
         self, mock_stats_item: GCStatsInfo, jsonl_exporter: ExporterFactory, read_jsonl: JsonlFileReader
@@ -222,7 +237,7 @@ class TestJsonlExporterInstantEvents:
         self, jsonl_exporter: ExporterFactory, read_jsonl: JsonlFileReader
     ) -> None:
         exporter, path = jsonl_exporter(threshold=1)
-        instant = create_instant_msg(name="start GC monitor", ts=1_500_000_000)
+        instant = create_instant_msg(name=START_EVENT, ts=1_500_000_000)
         exporter.add_instant_event(proc(DEFAULT_PID), instant)
         exporter.close()
 
@@ -238,19 +253,19 @@ class TestJsonlExporterInstantEvents:
 
     def test_add_instant_event_multiple(self, jsonl_exporter: ExporterFactory, read_jsonl: JsonlFileReader) -> None:
         exporter, path = jsonl_exporter(threshold=1000)
-        for name in ("start", "stop"):
+        for name in (START_EVENT, STOP_EVENT):
             exporter.add_instant_event(proc(DEFAULT_PID), create_instant_msg(name=name, ts=1000))
         exporter.close()
 
         events = read_jsonl(path)
         assert len(events) == 2
-        for event, name in zip(events, ("start", "stop"), strict=True):
+        for event, name in zip(events, (START_EVENT, STOP_EVENT), strict=True):
             assert_is_instant_msg(event, pid=DEFAULT_PID, name=name, ts=1_000)
 
     def test_mixed_instant_and_gc_events(
         self, mock_stats_item: GCStatsInfo, jsonl_exporter: ExporterFactory, read_jsonl: JsonlFileReader
     ) -> None:
-        instant = create_instant_msg(name="stop", ts=2_000)
+        instant = create_instant_msg(name=STOP_EVENT, ts=2_000)
         exporter, path = jsonl_exporter(threshold=1_000)
         exporter.add_event(proc(DEFAULT_PID), mock_stats_item)
         exporter.add_instant_event(proc(DEFAULT_PID), instant)
@@ -258,8 +273,8 @@ class TestJsonlExporterInstantEvents:
 
         events = read_jsonl(path)
         assert len(events) == 2
-        assert events[0].get("type") is None  # GC event has no type field
-        assert events[1]["type"] == "i"
+        assert events[0].get(TYPE) is None  # GC event has no type field
+        assert events[1][TYPE] == "i"
         assert_is_instant_msg(
             events[1],
             pid=DEFAULT_PID,
@@ -301,8 +316,8 @@ class TestJsonlLossRecords:
         )
         exporter.close()
 
-        record = json.loads(path.read_text(encoding="utf-8"))
-        assert record["iid"] == 1
+        record = json.loads(path.read_text(encoding=ENCODING))
+        assert record[IID] == 1
         assert "tid" not in record
 
     def test_it_does_not_disturb_gc_records(self, jsonl_exporter: ExporterFactory) -> None:

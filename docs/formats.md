@@ -21,9 +21,11 @@ A trace carries these:
 - **`GC Pauses` track**: one row per interpreter, under that interpreter's
   group, holding one **`GC Pause(gen)` slice** per GC run gcmon read, carrying
   that run's counters as args.
-- **Sub-step slices** nested inside a pause: Mark Alive, Fill increment,
-  Deduce Unreachable, Handle Weakrefs Callbacks, Finalize Garbage, Handle
-  Resurrected, Clear Weakrefs, Delete Garbage.
+- **Sub-step slices** nested inside a pause, each named for its generation the
+  way the pause is: `GC Mark Alive`, `GC Fill Increment`,
+  `GC Deduce Unreachable`, `GC Handle Weakrefs Callbacks`,
+  `GC Finalize Garbage`, `GC Handle Resurrected`, `GC Clear Weakrefs`,
+  `GC Delete Garbage`. A `--stats` row carries the same name.
 - **Counter tracks** per generation, `G{gen}`, carrying `collected`,
   `candidates`, `duration` and `uncollectable`, inside that interpreter's
   `GC Metrics` group, with `heap_size` beside the group rather than inside it,
@@ -32,6 +34,10 @@ A trace carries these:
   `G0 collected`, `G1 collected` and `G2 collected` line up.
 - **`GC Loss` track**: one row per interpreter, `GC Loss`, under that
   interpreter's group; see [GC Loss slices](#gc-loss-slices).
+- **Control instants** on the process row, where a program drove gcmon through
+  the [control plane](control-plane.md): `start GC monitor` when it resumed
+  polling and `stop GC monitor` when it suppressed it. A mark a program sends
+  itself carries whatever name it passed.
 - **`rss` counter** per process under `--rss`, in bytes, sampled at
   `--rss-interval` (default 1s).
 - **`Processes` track**: a minimap of the session, one slice per monitored
@@ -57,9 +63,10 @@ A trace carries these:
   read; see [The `Lifetime` slice](#the-lifetime-slice). It reads longer than
   the same process's `Processes` slice wherever that one was cut short.
 
-> **Note:** sub-step slices (Mark Alive, Fill increment, Deduce Unreachable,
-> …) need a CPython build carrying the extra GC instrumentation. A standard
-> build gives the top-level `GC Pause` slices and the counters.
+> **Note:** sub-step slices (`GC Mark Alive`, `GC Fill Increment`,
+> `GC Deduce Unreachable`, …) need a CPython build carrying the extra GC
+> instrumentation. A standard build gives the top-level `GC Pause` slices and
+> the counters.
 
 ### The `Lifetime` slice
 

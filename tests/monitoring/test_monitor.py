@@ -15,6 +15,8 @@ from gcmon.monitoring.process_registry import ProcessRegistry
 from gcmon.monitoring.target_process import ExternalProcess
 from gcmon.monitoring.wait_policy import WaitPolicy, WaitPolicyFactory, no_wait_policy
 from gcmon.stats.streaming_stats import StreamingStats
+from gcmon.support.vocabulary import PROGRAM_NAME
+from tests.conftest import DEFAULT_PID
 from tests.helpers import FakeEventsReader, MockExporter, create_mock_stats_item, proc
 
 NO_RECORDS: list[TGCStatsInfo] = []
@@ -94,7 +96,7 @@ class TestEventsMonitorExtra:
     ) -> None:
         monitor._poll(12345)
 
-        mock_stats_update.assert_called_once_with(proc(12345), one_record)
+        mock_stats_update.assert_called_once_with(proc(DEFAULT_PID), one_record)
 
     def test_poll_skips_invalid_timestamp_event(
         self, monitor: EventsMonitor, exporter: MockExporter, reader: FakeEventsReader
@@ -178,7 +180,7 @@ class TestGCMonitor:
         time takes the registry's lock again."""
         mock_read.return_value = [create_mock_stats_item()]
 
-        assert monitor._poll(12345) == (PollStatus.OK, proc(12345))
+        assert monitor._poll(12345) == (PollStatus.OK, proc(DEFAULT_PID))
 
     def test_a_failed_poll_answers_with_no_process(self, monitor: EventsMonitor, mock_read: MagicMock) -> None:
         """The other half: nothing was filed, so there is nothing to name."""
@@ -202,7 +204,7 @@ class TestGCMonitor:
         traceback on stderr every time a monitored process finishes."""
         mock_read.side_effect = TargetUnavailable("PID 12345 is not readable: [Errno 3] No such process")
 
-        with caplog.at_level(logging.DEBUG, logger="gcmon"):
+        with caplog.at_level(logging.DEBUG, logger=PROGRAM_NAME):
             assert monitor._poll(12345).status == PollStatus.INVALID_PROCESS
 
         assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
@@ -216,7 +218,7 @@ class TestGCMonitor:
         of one line per pid per tick for as long as the run lasts."""
         mock_read.side_effect = TargetUnavailable("PID 12345 is not readable: Failed to get Python runtime address")
 
-        with caplog.at_level(logging.DEBUG, logger="gcmon"):
+        with caplog.at_level(logging.DEBUG, logger=PROGRAM_NAME):
             monitor._poll(12345)
             monitor._poll(12345)
 
@@ -233,7 +235,7 @@ class TestGCMonitor:
             TargetUnavailable("PID 12345 is not readable: Failed to read interpreter state address"),
         ]
 
-        with caplog.at_level(logging.DEBUG, logger="gcmon"):
+        with caplog.at_level(logging.DEBUG, logger=PROGRAM_NAME):
             for _ in range(2):
                 monitor._poll(12345)
 
@@ -251,7 +253,7 @@ class TestGCMonitor:
             TargetUnavailable("PID 12345 is not readable: No interpreter state found"),
         ]
 
-        with caplog.at_level(logging.DEBUG, logger="gcmon"):
+        with caplog.at_level(logging.DEBUG, logger=PROGRAM_NAME):
             for _ in range(3):
                 monitor._poll(12345)
 
@@ -553,7 +555,7 @@ class TestTheReport:
             rings={12345: [_ring(1)], 999: [_ring(1)]},
         )
 
-        assert reports[0].live == frozenset({proc(12345), proc(999)})
+        assert reports[0].live == frozenset({proc(DEFAULT_PID), proc(999)})
 
     def test_a_pid_that_could_not_be_read_is_not_live(self, exporter: MockExporter) -> None:
         """Only ``PollStatus.OK`` is evidence a process was there. A failed
@@ -564,7 +566,7 @@ class TestTheReport:
             rings={12345: [_ring(1)], 999: [TargetUnavailable("no such process")]},
         )
 
-        assert reports[0].live == frozenset({proc(12345)})
+        assert reports[0].live == frozenset({proc(DEFAULT_PID)})
 
     def test_the_live_set_is_frozen(self, exporter: MockExporter) -> None:
         """Nothing downstream mutates it -- the sampler iterates it and the
@@ -623,7 +625,7 @@ class TestTheControlPlaneVerdict:
             rings={12345: [_ring(1)]},
         )
 
-        assert reports[0].live == frozenset({proc(12345)})
+        assert reports[0].live == frozenset({proc(DEFAULT_PID)})
         assert 999 not in exporter.events_by_pid
 
 
@@ -639,7 +641,7 @@ class TestTheStopCheck:
             stop=lambda: next(answers),
         )
 
-        assert reports[0].live == frozenset({proc(12345)})
+        assert reports[0].live == frozenset({proc(DEFAULT_PID)})
         assert 999 not in exporter.events_by_pid
 
 
@@ -702,7 +704,7 @@ class TestOnePruneOverOneSet:
         them has gone and the one that read them did not (ADR-0025), so the
         log is where the prune shows.
         """
-        with caplog.at_level(logging.DEBUG, logger="gcmon"):
+        with caplog.at_level(logging.DEBUG, logger=PROGRAM_NAME):
             _drive(
                 _monitor(exporter),
                 listings=[[999], [], [999]],
@@ -741,7 +743,7 @@ class TestOnePruneOverOneSet:
         number is a new process, and its first failed poll is news even where
         it failed the way its predecessor did.
         """
-        with caplog.at_level(logging.DEBUG, logger="gcmon"):
+        with caplog.at_level(logging.DEBUG, logger=PROGRAM_NAME):
             _drive(
                 _monitor(exporter),
                 listings=[[999], [999], [], [999]],
@@ -1122,7 +1124,7 @@ class TestAPidGcmonCannotRead:
             },
         )
 
-        assert monitor._processes.live() == frozenset({proc(12345)})
+        assert monitor._processes.live() == frozenset({proc(DEFAULT_PID)})
         # `at` is what the control plane files evidence through, and it reads
         # the retired processes too: one created per attempt leaves three
         # there, so the pid answers with a process that never existed.
@@ -1181,7 +1183,7 @@ class TestNoWaitPolicyThroughAWholeTick:
     def test_a_successful_poll_keeps_the_run_open(self, exporter: MockExporter) -> None:
         reports = _drive(_monitor(exporter), listings=[[]], rings={12345: [_ring(1)]})
 
-        assert reports[0].live == frozenset({proc(12345)})
+        assert reports[0].live == frozenset({proc(DEFAULT_PID)})
         assert reports[0].keep_running
 
     def test_a_failed_poll_ends_it(self, exporter: MockExporter) -> None:

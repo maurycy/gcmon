@@ -9,15 +9,31 @@ from perfetto.protos.perfetto.trace.perfetto_trace_pb2 import (
     TrackEvent,
 )
 
+from gcmon.control.protocol import START_EVENT, STOP_EVENT
 from gcmon.exporters import PerfettoExporter
 from gcmon.exporters.perfetto_format import (
     TrackEventType,
 )
+from gcmon.exporters.perfetto_process_lifetime import _PROCESS_ROW_PREFIX, process_track_name
 from gcmon.model.data import GCStatsInfo
+from gcmon.model.names import (
+    CLEAR_WEAKREFS,
+    DEDUCE_UNREACHABLE,
+    DELETE_GARBAGE,
+    FILL_INCREMENT,
+    FINALIZE_GARBAGE,
+    GC_PAUSE_NAME,
+    HANDLE_RESURRECTED,
+    HANDLE_WEAKREFS,
+    MARK_ALIVE,
+    gc_pause_slice_name,
+    phase_slice_name,
+)
 from gcmon.model.process import Process
 from tests.conftest import DEFAULT_PID
 from tests.data_helpers import create_instant_msg
 from tests.exporters.conftest import ExporterFactory
+from tests.exporters.perfetto_helpers import pause_item
 from tests.helpers import create_mock_incremental_item, create_mock_stats_item, perfetto_packets, proc
 
 # Pids that only ever show up as liveness observations: gcmon polled
@@ -115,10 +131,10 @@ class TestPerfettoExporter:
             track_event = _get_track_event(packet)
             if track_event and track_event.type == TrackEvent.Type.TYPE_SLICE_BEGIN:
                 name = track_event.name
-                if name == "GC Pause(0)":
+                if name == gc_pause_slice_name(0):
                     hit = True
                     break
-        assert hit, "GC Pause(0) not found"
+        assert hit, f"{gc_pause_slice_name(0)} not found"
 
         # Verify descriptors present
         assert _count_descriptors(packets) >= 2
@@ -168,13 +184,13 @@ class TestPerfettoExporter:
             track_event = _get_track_event(packet)
             if track_event and track_event.type == TrackEvent.Type.TYPE_SLICE_BEGIN:
                 name = track_event.name
-                if name and "GC Pause" in name:
+                if name and GC_PAUSE_NAME in name:
                     names.add(name)
-        assert names == {"GC Pause(0)", "GC Pause(1)", "GC Pause(2)"}
+        assert names == {gc_pause_slice_name(0), gc_pause_slice_name(1), gc_pause_slice_name(2)}
 
     def test_add_instant_event_writes_instant_event(self, perfetto_exporter: ExporterFactory) -> None:
         exporter, path = perfetto_exporter()
-        instant = create_instant_msg(name="start GC monitor", ts=1_500_000_000)
+        instant = create_instant_msg(name=START_EVENT, ts=1_500_000_000)
         exporter.add_instant_event(proc(DEFAULT_PID), instant)
         exporter.close()
 
@@ -188,11 +204,11 @@ class TestPerfettoExporter:
                     names.append(name)
         # Only what the caller sent: the process row is kept rendered by
         # the "Lifetime" slice, which is not an instant.
-        assert names == ["start GC monitor"]
+        assert names == [START_EVENT]
 
     def test_multiple_add_instant_event(self, perfetto_exporter: ExporterFactory) -> None:
         exporter, path = perfetto_exporter()
-        for ev_name in ("start GC monitor", "stop GC monitor"):
+        for ev_name in (START_EVENT, STOP_EVENT):
             exporter.add_instant_event(proc(DEFAULT_PID), create_instant_msg(name=ev_name, ts=1_500_000_000))
         exporter.close()
 
@@ -204,7 +220,7 @@ class TestPerfettoExporter:
                 event_name = track_event.name
                 if event_name:
                     names.append(event_name)
-        assert names == ["start GC monitor", "stop GC monitor"]
+        assert names == [START_EVENT, STOP_EVENT]
 
     def test_events_have_valid_timestamps(
         self, mock_stats_item: GCStatsInfo, perfetto_exporter: ExporterFactory
@@ -258,15 +274,15 @@ class TestPerfettoExporter:
                 if name:
                     begin_names.add(name)
         expected = {
-            "GC Pause(0)",
-            "Mark Alive(0)",
-            "Fill increment(0)",
-            "Deduce Unreachable(0)",
-            "Handle Weakrefs Callbacks(0)",
-            "Finalize Garbage(0)",
-            "Handle Resurrected(0)",
-            "Clear Weakrefs(0)",
-            "Delete Garbage(0)",
+            gc_pause_slice_name(0),
+            phase_slice_name(MARK_ALIVE, 0),
+            phase_slice_name(FILL_INCREMENT, 0),
+            phase_slice_name(DEDUCE_UNREACHABLE, 0),
+            phase_slice_name(HANDLE_WEAKREFS, 0),
+            phase_slice_name(FINALIZE_GARBAGE, 0),
+            phase_slice_name(HANDLE_RESURRECTED, 0),
+            phase_slice_name(CLEAR_WEAKREFS, 0),
+            phase_slice_name(DELETE_GARBAGE, 0),
         }
         assert expected.issubset(begin_names)
 
@@ -288,20 +304,9 @@ class TestPerfettoExporter:
 
     def test_cmdline_comes_from_the_process(self, tmp_path: Path) -> None:
         exporter = PerfettoExporter(output_path=tmp_path / "test.pb")
-        item = GCStatsInfo(
-            gen=0,
-            iid=0,
-            ts_start=1_000,
-            ts_stop=2_000,
-            heap_size=1000,
-            collections=1,
-            collected=10,
-            uncollectable=0,
-            candidates=5,
-            duration=0.001,
-        )
-        exporter.add_process_cmdline(proc(12345), ("python", "-u", "my_script.py"))
-        exporter.add_event(proc(12345), item)
+        item = pause_item()
+        exporter.add_process_cmdline(proc(DEFAULT_PID), ("python", "-u", "my_script.py"))
+        exporter.add_event(proc(DEFAULT_PID), item)
         exporter.close()
 
         trace_data = (tmp_path / "test.pb").read_bytes()
@@ -327,19 +332,8 @@ class TestPerfettoExporter:
 
     def test_a_process_with_no_cmdline_gets_no_description(self, tmp_path: Path) -> None:
         exporter = PerfettoExporter(output_path=tmp_path / "test.pb")
-        item = GCStatsInfo(
-            gen=0,
-            iid=0,
-            ts_start=1_000,
-            ts_stop=2_000,
-            heap_size=1000,
-            collections=1,
-            collected=10,
-            uncollectable=0,
-            candidates=5,
-            duration=0.001,
-        )
-        exporter.add_event(proc(12345), item)
+        item = pause_item()
+        exporter.add_event(proc(DEFAULT_PID), item)
         exporter.close()
 
         trace_data = (tmp_path / "test.pb").read_bytes()
@@ -422,7 +416,7 @@ def _lifetime_spans(path: Path) -> dict[str, tuple[int, int]]:
         if not packet.HasField("track_event"):
             continue
         track_event = packet.track_event
-        if not track_event.name.startswith("Process "):
+        if not track_event.name.startswith(_PROCESS_ROW_PREFIX):
             continue
         if track_event.type == TrackEventType.SLICE_BEGIN:
             begins[track_event.name] = packet.timestamp
@@ -445,7 +439,7 @@ class TestProcessLivenessRoundTrip:
             exporter.add_process_liveness({proc(_QUIET_PID)}, ts)
         exporter.close()
 
-        assert _lifetime_spans(path)[f"Process {_QUIET_PID}"] == (1_400_000_000, 1_800_000_000)
+        assert _lifetime_spans(path)[process_track_name(proc(_QUIET_PID))] == (1_400_000_000, 1_800_000_000)
 
     def test_liveness_widens_an_event_derived_span(self, perfetto_exporter: ExporterFactory) -> None:
         """Liveness folds in alongside events rather than replacing
@@ -459,7 +453,7 @@ class TestProcessLivenessRoundTrip:
 
         # The event start is still the start -- it precedes the first
         # observation -- and the last observation is now the end.
-        assert _lifetime_spans(path)[f"Process {DEFAULT_PID}"] == (1_500_000_000, 1_900_000_000)
+        assert _lifetime_spans(path)[process_track_name(proc(DEFAULT_PID))] == (1_500_000_000, 1_900_000_000)
 
     def test_whole_live_set_lands_in_one_call(self, perfetto_exporter: ExporterFactory) -> None:
         exporter, path = perfetto_exporter()
@@ -469,8 +463,8 @@ class TestProcessLivenessRoundTrip:
         exporter.close()
 
         spans = _lifetime_spans(path)
-        assert spans[f"Process {_QUIET_PID}"] == (1_400_000_000, 1_800_000_000)
-        assert spans[f"Process {_OTHER_QUIET_PID}"] == (1_400_000_000, 1_800_000_000)
+        assert spans[process_track_name(proc(_QUIET_PID))] == (1_400_000_000, 1_800_000_000)
+        assert spans[process_track_name(proc(_OTHER_QUIET_PID))] == (1_400_000_000, 1_800_000_000)
 
     def test_a_trace_of_nothing_but_liveness_is_still_written(self, perfetto_exporter: ExporterFactory) -> None:
         """A run in which nothing ever collected produces no events, so
@@ -484,8 +478,8 @@ class TestProcessLivenessRoundTrip:
 
         assert path.exists(), "a trace with spans and no events must still be written"
         assert _lifetime_spans(path) == {
-            f"Process {_QUIET_PID}": (1_400_000_000, 1_800_000_000),
-            f"Process {_OTHER_QUIET_PID}": (1_400_000_000, 1_800_000_000),
+            process_track_name(proc(_QUIET_PID)): (1_400_000_000, 1_800_000_000),
+            process_track_name(proc(_OTHER_QUIET_PID)): (1_400_000_000, 1_800_000_000),
         }
 
     def test_a_trace_of_truly_nothing_writes_no_file(self, perfetto_exporter: ExporterFactory) -> None:

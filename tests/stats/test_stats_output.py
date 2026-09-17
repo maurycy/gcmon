@@ -7,9 +7,22 @@ from pathlib import Path
 import pytest
 
 from gcmon.model.data import GCStatsInfo
+from gcmon.model.names import (
+    CLEAR_WEAKREFS,
+    DEDUCE_UNREACHABLE,
+    DELETE_GARBAGE,
+    FILL_INCREMENT,
+    FINALIZE_GARBAGE,
+    HANDLE_RESURRECTED,
+    HANDLE_WEAKREFS,
+    MARK_ALIVE,
+    gc_pause_slice_name,
+)
 from gcmon.model.run_report import RunReport
 from gcmon.stats.stats import Stats
 from gcmon.stats.stats_output import (
+    READ_TIME_LABEL,
+    TOTAL_LABEL,
     _build_rows,
     _print_table,
     print_stats,
@@ -17,7 +30,21 @@ from gcmon.stats.stats_output import (
 )
 from gcmon.stats.streaming_stats import StreamingStats
 from gcmon.stats.views import StatsView, TableFormat
+from tests.conftest import DEFAULT_PID
 from tests.helpers import create_mock_stats_item, proc
+
+# The process whose rows these tests render.
+TARGET_PID: int = 1
+
+PAUSE_NS: int = 1_000_000
+"""One pause's length, chosen so a rendered row reads in milliseconds."""
+
+
+def _pause(ns: int = PAUSE_NS, iid: int = 0, heap_size: int | None = None) -> GCStatsInfo:
+    """A gen-0 pause *ns* long, starting at zero."""
+    if heap_size is None:
+        return create_mock_stats_item(iid=iid, gen=0, ts_start=0, ts_stop=ns)
+    return create_mock_stats_item(iid=iid, gen=0, ts_start=0, ts_stop=ns, heap_size=heap_size)
 
 
 class TestStatsOutput:
@@ -38,11 +65,11 @@ class TestStatsOutput:
         """Test print_stats with some GC data."""
         stats = StreamingStats()
         item = gc_stats_item_factory(ts_stop=1000)
-        stats.update(proc(12345), item)
+        stats.update(proc(DEFAULT_PID), item)
 
         print_stats(stats, StatsView.FULL)
         captured = capsys.readouterr()
-        assert "GC Pause(0)" in captured.out
+        assert gc_pause_slice_name(0) in captured.out
         assert "Metric" in captured.out
         assert "Count" in captured.out
         assert "Sum" in captured.out
@@ -65,14 +92,14 @@ class TestStatsOutput:
                 gen=gen,
                 ts_stop=1000 * (gen + 1),
             )
-            stats.update(proc(12345), item)
+            stats.update(proc(DEFAULT_PID), item)
 
         print_stats(stats, StatsView.FULL)
         captured = capsys.readouterr()
 
-        assert "GC Pause(0)" in captured.out
-        assert "GC Pause(1)" in captured.out
-        assert "GC Pause(2)" in captured.out
+        assert gc_pause_slice_name(0) in captured.out
+        assert gc_pause_slice_name(1) in captured.out
+        assert gc_pause_slice_name(2) in captured.out
         assert "Metric" in captured.out
         assert "Count" in captured.out
         assert "Sum" in captured.out
@@ -220,11 +247,11 @@ class TestPrintStatsEdgeCases:
         gc_stats_item_factory: Callable[..., GCStatsInfo],
     ) -> None:
         stats = StreamingStats()
-        stats.update(proc(12345), gc_stats_item_factory())
+        stats.update(proc(DEFAULT_PID), gc_stats_item_factory())
 
         print_stats(stats, StatsView.FULL)
         captured = capsys.readouterr()
-        assert "Total" in captured.out
+        assert TOTAL_LABEL in captured.out
 
     def test_incremental_metrics_output(
         self,
@@ -238,18 +265,18 @@ class TestPrintStatsEdgeCases:
             ts_fill_increment_stop=7000,
             ts_deduce_unreachable_start=7000,
         )
-        stats.update(proc(12345), item)
+        stats.update(proc(DEFAULT_PID), item)
 
         print_stats(stats, StatsView.FULL)
         captured = capsys.readouterr()
-        assert "GC Mark Alive" in captured.out
-        assert "GC Fill Increment" in captured.out
-        assert "GC Deduce Unreachable" in captured.out
-        assert "GC Handle Weakrefs Callbacks" in captured.out
-        assert "GC Finalize Garbage" in captured.out
-        assert "GC Handle Resurrected" in captured.out
-        assert "GC Clear Weakrefs" in captured.out
-        assert "GC Delete Garbage" in captured.out
+        assert MARK_ALIVE.label in captured.out
+        assert FILL_INCREMENT.label in captured.out
+        assert DEDUCE_UNREACHABLE.label in captured.out
+        assert HANDLE_WEAKREFS.label in captured.out
+        assert FINALIZE_GARBAGE.label in captured.out
+        assert HANDLE_RESURRECTED.label in captured.out
+        assert CLEAR_WEAKREFS.label in captured.out
+        assert DELETE_GARBAGE.label in captured.out
 
     def test_pause_row_printed_in_milliseconds(
         self,
@@ -257,15 +284,15 @@ class TestPrintStatsEdgeCases:
         gc_stats_item_factory: Callable[..., GCStatsInfo],
     ) -> None:
         stats = StreamingStats()
-        stats.update(proc(12345), gc_stats_item_factory(ts_start=0, ts_stop=1_000_000))
-        stats.update(proc(12345), gc_stats_item_factory(ts_start=0, ts_stop=3_000_000))
+        stats.update(proc(DEFAULT_PID), gc_stats_item_factory(ts_start=0, ts_stop=1_000_000))
+        stats.update(proc(DEFAULT_PID), gc_stats_item_factory(ts_start=0, ts_stop=3_000_000))
 
         print_stats(stats, StatsView.FULL)
         captured = capsys.readouterr()
-        pause_line = next(line for line in captured.out.splitlines() if "GC Pause(0)" in line)
+        pause_line = next(line for line in captured.out.splitlines() if gc_pause_slice_name(0) in line)
         cells = [c.strip() for c in pause_line.strip().strip("|").split("|")]
         # PID, Metric, Count, Sum, Avg, P50, P90, P95, P99 - durations in milliseconds
-        assert cells[1] == "GC Pause(0)"
+        assert cells[1] == gc_pause_slice_name(0)
         assert cells[2] == "2"
         assert cells[3] == "4.000"
         assert cells[4] == "2.000"
@@ -276,11 +303,11 @@ class TestPrintStatsEdgeCases:
         gc_stats_item_factory: Callable[..., GCStatsInfo],
     ) -> None:
         stats = StreamingStats()
-        stats.update(proc(12345), gc_stats_item_factory())
+        stats.update(proc(DEFAULT_PID), gc_stats_item_factory())
 
         print_stats(stats, StatsView.FULL)
         captured = capsys.readouterr()
-        assert "Read Time" not in captured.out
+        assert READ_TIME_LABEL not in captured.out
 
     def test_read_time_row_printed(
         self,
@@ -288,17 +315,17 @@ class TestPrintStatsEdgeCases:
         gc_stats_item_factory: Callable[..., GCStatsInfo],
     ) -> None:
         stats = StreamingStats()
-        stats.update(proc(12345), gc_stats_item_factory())
+        stats.update(proc(DEFAULT_PID), gc_stats_item_factory())
         stats.record_read_time(1_000_000)
         stats.record_read_time(3_000_000)
 
         print_stats(stats, StatsView.FULL)
         captured = capsys.readouterr()
-        read_time_line = next(line for line in captured.out.splitlines() if "Read Time" in line)
+        read_time_line = next(line for line in captured.out.splitlines() if READ_TIME_LABEL in line)
         cells = [c.strip() for c in read_time_line.strip().strip("|").split("|")]
         # PID, Metric, Count, Sum, Avg, P50, P90, P95, P99 - durations in milliseconds
         assert cells[0] == ""
-        assert cells[1] == "Read Time"
+        assert cells[1] == READ_TIME_LABEL
         assert cells[2] == "2"
         assert cells[3] == "4.000"
         assert cells[4] == "2.000"
@@ -310,7 +337,7 @@ class TestPrintStatsEdgeCases:
         print_stats(stats, StatsView.FULL)
         captured = capsys.readouterr()
         assert "No GC statistics collected." not in captured.out
-        assert "Read Time" in captured.out
+        assert READ_TIME_LABEL in captured.out
         assert "2.500" in captured.out
 
     def test_markdown_format(
@@ -319,7 +346,7 @@ class TestPrintStatsEdgeCases:
         gc_stats_item_factory: Callable[..., GCStatsInfo],
     ) -> None:
         stats = StreamingStats()
-        stats.update(proc(12345), gc_stats_item_factory())
+        stats.update(proc(DEFAULT_PID), gc_stats_item_factory())
 
         print_stats(stats, StatsView.FULL, table_format=TableFormat.MARKDOWN)
         captured = capsys.readouterr()
@@ -355,15 +382,15 @@ class TestTheTablePrintsRings:
     def _one_interpreter(self) -> StreamingStats:
         stats = StreamingStats()
         for _ in range(3):
-            stats.update(proc(12345), create_mock_stats_item(iid=0, gen=0, ts_start=0, ts_stop=1_000_000))
+            stats.update(proc(DEFAULT_PID), _pause())
         return stats
 
     def _two_interpreters(self) -> StreamingStats:
         """Same pid, different pause distributions: 1 ms against 20 ms."""
         stats = StreamingStats()
         for _ in range(3):
-            stats.update(proc(12345), create_mock_stats_item(iid=0, gen=0, ts_start=0, ts_stop=1_000_000))
-            stats.update(proc(12345), create_mock_stats_item(iid=1, gen=0, ts_start=0, ts_stop=20_000_000))
+            stats.update(proc(DEFAULT_PID), _pause())
+            stats.update(proc(DEFAULT_PID), _pause(20_000_000, iid=1))
         return stats
 
     def test_the_header_names_both_fields(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -385,7 +412,7 @@ class TestTheTablePrintsRings:
         print_stats(self._one_interpreter(), StatsView.FULL)
         rows = table_rows(capsys.readouterr().out)
 
-        total = next(row for row in rows if row[0] == "Total")
+        total = next(row for row in rows if row[0] == TOTAL_LABEL)
         ring = next(row for row in rows if row[0] == "12345:0")
 
         assert total[1:] == ring[1:]
@@ -402,22 +429,22 @@ class TestTheTablePrintsRings:
         print_stats(self._two_interpreters(), StatsView.FULL)
         rows = table_rows(capsys.readouterr().out)
 
-        p99 = {row[0]: row[8] for row in rows if row[0] in ("Total", "12345:0", "12345:1")}
-        p50 = {row[0]: row[5] for row in rows if row[0] in ("Total", "12345:0", "12345:1")}
+        p99 = {row[0]: row[8] for row in rows if row[0] in (TOTAL_LABEL, "12345:0", "12345:1")}
+        p50 = {row[0]: row[5] for row in rows if row[0] in (TOTAL_LABEL, "12345:0", "12345:1")}
 
         assert p99["12345:0"] == "1.000"
         assert p99["12345:1"] == "20.000"
         # The blend sits between the two, describing neither.
-        assert p50["Total"] not in (p50["12345:0"], p50["12345:1"])
+        assert p50[TOTAL_LABEL] not in (p50["12345:0"], p50["12345:1"])
 
     def _one_starved_interpreter(self) -> StreamingStats:
         """Interpreter 0 read all three of its collections; interpreter 1 read
         one of ten."""
         stats = StreamingStats()
         for _ in range(3):
-            stats.update(proc(12345), create_mock_stats_item(iid=0, gen=0, ts_start=0, ts_stop=1_000_000))
-        stats.update(proc(12345), create_mock_stats_item(iid=1, gen=0, ts_start=0, ts_stop=1_000_000))
-        stats.record_loss(proc(12345), 1, 0, 9, 9_000_000)
+            stats.update(proc(DEFAULT_PID), _pause())
+        stats.update(proc(DEFAULT_PID), _pause(iid=1))
+        stats.record_loss(proc(DEFAULT_PID), 1, 0, 9, 9_000_000)
         return stats
 
     def test_each_ring_row_carries_its_own_coverage(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -426,11 +453,11 @@ class TestTheTablePrintsRings:
         print_stats(self._one_starved_interpreter(), StatsView.FULL)
         rows = table_rows(capsys.readouterr().out)
 
-        cov = {row[0]: row[9] for row in rows if row[0] in ("Total", "12345:0", "12345:1")}
+        cov = {row[0]: row[9] for row in rows if row[0] in (TOTAL_LABEL, "12345:0", "12345:1")}
 
         assert cov["12345:0"] == "100.0%"
         assert cov["12345:1"] == "10.0%"
-        assert cov["Total"] == "30.8%"
+        assert cov[TOTAL_LABEL] == "30.8%"
 
     def test_a_ring_that_lost_nothing_prints_one_number_per_cell(self, capsys: pytest.CaptureFixture[str]) -> None:
         """`3/3` beside a neighbour's `1/10` would say nothing was lost twice
@@ -446,7 +473,7 @@ class TestTheTablePrintsRings:
     def test_rings_sort_by_pid_then_interpreter(self, capsys: pytest.CaptureFixture[str]) -> None:
         stats = StreamingStats()
         for pid, iid in ((22222, 1), (12345, 1), (22222, 0), (12345, 0)):
-            stats.update(proc(pid), create_mock_stats_item(iid=iid, gen=0, ts_start=0, ts_stop=1_000_000))
+            stats.update(proc(pid), _pause(iid=iid))
 
         print_stats(stats, StatsView.FULL)
         labels = [row[0] for row in table_rows(capsys.readouterr().out)[1:] if ":" in row[0]]
@@ -458,7 +485,7 @@ class TestTheTablePrintsRings:
         stats.record_read_time(500_000)
 
         print_stats(stats, StatsView.FULL)
-        read_time = next(row for row in table_rows(capsys.readouterr().out) if row[1] == "Read Time")
+        read_time = next(row for row in table_rows(capsys.readouterr().out) if row[1] == READ_TIME_LABEL)
 
         assert read_time[0] == ""
 
@@ -467,8 +494,8 @@ class TestLossColumns:
     def _lossy(self) -> StreamingStats:
         stats = StreamingStats()
         for _ in range(3):
-            stats.update(proc(1), create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000_000))
-        stats.record_loss(proc(1), 0, 0, 7, 7_000_000)
+            stats.update(proc(TARGET_PID), _pause())
+        stats.record_loss(proc(TARGET_PID), 0, 0, 7, 7_000_000)
         return stats
 
     def test_count_and_sum_carry_both_numbers(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -490,7 +517,7 @@ class TestLossColumns:
         """`3/3` in every cell would say nothing was lost twice over."""
         stats = StreamingStats()
         for _ in range(3):
-            stats.update(proc(1), create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000_000))
+            stats.update(proc(TARGET_PID), _pause())
 
         print_stats(stats, StatsView.FULL)
         out = capsys.readouterr().out
@@ -500,7 +527,7 @@ class TestLossColumns:
 
     def test_a_lossless_run_prints_no_footer(self, capsys: pytest.CaptureFixture[str]) -> None:
         stats = StreamingStats()
-        stats.update(proc(1), create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000_000))
+        stats.update(proc(TARGET_PID), _pause())
 
         print_stats(stats, StatsView.FULL)
 
@@ -518,7 +545,7 @@ class TestLossColumns:
     ) -> None:
         """It is not loss and must not read as part of `Cov`."""
         stats = self._lossy()
-        stats.observe_cumulative(proc(1), 0, 0, 5_000, 5.0)
+        stats.observe_cumulative(proc(TARGET_PID), 0, 0, 5_000, 5.0)
 
         print_stats(stats, StatsView.FULL)
         out = capsys.readouterr().out
@@ -531,7 +558,7 @@ class TestLossColumns:
         stats.record_read_time(500_000)
 
         print_stats(stats, StatsView.FULL)
-        lines = [ln for ln in capsys.readouterr().out.splitlines() if "Read Time" in ln]
+        lines = [ln for ln in capsys.readouterr().out.splitlines() if READ_TIME_LABEL in ln]
 
         assert lines[0].rstrip().endswith("|      |      |") or lines[0].count("|") == 12
 
@@ -540,8 +567,8 @@ class TestLossColumns:
         a `Count` cell plainly showing eight missing."""
         stats = StreamingStats()
         for _ in range(1763):
-            stats.update(proc(1), create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000_000))
-        stats.record_loss(proc(1), 0, 0, 8, 8_000_000)
+            stats.update(proc(TARGET_PID), _pause())
+        stats.record_loss(proc(TARGET_PID), 0, 0, 8, 8_000_000)
 
         print_stats(stats, StatsView.FULL)
         out = capsys.readouterr().out
@@ -553,8 +580,8 @@ class TestLossColumns:
     def test_a_gap_too_small_to_show_still_says_so(self, capsys: pytest.CaptureFixture[str]) -> None:
         stats = StreamingStats()
         for _ in range(1_000_000):
-            stats.update(proc(1), create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000))
-        stats.record_loss(proc(1), 0, 0, 1, 1_000)
+            stats.update(proc(TARGET_PID), _pause(1_000))
+        stats.record_loss(proc(TARGET_PID), 0, 0, 1, 1_000)
 
         print_stats(stats, StatsView.FULL)
         out = capsys.readouterr().out
@@ -566,8 +593,8 @@ class TestLossColumns:
         """Two roundings of one number that disagree are worse than either."""
         stats = StreamingStats()
         for _ in range(1763):
-            stats.update(proc(1), create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000_000))
-        stats.record_loss(proc(1), 0, 0, 8, 8_000_000)
+            stats.update(proc(TARGET_PID), _pause())
+        stats.record_loss(proc(TARGET_PID), 0, 0, 8, 8_000_000)
 
         print_stats(stats, StatsView.FULL)
         out = capsys.readouterr().out
@@ -587,9 +614,9 @@ class TestTheFooterNotesAreNumbered:
     def test_every_note_present_is_numbered_in_order(self, capsys: pytest.CaptureFixture[str]) -> None:
         stats = StreamingStats()
         for _ in range(3):
-            stats.update(proc(1), create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000_000))
-        stats.record_loss(proc(1), 0, 0, 7, 7_000_000)
-        stats.observe_cumulative(proc(1), 0, 0, 18, 0.02)
+            stats.update(proc(TARGET_PID), _pause())
+        stats.record_loss(proc(TARGET_PID), 0, 0, 7, 7_000_000)
+        stats.observe_cumulative(proc(TARGET_PID), 0, 0, 18, 0.02)
 
         print_stats(stats, StatsView.FULL)
         notes = self._notes(capsys.readouterr().out)
@@ -604,8 +631,8 @@ class TestTheFooterNotesAreNumbered:
         `1.` with nothing under it."""
         stats = StreamingStats()
         for _ in range(3):
-            stats.update(proc(1), create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000_000))
-        stats.record_loss(proc(1), 0, 0, 7, 7_000_000)
+            stats.update(proc(TARGET_PID), _pause())
+        stats.record_loss(proc(TARGET_PID), 0, 0, 7, 7_000_000)
 
         print_stats(stats, StatsView.FULL)
         notes = self._notes(capsys.readouterr().out)
@@ -615,7 +642,7 @@ class TestTheFooterNotesAreNumbered:
 
     def test_a_run_with_nothing_to_explain_numbers_nothing(self, capsys: pytest.CaptureFixture[str]) -> None:
         stats = StreamingStats()
-        stats.update(proc(1), create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000_000))
+        stats.update(proc(TARGET_PID), _pause())
 
         print_stats(stats, StatsView.FULL)
 
@@ -639,7 +666,7 @@ class TestTheCumulativeNoteNamesItsFold:
     def _stats(self, rings: list[tuple[int, int]]) -> StreamingStats:
         stats = StreamingStats()
         for pid, iid in rings:
-            stats.update(proc(pid), create_mock_stats_item(iid=iid, gen=0, ts_start=0, ts_stop=1_000_000))
+            stats.update(proc(pid), _pause(iid=iid))
             stats.observe_cumulative(proc(pid), iid, 0, 500, 0.5)
         return stats
 
@@ -674,9 +701,9 @@ class TestTheBlockOfAReusedPid:
 
     def _reused(self) -> StreamingStats:
         stats = StreamingStats()
-        stats.update(proc(12345), create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000_000))
-        stats.materialize(proc(12345))
-        stats.update(proc(12345, 2), create_mock_stats_item(gen=0, ts_start=0, ts_stop=9_000_000))
+        stats.update(proc(DEFAULT_PID), _pause())
+        stats.materialize(proc(DEFAULT_PID))
+        stats.update(proc(DEFAULT_PID, 2), _pause(9_000_000))
         return stats
 
     def test_the_first_block_reads_plain(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -701,7 +728,7 @@ class TestTheBlockOfAReusedPid:
 
     def test_an_ordinary_run_carries_no_suffix(self, capsys: pytest.CaptureFixture[str]) -> None:
         stats = StreamingStats()
-        stats.update(proc(12345), create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000_000))
+        stats.update(proc(DEFAULT_PID), _pause())
 
         print_stats(stats, StatsView.FULL)
 
@@ -715,7 +742,7 @@ class TestTheNoteOnRingsWithNoRow:
     def _crowded(self, extra: int) -> StreamingStats:
         stats = StreamingStats()
         for pid in range(StreamingStats.MAX_ACTIVE_RINGS + extra):
-            stats.update(proc(pid), create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000_000))
+            stats.update(proc(pid), _pause())
         return stats
 
     def test_a_run_that_fits_says_nothing(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -748,15 +775,15 @@ class TestTheTwoViews:
         """Same pid, 1 ms against 20 ms, and a read time under both blocks."""
         stats = StreamingStats()
         for _ in range(3):
-            stats.update(proc(12345), create_mock_stats_item(iid=0, gen=0, ts_start=0, ts_stop=1_000_000))
-            stats.update(proc(12345), create_mock_stats_item(iid=1, gen=0, ts_start=0, ts_stop=20_000_000))
+            stats.update(proc(DEFAULT_PID), _pause())
+            stats.update(proc(DEFAULT_PID), _pause(20_000_000, iid=1))
         stats.record_read_time(500_000)
         return stats
 
     def _one_interpreter(self) -> StreamingStats:
         stats = StreamingStats()
         for _ in range(3):
-            stats.update(proc(12345), create_mock_stats_item(iid=0, gen=0, ts_start=0, ts_stop=1_000_000))
+            stats.update(proc(DEFAULT_PID), _pause())
         return stats
 
     def _crowded(self) -> StreamingStats:
@@ -764,7 +791,7 @@ class TestTheTwoViews:
         one interpreter too many to hold a ring for."""
         stats = StreamingStats()
         for pid in range(StreamingStats.MAX_ACTIVE_RINGS + 1):
-            stats.update(proc(pid), create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000_000))
+            stats.update(proc(pid), _pause())
         stats.record_loss(proc(0), 0, 0, 7, 7_000_000)
         # Two generations, so a note that dropped one shows as a shorter line.
         stats.record_loss(proc(0), 0, 1, 3, 3_000_000)
@@ -782,7 +809,7 @@ class TestTheTwoViews:
         rows = table_rows(self._out(capsys, self._two_interpreters(), StatsView.TOTAL))
         labels = [row[0] for row in rows[1:]]
 
-        assert "Total" in labels
+        assert TOTAL_LABEL in labels
         assert [label for label in labels if ":" in label] == []
 
     def test_total_still_ends_on_the_read_time(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -790,7 +817,7 @@ class TestTheTwoViews:
         the rings keeps it."""
         rows = table_rows(self._out(capsys, self._two_interpreters(), StatsView.TOTAL))
 
-        assert rows[-1][1] == "Read Time"
+        assert rows[-1][1] == READ_TIME_LABEL
 
     def test_total_is_the_head_of_full(self, capsys: pytest.CaptureFixture[str]) -> None:
         """The regression guard: every line the narrower view prints before
@@ -802,7 +829,7 @@ class TestTheTwoViews:
         stats = self._two_interpreters()
         total = self._out(capsys, stats, StatsView.TOTAL).splitlines()
         full = self._out(capsys, stats, StatsView.FULL).splitlines()
-        head = total[: next(i for i, line in enumerate(total) if "Read Time" in line)]
+        head = total[: next(i for i, line in enumerate(total) if READ_TIME_LABEL in line)]
 
         assert full[: len(head)] == head
 
@@ -812,7 +839,7 @@ class TestTheTwoViews:
         """
         stats = StreamingStats()
         for _ in range(3):
-            stats.update(proc(123456), create_mock_stats_item(iid=0, gen=0, ts_start=0, ts_stop=1_000_000))
+            stats.update(proc(123456), _pause())
         total = table_rows(self._out(capsys, stats, StatsView.TOTAL))
         full = table_rows(self._out(capsys, stats, StatsView.FULL))
 
@@ -827,7 +854,7 @@ class TestTheTwoViews:
         added = full[len(total) :]
 
         assert [row[0] for row in added] == ["12345:0"]
-        assert [row[1:] for row in added] == [row[1:] for row in total if row[0] == "Total"]
+        assert [row[1:] for row in added] == [row[1:] for row in total if row[0] == TOTAL_LABEL]
 
     def test_the_untracked_note_is_full_only(self, capsys: pytest.CaptureFixture[str]) -> None:
         """It reconciles ring rows against the run, and `total` prints none."""
@@ -883,9 +910,9 @@ class TestSummaryLines:
     def _run(self, sampled: int, lost: int = 0) -> StreamingStats:
         stats = StreamingStats()
         for _ in range(sampled):
-            stats.update(proc(1), create_mock_stats_item(gen=0, ts_start=0, ts_stop=1_000_000))
+            stats.update(proc(TARGET_PID), _pause())
         if lost:
-            stats.record_loss(proc(1), 0, 0, lost, lost * 1_000_000)
+            stats.record_loss(proc(TARGET_PID), 0, 0, lost, lost * 1_000_000)
         return stats
 
     def test_a_lossless_run_says_only_what_it_read(self) -> None:
@@ -971,7 +998,7 @@ class TestSummaryLines:
         """`Total events` counts every record of every pid, so the number
         beside it has to cover the same ground."""
         stats = self._run(10)
-        stats.record_loss(proc(1), 0, 1, 5, 5_000_000)
+        stats.record_loss(proc(TARGET_PID), 0, 1, 5, 5_000_000)
         stats.record_loss(proc(2), 0, 0, 5, 5_000_000)
 
         _sampled, reconstructed, observed = read_counts(summary_lines(stats, None))

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Protocol
 
 import pytest
 
 from gcmon.exporters import JsonlExporter, PerfettoExporter
-from tests.helpers import JsonlRecord
+from gcmon.exporters.perfetto_track_state import PerfettoTrackState
+from tests.helpers import JsonlRecord, read_jsonl_file
 
 
 class ExporterFactory(Protocol):
@@ -54,10 +54,15 @@ def perfetto_exporter(tmp_path: Path) -> ExporterFactory:
 
 @pytest.fixture
 def read_jsonl() -> JsonlFileReader:
-    """Read a JSONL file and return list of parsed events."""
+    """Read a JSONL file and return its records."""
+    return read_jsonl_file
 
-    def _read(path: Path) -> list[JsonlRecord]:
-        with open(path, encoding="utf-8") as f:
-            return [json.loads(line) for line in f if line.strip()]
 
-    return _read
+@pytest.fixture
+def state() -> PerfettoTrackState:
+    """The track state a conversion writes into.
+
+    Every conversion test opens on an empty one, and a test that wants two
+    of them, or one already populated, builds its own.
+    """
+    return PerfettoTrackState()
