@@ -52,6 +52,20 @@ class TestSetupLogging:
         logger = logging.getLogger(PROGRAM_NAME)
         assert logger.level == getattr(logging, expected_level)
 
+    def test_a_second_call_relevels_the_handler_it_already_added(self, cli_module: types.ModuleType) -> None:
+        """One handler per process. A second call carrying ``-vv`` re-levels
+        the handler that is attached rather than adding one beside it, which
+        would print every record twice."""
+        import logging
+
+        cli_module._setup_logging(verbose_count=0)
+
+        cli_module._setup_logging(verbose_count=2)
+
+        handlers = logging.getLogger(PROGRAM_NAME).handlers
+        assert len(handlers) == 1
+        assert handlers[0].level == logging.DEBUG
+
 
 # =============================================================================
 # main() Tests - Command Routing
@@ -101,34 +115,28 @@ def test_main_version_exits_0(capsys: pytest.CaptureFixture[str]) -> None:
     assert excinfo.value.code == 0
 
 
-def test_main_subcommands_dispatch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "handler, argv",
+    [
+        ("gcmon.cli.monitor.monitor_cmd.cmd_monitor", [CMD_MONITOR, "12345"]),
+        ("gcmon.cli.monitor.run_cmd.cmd_run", [CMD_RUN, "-m", "timeit"]),
+        ("gcmon.cli.analyze.convert_cmd.cmd_combine", [CMD_COMBINE, "in.jsonl", "-o", "out.pftrace"]),
+    ],
+)
+def test_main_subcommands_dispatch(monkeypatch: pytest.MonkeyPatch, handler: str, argv: list[str]) -> None:
     from gcmon.cli import main as cli
 
-    calls: list[str] = []
+    calls: list[object] = []
 
-    def mock_monitor(args: object) -> int:
-        calls.append(CMD_MONITOR)
+    def mock_handler(args: object) -> int:
+        calls.append(args)
         return 0
 
-    def mock_run(args: object) -> int:
-        calls.append(CMD_RUN)
-        return 0
+    monkeypatch.setattr(handler, mock_handler)
 
-    def mock_combine(args: object) -> int:
-        calls.append(CMD_COMBINE)
-        return 0
+    assert cli.main(argv) == 0
 
-    monkeypatch.setattr("gcmon.cli.monitor.monitor_cmd.cmd_monitor", mock_monitor)
-    assert cli.main([CMD_MONITOR, "12345"]) == 0
-    assert calls == [CMD_MONITOR]
-
-    monkeypatch.setattr("gcmon.cli.monitor.run_cmd.cmd_run", mock_run)
-    assert cli.main([CMD_RUN, "-m", "timeit"]) == 0
-    assert calls == [CMD_MONITOR, CMD_RUN]
-
-    monkeypatch.setattr("gcmon.cli.analyze.convert_cmd.cmd_combine", mock_combine)
-    assert cli.main([CMD_COMBINE, str(tmp_path / "in.jsonl"), "-o", str(tmp_path / "out.pftrace")]) == 0
-    assert calls == [CMD_MONITOR, CMD_RUN, CMD_COMBINE]
+    assert len(calls) == 1
 
 
 # =============================================================================
