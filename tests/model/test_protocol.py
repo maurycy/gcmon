@@ -122,6 +122,11 @@ class TestHasGuards:
     def test_something_that_is_not_a_record_does_not(self) -> None:
         assert not has_pause_ts(SimpleNamespace(gen=0))
 
+    def test_a_loss_record_does_not_either(self, loss_item: LossMsg) -> None:
+        """It carries `ts_start` and `ts_stop` as well, between two polls
+        rather than round a pause."""
+        assert not has_pause_ts(loss_item)
+
     @pytest.mark.parametrize(("guard", "field", "value"), SUB_PHASES, ids=[f[1] for f in SUB_PHASES])
     def test_a_guard_sees_the_field_it_names(self, guard: Guard, field: str, value: int) -> None:
         assert guard(create_mock_stats_item(**{field: value}))
@@ -140,7 +145,9 @@ class TestToMappingPartial:
             ts_fill_increment_start=1_000_500,
             ts_fill_increment_stop=1_001_000,
         )
+
         result = to_mapping(item)
+
         assert result[INCREMENT_SIZE] == 500
         assert result[TS_FILL_INCREMENT_START] == 1_000_500
         assert result[TS_FILL_INCREMENT_STOP] == 1_001_000
@@ -162,7 +169,9 @@ class TestToMappingPartial:
             ts_mark_alive_start=1_000_500,
             ts_mark_alive_stop=1_001_000,
         )
+
         result = to_mapping(item)
+
         assert result[ALIVE_SIZE] == 300
         assert result[TS_MARK_ALIVE_START] == 1_000_500
         assert result[TS_MARK_ALIVE_STOP] == 1_001_000
@@ -183,7 +192,9 @@ class TestToMappingPartial:
             ts_deduce_unreachable_start=1_000_500,
             ts_deduce_unreachable_stop=1_001_000,
         )
+
         result = to_mapping(item)
+
         assert result[TS_DEDUCE_UNREACHABLE_START] == 1_000_500
         assert result[TS_DEDUCE_UNREACHABLE_STOP] == 1_001_000
         assert INCREMENT_SIZE not in result
@@ -203,7 +214,9 @@ class TestToMappingPartial:
             ts_finalize_garbage_stop=1_005_000,
             finalized_garbage_count=42,
         )
+
         result = to_mapping(item)
+
         assert result[TS_FINALIZE_GARBAGE_STOP] == 1_005_000
         assert result[FINALIZED_GARBAGE_COUNT] == 42
         assert DELETED_GARBAGE_COUNT not in result
@@ -215,7 +228,9 @@ class TestToMappingPartial:
             ts_delete_garbage_stop=1_009_000,
             deleted_garbage_count=13,
         )
+
         result = to_mapping(item)
+
         assert result[TS_DELETE_GARBAGE_START] == 1_008_000
         assert result[TS_DELETE_GARBAGE_STOP] == 1_009_000
         assert result[DELETED_GARBAGE_COUNT] == 13
@@ -227,7 +242,9 @@ class TestToMappingPartial:
             ts_clear_weakrefs_stop=1_007_000,
             clear_weakrefs_count=7,
         )
+
         result = to_mapping(item)
+
         assert result[TS_CLEAR_WEAKREFS_STOP] == 1_007_000
         assert result[CLEAR_WEAKREFS_COUNT] == 7
         assert FINALIZED_GARBAGE_COUNT not in result
@@ -254,7 +271,9 @@ class TestToMappingPartial:
             ts_delete_garbage_stop=1_009_000,
             deleted_garbage_count=13,
         )
+
         result = to_mapping(item)
+
         assert result[INCREMENT_SIZE] == 500
         assert result[ALIVE_SIZE] == 300
         assert result[TS_MARK_ALIVE_START] == 1_000_500
@@ -380,18 +399,15 @@ class TestIsLoss:
 
 
 class TestGuardsAreMutuallyExclusive:
-    def test_exactly_one_guard_claims_each_record_type(
-        self,
-        simple_item: GCStatsInfo,
-        incremental_item: GCStatsInfo,
-        instant_item: InstantMsg,
-        loss_item: LossMsg,
-    ) -> None:
+    @pytest.mark.parametrize("fixture_name", ["simple_item", "incremental_item", "instant_item", "loss_item"])
+    def test_exactly_one_guard_claims_each_record_type(self, request: pytest.FixtureRequest, fixture_name: str) -> None:
         """A record two guards claim takes a different branch depending on
         which guard a call site happens to ask first, and does it silently.
         Keeping them disjoint is cheaper than auditing every dispatch order
         as call sites come and go. Exactly one may hold, for every record
         type, whatever fields those types grow later."""
-        for item in (simple_item, incremental_item, instant_item, loss_item):
-            claims = [is_gc_stats(item), is_instant(item), is_loss(item)]
-            assert claims.count(True) == 1, f"{type(item).__name__} matched {claims}"
+        item = request.getfixturevalue(fixture_name)
+
+        claims = [is_gc_stats(item), is_instant(item), is_loss(item)]
+
+        assert claims.count(True) == 1, f"{type(item).__name__} matched {claims}"

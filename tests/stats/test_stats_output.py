@@ -67,7 +67,9 @@ class TestStatsOutput:
     def test_print_stats_empty(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test print_stats with no data."""
         stats = StreamingStats()
+
         print_stats(stats, StatsView.FULL)
+
         captured = capsys.readouterr()
         assert "No GC statistics collected." in captured.out
 
@@ -82,6 +84,7 @@ class TestStatsOutput:
         stats.update(proc(DEFAULT_PID), item)
 
         print_stats(stats, StatsView.FULL)
+
         captured = capsys.readouterr()
         assert gc_pause_slice_name(0) in captured.out
         assert "Metric" in captured.out
@@ -109,8 +112,8 @@ class TestStatsOutput:
             stats.update(proc(DEFAULT_PID), item)
 
         print_stats(stats, StatsView.FULL)
-        captured = capsys.readouterr()
 
+        captured = capsys.readouterr()
         assert gc_pause_slice_name(0) in captured.out
         assert gc_pause_slice_name(1) in captured.out
         assert gc_pause_slice_name(2) in captured.out
@@ -130,8 +133,8 @@ class TestStatsOutput:
             stats.update(proc(pid), gc_stats_item_factory())
 
         print_stats(stats, StatsView.FULL, table_format=TableFormat.PLAIN)
-        table = [line for line in capsys.readouterr().out.splitlines() if line.startswith("|")]
 
+        table = [line for line in capsys.readouterr().out.splitlines() if line.startswith("|")]
         assert [set(line) for line in table[2:] if "-" in line] == [{"|", "-"}, {"|", "-"}]
 
     def test_print_stats_table_format_markdown(
@@ -143,7 +146,9 @@ class TestStatsOutput:
         stats = StreamingStats()
         for pid in (11111, 22222):
             stats.update(proc(pid), gc_stats_item_factory())
+
         print_stats(stats, StatsView.FULL, table_format=TableFormat.MARKDOWN)
+
         captured = capsys.readouterr()
         lines = captured.out.splitlines()
         blank = any(
@@ -162,6 +167,7 @@ class TestPrintTable:
 
     def test_empty_rows_returns_early(self, capsys: pytest.CaptureFixture[str]) -> None:
         _print_table([])
+
         captured = capsys.readouterr()
         assert captured.out == ""
 
@@ -172,8 +178,8 @@ class TestPrintTable:
         ]
 
         _print_table(rows)
-        lines = capsys.readouterr().out.strip().splitlines()
 
+        lines = capsys.readouterr().out.strip().splitlines()
         assert {tuple(_pipes(line)) for line in lines} == {tuple(_pipes(lines[0]))}
 
     def test_separator_full_format(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -182,8 +188,8 @@ class TestPrintTable:
         ]
 
         _print_table(rows, table_format=TableFormat.PLAIN)
-        header, rule, *_ = capsys.readouterr().out.strip().splitlines()
 
+        header, rule, *_ = capsys.readouterr().out.strip().splitlines()
         assert set(rule) == {"|", "-"}
         assert _pipes(rule) == _pipes(header)
 
@@ -197,8 +203,8 @@ class TestPrintTable:
         ]
 
         _print_table(rows, table_format=TableFormat.PLAIN)
-        first, *rest = capsys.readouterr().out.strip().splitlines()[3].strip("|").split("|")
 
+        first, *rest = capsys.readouterr().out.strip().splitlines()[3].strip("|").split("|")
         assert first.strip() == ""
         assert [set(cell) for cell in rest] == [{"-"}] * 10
 
@@ -210,7 +216,9 @@ class TestPrintTable:
             _SEP_GROUP,
             ["22222", "0", "200", "2000.000", "20.000", "30.000", "40.000", "50.000", "60.000", "1.00", "1.00"],
         ]
+
         _print_table(rows, table_format=TableFormat.MARKDOWN)
+
         captured = capsys.readouterr()
         lines = captured.out.strip().splitlines()
         blank_separator_found = any(line.startswith("|") and all(c in ("|", " ") for c in line) for line in lines[2:])
@@ -222,7 +230,9 @@ class TestBuildRows:
 
     def test_skips_zero_count_stats(self) -> None:
         stats = {0: Stats()}
+
         rows = _build_rows(stats, "Test", {}, False)
+
         assert len(rows) == 0
 
     def test_formats_values_correctly(self) -> None:
@@ -244,6 +254,7 @@ class TestBuildRows:
             stats_dict[gen] = s
 
         rows = _build_rows(stats_dict, "Test", {}, False)
+
         generations = [int(r[0].split("(")[1].rstrip(")")) for r in rows]
         assert generations == [0, 1, 2]
 
@@ -261,8 +272,8 @@ class TestPrintStatsEdgeCases:
             stats.update(proc(pid), gc_stats_item_factory())
 
         print_stats(stats, StatsView.FULL)
-        labels = [row[0] for row in table_rows(capsys.readouterr().out)[1:] if ":" in row[0]]
 
+        labels = [row[0] for row in table_rows(capsys.readouterr().out)[1:] if ":" in row[0]]
         assert labels == ["11111:0", "22222:0", "33333:0"]
 
     def test_total_label_first_metric(
@@ -274,8 +285,8 @@ class TestPrintStatsEdgeCases:
         stats.update(proc(DEFAULT_PID), incremental_gc_stats_item_factory())
 
         print_stats(stats, StatsView.TOTAL)
-        _header, *block = table_rows(capsys.readouterr().out)
 
+        _header, *block = table_rows(capsys.readouterr().out)
         assert [row[0] for row in block] == [TOTAL_LABEL] + [""] * 8
 
     def test_incremental_metrics_output(
@@ -293,6 +304,7 @@ class TestPrintStatsEdgeCases:
         stats.update(proc(DEFAULT_PID), item)
 
         print_stats(stats, StatsView.FULL)
+
         captured = capsys.readouterr()
         assert MARK_ALIVE.label in captured.out
         assert FILL_INCREMENT.label in captured.out
@@ -313,6 +325,7 @@ class TestPrintStatsEdgeCases:
         stats.update(proc(DEFAULT_PID), gc_stats_item_factory(ts_start=0, ts_stop=3_000_000))
 
         print_stats(stats, StatsView.FULL)
+
         captured = capsys.readouterr()
         pause_line = next(line for line in captured.out.splitlines() if gc_pause_slice_name(0) in line)
         cells = [c.strip() for c in pause_line.strip().strip("|").split("|")]
@@ -331,6 +344,7 @@ class TestPrintStatsEdgeCases:
         stats.update(proc(DEFAULT_PID), gc_stats_item_factory())
 
         print_stats(stats, StatsView.FULL)
+
         captured = capsys.readouterr()
         assert READ_TIME_LABEL not in captured.out
 
@@ -345,6 +359,7 @@ class TestPrintStatsEdgeCases:
         stats.record_read_time(3_000_000)
 
         print_stats(stats, StatsView.FULL)
+
         captured = capsys.readouterr()
         read_time_line = next(line for line in captured.out.splitlines() if READ_TIME_LABEL in line)
         cells = [c.strip() for c in read_time_line.strip().strip("|").split("|")]
@@ -360,6 +375,7 @@ class TestPrintStatsEdgeCases:
         stats.record_read_time(2_500_000)
 
         print_stats(stats, StatsView.FULL)
+
         captured = capsys.readouterr()
         assert "No GC statistics collected." not in captured.out
         assert READ_TIME_LABEL in captured.out
@@ -376,8 +392,8 @@ class TestPrintStatsEdgeCases:
         stats.update(proc(DEFAULT_PID), gc_stats_item_factory())
 
         print_stats(stats, StatsView.FULL, table_format=TableFormat.MARKDOWN)
-        _header, rule, *_ = capsys.readouterr().out.strip().splitlines()
 
+        _header, rule, *_ = capsys.readouterr().out.strip().splitlines()
         assert set(rule) == {"|", "-"}
 
 
@@ -420,8 +436,8 @@ class TestTheTablePrintsRings:
     def test_an_ordinary_run_still_carries_its_iid(self, capsys: pytest.CaptureFixture[str]) -> None:
         """`12345:0` on a single-interpreter run as much as on a tree."""
         print_stats(_one_interpreter(), StatsView.FULL)
-        labels = [row[0] for row in table_rows(capsys.readouterr().out)]
 
+        labels = [row[0] for row in table_rows(capsys.readouterr().out)]
         assert "12345:0" in labels
         assert "12345" not in labels
 
@@ -429,28 +445,26 @@ class TestTheTablePrintsRings:
         """The regression guard: one interpreter of one pid is the whole run,
         so its row and `Total` still agree cell for cell."""
         print_stats(_one_interpreter(), StatsView.FULL)
-        rows = table_rows(capsys.readouterr().out)
 
+        rows = table_rows(capsys.readouterr().out)
         total = next(row for row in rows if row[0] == TOTAL_LABEL)
         ring = next(row for row in rows if row[0] == "12345:0")
-
         assert total[1:] == ring[1:]
 
     def test_two_interpreters_print_two_rows(self, capsys: pytest.CaptureFixture[str]) -> None:
         print_stats(self._two_interpreters(), StatsView.FULL)
-        labels = [row[0] for row in table_rows(capsys.readouterr().out)]
 
+        labels = [row[0] for row in table_rows(capsys.readouterr().out)]
         assert labels.count("12345:0") == 1
         assert labels.count("12345:1") == 1
 
     def test_each_ring_row_keeps_its_own_distribution(self, capsys: pytest.CaptureFixture[str]) -> None:
         """A `P99` over both would describe neither interpreter."""
         print_stats(self._two_interpreters(), StatsView.FULL)
-        rows = table_rows(capsys.readouterr().out)
 
+        rows = table_rows(capsys.readouterr().out)
         p99 = {row[0]: row[8] for row in rows if row[0] in (TOTAL_LABEL, "12345:0", "12345:1")}
         p50 = {row[0]: row[5] for row in rows if row[0] in (TOTAL_LABEL, "12345:0", "12345:1")}
-
         assert p99["12345:0"] == "1.000"
         assert p99["12345:1"] == "20.000"
         # The blend sits between the two, describing neither.
@@ -495,8 +509,8 @@ class TestTheTablePrintsRings:
             stats.update(proc(pid), _pause(iid=iid))
 
         print_stats(stats, StatsView.FULL)
-        labels = [row[0] for row in table_rows(capsys.readouterr().out)[1:] if ":" in row[0]]
 
+        labels = [row[0] for row in table_rows(capsys.readouterr().out)[1:] if ":" in row[0]]
         assert labels == ["12345:0", "12345:1", "22222:0", "22222:1"]
 
     def test_read_time_belongs_to_no_ring(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -504,8 +518,8 @@ class TestTheTablePrintsRings:
         stats.record_read_time(500_000)
 
         print_stats(stats, StatsView.FULL)
-        read_time = next(row for row in table_rows(capsys.readouterr().out) if row[1] == READ_TIME_LABEL)
 
+        read_time = next(row for row in table_rows(capsys.readouterr().out) if row[1] == READ_TIME_LABEL)
         assert read_time[0] == ""
 
 
@@ -519,8 +533,8 @@ class TestLossColumns:
 
     def test_count_and_sum_carry_both_numbers(self, capsys: pytest.CaptureFixture[str]) -> None:
         print_stats(self._lossy(), StatsView.FULL)
-        out = capsys.readouterr().out
 
+        out = capsys.readouterr().out
         assert "3/10" in out
         assert "3.000/10.000" in out
 
@@ -542,8 +556,8 @@ class TestLossColumns:
 
     def test_cov_and_f_are_columns(self, capsys: pytest.CaptureFixture[str]) -> None:
         print_stats(self._lossy(), StatsView.FULL)
-        header, total, *_ = table_rows(capsys.readouterr().out)
 
+        header, total, *_ = table_rows(capsys.readouterr().out)
         assert header[9:] == ["Cov", "F"]
         assert total[9:] == ["30.0%", "3.333"]
 
@@ -554,8 +568,8 @@ class TestLossColumns:
             stats.update(proc(TARGET_PID), _pause())
 
         print_stats(stats, StatsView.FULL)
-        out = capsys.readouterr().out
 
+        out = capsys.readouterr().out
         assert "3/3" not in out
         assert "100.0%" in out
 
@@ -569,8 +583,8 @@ class TestLossColumns:
 
     def test_the_footer_names_the_coverage(self, capsys: pytest.CaptureFixture[str]) -> None:
         print_stats(self._lossy(), StatsView.FULL)
-        out = capsys.readouterr().out
 
+        out = capsys.readouterr().out
         assert "Coverage: Gen0 30.0%" in out
         assert "percentiles are sampled and read high" in out
 
@@ -582,8 +596,8 @@ class TestLossColumns:
         stats.observe_cumulative(proc(TARGET_PID), 0, 0, 5_000, 5.0)
 
         print_stats(stats, StatsView.FULL)
-        out = capsys.readouterr().out
 
+        out = capsys.readouterr().out
         assert "Since each interpreter started" in out
         assert "Gen0 5000" in out
 
@@ -592,8 +606,8 @@ class TestLossColumns:
         stats.record_read_time(500_000)
 
         print_stats(stats, StatsView.FULL)
-        read_time = next(row for row in table_rows(capsys.readouterr().out) if row[1] == READ_TIME_LABEL)
 
+        read_time = next(row for row in table_rows(capsys.readouterr().out) if row[1] == READ_TIME_LABEL)
         assert read_time[9:] == ["", ""]
 
     def test_cov_never_rounds_up_past_a_visible_gap(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -605,8 +619,8 @@ class TestLossColumns:
         stats.record_loss(proc(TARGET_PID), 0, 0, 8, 8_000_000)
 
         print_stats(stats, StatsView.FULL)
-        out = capsys.readouterr().out
 
+        out = capsys.readouterr().out
         assert "1763/1771" in out
         assert "99.5%" in out
         assert "100.0%" not in out
@@ -619,8 +633,8 @@ class TestLossColumns:
         stats.record_loss(proc(TARGET_PID), 0, 0, 1, 1_000)
 
         print_stats(stats, StatsView.FULL)
-        out = capsys.readouterr().out
 
+        out = capsys.readouterr().out
         assert "<100.0%" in out
         assert ">1.000" in out
 
@@ -632,8 +646,8 @@ class TestLossColumns:
         stats.record_loss(proc(TARGET_PID), 0, 0, 8, 8_000_000)
 
         print_stats(stats, StatsView.FULL)
-        out = capsys.readouterr().out
 
+        out = capsys.readouterr().out
         assert "Coverage: Gen0 99.5%" in out
 
 
@@ -651,8 +665,8 @@ class TestTheFooterNotesAreNumbered:
         stats.observe_cumulative(proc(TARGET_PID), 0, 0, 18, 0.02)
 
         print_stats(stats, StatsView.FULL)
-        notes = _notes(capsys.readouterr().out)
 
+        notes = _notes(capsys.readouterr().out)
         assert [note.split(".", 1)[0] for note in notes] == ["1", "2"]
         assert "Coverage:" in notes[0]
         assert "Since each interpreter started" in notes[1]
@@ -667,8 +681,8 @@ class TestTheFooterNotesAreNumbered:
         stats.record_loss(proc(TARGET_PID), 0, 0, 7, 7_000_000)
 
         print_stats(stats, StatsView.FULL)
-        notes = _notes(capsys.readouterr().out)
 
+        notes = _notes(capsys.readouterr().out)
         assert len(notes) == 1
         assert notes[0].startswith("1. Coverage:")
 
@@ -830,8 +844,8 @@ class TestTheTwoViews:
 
     def test_total_prints_the_run_and_no_ring(self, capsys: pytest.CaptureFixture[str]) -> None:
         rows = table_rows(self._out(capsys, self._two_interpreters(), StatsView.TOTAL))
-        labels = [row[0] for row in rows[1:]]
 
+        labels = [row[0] for row in rows[1:]]
         assert TOTAL_LABEL in labels
         assert [label for label in labels if ":" in label] == []
 
@@ -850,10 +864,11 @@ class TestTheTwoViews:
         header. The test below covers a wider label.
         """
         stats = self._two_interpreters()
+
         total = self._out(capsys, stats, StatsView.TOTAL).splitlines()
         full = self._out(capsys, stats, StatsView.FULL).splitlines()
-        head = total[: next(i for i, line in enumerate(total) if READ_TIME_LABEL in line)]
 
+        head = total[: next(i for i, line in enumerate(total) if READ_TIME_LABEL in line)]
         assert full[: len(head)] == head
 
     def test_a_wider_ring_label_pads_the_first_column_of_full_alone(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -863,6 +878,7 @@ class TestTheTwoViews:
         stats = StreamingStats()
         for _ in range(3):
             stats.update(proc(123456), _pause())
+
         total = table_rows(self._out(capsys, stats, StatsView.TOTAL))
         full = table_rows(self._out(capsys, stats, StatsView.FULL))
 
@@ -872,10 +888,11 @@ class TestTheTwoViews:
     def test_the_views_of_a_single_ring_run_differ_by_one_block(self, capsys: pytest.CaptureFixture[str]) -> None:
         """What `full` adds here is a copy of the roll-up above it."""
         stats = _one_interpreter()
+
         total = table_rows(self._out(capsys, stats, StatsView.TOTAL))
         full = table_rows(self._out(capsys, stats, StatsView.FULL))
-        added = full[len(total) :]
 
+        added = full[len(total) :]
         assert [row[0] for row in added] == ["12345:0"]
         assert [row[1:] for row in added] == [row[1:] for row in total if row[0] == TOTAL_LABEL]
 
@@ -886,25 +903,30 @@ class TestTheTwoViews:
         assert "got no row" in self._out(capsys, stats, StatsView.FULL)
         assert "got no row" not in self._out(capsys, stats, StatsView.TOTAL)
 
-    def test_the_run_wide_notes_print_under_both(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Coverage and the lifetime totals are run-wide, so both views print
-        them word for word, and the numbering closes over whatever is left.
-        """
+    @pytest.mark.parametrize("view", [StatsView.TOTAL, StatsView.FULL])
+    def test_the_run_wide_notes_lead_either_view(self, capsys: pytest.CaptureFixture[str], view: StatsView) -> None:
+        """Coverage and the lifetime totals are run-wide, so they come first
+        and the numbering closes over whatever is left."""
+        notes = _notes(self._out(capsys, self._crowded(), view))
+
+        assert "Coverage:" in notes[0]
+        assert "Since each interpreter started" in notes[1]
+        assert [note.split(".", 1)[0] for note in notes[:2]] == ["1", "2"]
+
+    def test_the_run_wide_notes_read_the_same_under_both(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Word for word, the number aside."""
         stats = self._crowded()
-        bodies = {}
-        for view in (StatsView.TOTAL, StatsView.FULL):
-            notes = _notes(self._out(capsys, stats, view))
 
-            assert "Coverage:" in notes[0]
-            assert "Since each interpreter started" in notes[1]
-            assert [note.split(".", 1)[0] for note in notes[:2]] == ["1", "2"]
-            bodies[view] = [note.split(". ", 1)[1] for note in notes[:2]]
+        total = _notes(self._out(capsys, stats, StatsView.TOTAL))
+        full = _notes(self._out(capsys, stats, StatsView.FULL))
 
-        assert bodies[StatsView.TOTAL] == bodies[StatsView.FULL]
+        assert [note.split(". ", 1)[1] for note in total[:2]] == [note.split(". ", 1)[1] for note in full[:2]]
 
-    def test_a_run_that_collected_nothing_says_so_in_either_view(self, capsys: pytest.CaptureFixture[str]) -> None:
-        for view in (StatsView.TOTAL, StatsView.FULL):
-            assert "No GC statistics collected." in self._out(capsys, StreamingStats(), view)
+    @pytest.mark.parametrize("view", [StatsView.TOTAL, StatsView.FULL])
+    def test_a_run_that_collected_nothing_says_so_in_either_view(
+        self, capsys: pytest.CaptureFixture[str], view: StatsView
+    ) -> None:
+        assert "No GC statistics collected." in self._out(capsys, StreamingStats(), view)
 
 
 POINTER = "Run with --stats=total for the per-generation breakdown."

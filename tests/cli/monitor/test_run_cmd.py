@@ -306,7 +306,6 @@ class TestCmdRunUnit:
 
         factory_fn = mock_loop.call_args[1]["factory"]
         runner = factory_fn("test-addr")
-
         mock_runner_cls.assert_called_once_with(
             target="timeit",
             is_module=True,
@@ -326,7 +325,6 @@ class TestCmdRunUnit:
 
         factory_fn = mock_loop.call_args[1]["factory"]
         runner = factory_fn("test-addr")
-
         mock_runner_cls.assert_called_once_with(
             target="myscript.py",
             is_module=False,
@@ -353,6 +351,7 @@ class TestCmdRunUnit:
 
         with patch("gcmon.cli.monitor.run_cmd.run_monitoring_loop", return_value=42):
             result = run_cmd.cmd_run(args)
+
             assert result == 42
 
     def test_cmd_run_returns_monitoring_loop_failure(self) -> None:
@@ -363,6 +362,7 @@ class TestCmdRunUnit:
 
         with patch("gcmon.cli.monitor.run_cmd.run_monitoring_loop", return_value=1):
             result = run_cmd.cmd_run(args)
+
             assert result == 1
 
     def test_cmd_run_validation_failure(self, caplog: pytest.LogCaptureFixture) -> None:
@@ -401,6 +401,7 @@ class TestRunCommandScriptMode:
         script_file.write_text(get_long_running_script("print('Args: ', sys.argv[1:])"))
 
         gc_args = ["-vvv", "--format", FORMAT_PERFETTO, "-o", str(output_file)]
+
         result = run_script(script_file, "arg1", "arg2", "--flag", gc_args=gc_args)
 
         with print_on_failure(result):
@@ -416,6 +417,7 @@ class TestRunCommandScriptMode:
         script_file.write_text(get_long_running_script("print('Args: ', sys.argv[1:])"))
 
         gc_args = ["-vvv", "--format", FORMAT_JSONL, "-o", str(output_file)]
+
         result = run_script(script_file, "arg1", "arg2", "--flag", gc_args=gc_args)
 
         with print_on_failure(result):
@@ -430,6 +432,7 @@ class TestRunCommandScriptMode:
         script_file.write_text(get_long_running_script("print('Args: ', sys.argv[1:])"))
 
         gc_args = ["-vvv", "--format", FORMAT_STDOUT]
+
         result = run_script(script_file, "arg1", "arg2", "--flag", gc_args=gc_args)
 
         with print_on_failure(result):
@@ -448,6 +451,7 @@ class TestRunCommandScriptMode:
 
         # gcmon options BEFORE -s, script args AFTER (including overlapping --format, -v)
         gc_args = ["-vvv", "--format", FORMAT_PERFETTO, "-o", str(output_file)]
+
         result = run_script(script_file, "--format", "json", "-v", "--format", "csv", gc_args=gc_args)
 
         with print_on_failure(result):
@@ -475,6 +479,7 @@ class TestRunCommandModuleMode:
         output_file = tmp_path / "trace.pftrace"
 
         gc_args = ["-vvv", "--format", FORMAT_PERFETTO, "-o", str(output_file)]
+
         result = run_module("test", "test_gc", "-v", gc_args=gc_args)
 
         with print_on_failure(result):
@@ -485,6 +490,7 @@ class TestRunCommandModuleMode:
         output_file = tmp_path / "trace.jsonl"
 
         gc_args = ["-vvv", "--format", FORMAT_JSONL, "-o", str(output_file)]
+
         result = run_module("test", "test_gc", "-v", gc_args=gc_args)
 
         with print_on_failure(result):
@@ -493,6 +499,7 @@ class TestRunCommandModuleMode:
 
     def test_run_module_long_running_stdout_format(self) -> None:
         gc_args = ["-vvv", "--format", FORMAT_STDOUT]
+
         result = run_module("test", "test_gc", "-v", gc_args=gc_args)
 
         with print_on_failure(result):
@@ -507,6 +514,7 @@ class TestRunCommandModuleMode:
 
         # gcmon options BEFORE -m, script args AFTER (including overlapping --format, -v)
         gc_args = ["-v", "--format", FORMAT_PERFETTO, "-o", str(output_file)]
+
         result = run_module("test", "test_gc", "-v", gc_args=gc_args)
 
         with print_on_failure(result):

@@ -6,7 +6,18 @@ from gcmon.exporters.trace_converter import (
     duration_text,
     seen_text,
 )
-from gcmon.model.names import ALIVE_SIZE, GENERATIONS, HEAP_SIZE, INCREMENT_SIZE, gc_pause_slice_name
+from gcmon.model.names import (
+    ALIVE_SIZE,
+    CLEAR_WEAKREFS_COUNT,
+    FINALIZED_GARBAGE_COUNT,
+    GENERATIONS,
+    HEAP_SIZE,
+    INCREMENT_SIZE,
+    TS_CLEAR_WEAKREFS_STOP,
+    TS_FINALIZE_GARBAGE_STOP,
+    TS_HANDLE_RESURRECTED_STOP,
+    gc_pause_slice_name,
+)
 from gcmon.model.protocol import TItem
 from gcmon.model.trace_event import Counter, Instant, Slice
 from tests.data_helpers import create_instant_msg
@@ -36,17 +47,19 @@ class TestDurationText:
     def test_it_reads_as_a_duration(self, ns: int, text: str) -> None:
         assert duration_text(ns) == text
 
-    def test_the_units_multiply_back_to_the_nanoseconds(self) -> None:
+    @pytest.mark.parametrize("ns", [1, 999, 1_000, 3_316_458_100, 86_400_000_000_123])
+    def test_the_units_multiply_back_to_the_nanoseconds(self, ns: int) -> None:
         """Every unit a component carries, against the number it came from.
         A wrong divisor produces text that still looks like a duration."""
         sizes = {"h": 3_600_000_000_000, "m": 60_000_000_000, "s": 1_000_000_000, "ms": 1_000_000, "µs": 1_000}
 
-        for ns in (1, 999, 1_000, 3_316_458_100, 86_400_000_000_123):
-            total = 0
-            for part in duration_text(ns).split():
-                digits = part.rstrip("hmsnµ")
-                total += int(digits) * sizes.get(part.removeprefix(digits), 1)
-            assert total == ns
+        text = duration_text(ns)
+
+        total = 0
+        for part in text.split():
+            digits = part.rstrip("hmsnµ")
+            total += int(digits) * sizes.get(part.removeprefix(digits), 1)
+        assert total == ns
 
 
 class TestSeenText:
@@ -98,6 +111,7 @@ class TestAGenerationTheCounterTableNeverHeld:
         rather than a generation, so it carries none (ADR-0004).
         """
         beyond = set(self._counters(max(GENERATIONS) + 1).values())
+
         assert beyond & set(self._counters(max(GENERATIONS)).values()) == {HEAP_SIZE}
 
 
@@ -122,6 +136,27 @@ class TestTheSizesAPauseCarries:
         assert pause.args.keys() & {INCREMENT_SIZE, ALIVE_SIZE} == sizes
 
 
+class TestAPhaseWhoseStartIsMissing:
+    """Three phases have no start of their own: each begins where the one
+    before it stopped. A record gcmon wrote holds both or neither, so only a
+    hand-edited line gets here, and it still has to convert."""
+
+    @pytest.mark.parametrize(
+        "fields",
+        [
+            pytest.param({TS_FINALIZE_GARBAGE_STOP: 9_000, FINALIZED_GARBAGE_COUNT: 1}, id="finalize garbage"),
+            pytest.param({TS_HANDLE_RESURRECTED_STOP: 9_000}, id="handle resurrected"),
+            pytest.param({TS_CLEAR_WEAKREFS_STOP: 9_000, CLEAR_WEAKREFS_COUNT: 1}, id="clear weakrefs"),
+        ],
+    )
+    def test_the_record_converts_and_draws_the_pause_alone(self, fields: dict[str, int]) -> None:
+        record = create_mock_stats_item(gen=0, **fields)
+
+        events = convert_item_to_trace_format(proc(1), record)
+
+        assert {e.name for e in events if isinstance(e, Slice)} == {gc_pause_slice_name(0)}
+
+
 class TestAnItemOfNoKnownKind:
     """`TItem` is a union of three, and the guards that take it apart read
     attributes rather than types, so nothing stops a fourth thing arriving.
@@ -136,4 +171,5 @@ class TestAnItemOfNoKnownKind:
         """The refusal above only says something about a fourth kind if the
         three real ones reach their branches, so all three go in together."""
         capture: list[TItem] = [create_mock_stats_item(), create_mock_loss_item(), create_instant_msg()]
+
         assert {type(e) for e in convert_to_trace_format({1: capture})} == {Slice, Counter, Instant}
