@@ -2,6 +2,7 @@ import importlib.metadata
 import subprocess
 import sys
 import types
+from collections.abc import Generator
 from pathlib import Path
 
 import msgspec
@@ -9,6 +10,7 @@ import pytest
 
 from gcmon.model.names import PID
 from gcmon.support.vocabulary import CMD_COMBINE, CMD_MONITOR, CMD_RUN, PROGRAM_NAME
+from tests.helpers import SUBPROCESS_WATCHDOG
 
 
 @pytest.fixture
@@ -30,12 +32,17 @@ def cli_module() -> types.ModuleType:
 
 class TestSetupLogging:
     @pytest.fixture(autouse=True)
-    def reset_logging(self) -> None:
+    def reset_logging(self) -> Generator[None]:
+        """`_setup_logging` touches the gcmon logger alone, so that is all
+        this empties, and it hands back what it found."""
         import logging
 
-        for handler in logging.root.handlers[:]:
-            logging.root.removeHandler(handler)
-        logging.getLogger(PROGRAM_NAME).handlers.clear()
+        logger = logging.getLogger(PROGRAM_NAME)
+        handlers, level = logger.handlers[:], logger.level
+        logger.handlers.clear()
+        yield
+        logger.handlers[:] = handlers
+        logger.setLevel(level)
 
     @pytest.mark.parametrize(
         "verbose_count, expected_level",
@@ -188,25 +195,29 @@ class TestCliHelp:
     )
     def test_help_subcommand(self, gcmon_cli: list[str], subcommand: str, expected_texts: list[str]) -> None:
         cmd = gcmon_cli + ([subcommand] if subcommand else []) + ["--help"]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=SUBPROCESS_WATCHDOG)
         for text in expected_texts:
             assert text in result.stdout
 
     def test_top_level_no_output_flag(self, gcmon_cli: list[str]) -> None:
-        result = subprocess.run([*gcmon_cli, "--help"], capture_output=True, text=True, check=True)
+        result = subprocess.run(
+            [*gcmon_cli, "--help"], capture_output=True, text=True, check=True, timeout=SUBPROCESS_WATCHDOG
+        )
         assert "--output" not in result.stdout
 
 
 class TestCliVersion:
     def test_version_flag(self, gcmon_cli: list[str]) -> None:
-        result = subprocess.run([*gcmon_cli, "--version"], capture_output=True, text=True)
+        result = subprocess.run([*gcmon_cli, "--version"], capture_output=True, text=True, timeout=SUBPROCESS_WATCHDOG)
         assert result.returncode == 0
         assert result.stdout.strip() == importlib.metadata.version(PROGRAM_NAME)
 
     def test_package_attribute_matches_cli(self, gcmon_cli: list[str]) -> None:
         import gcmon
 
-        result = subprocess.run([*gcmon_cli, "--version"], capture_output=True, text=True, check=True)
+        result = subprocess.run(
+            [*gcmon_cli, "--version"], capture_output=True, text=True, check=True, timeout=SUBPROCESS_WATCHDOG
+        )
         assert gcmon.__version__ == result.stdout.strip()
 
     def test_importing_gcmon_does_not_resolve_the_version(self) -> None:
@@ -214,7 +225,9 @@ class TestCliVersion:
         # needs it. A fresh interpreter, so an earlier test cannot mask a regression by having
         # touched the attribute first.
         code = "import gcmon; print('__version__' in vars(gcmon))"
-        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+        result = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=SUBPROCESS_WATCHDOG
+        )
         assert result.stdout.strip() == "False"
 
     def test_no_fallback_under_a_normal_install(self) -> None:
@@ -236,7 +249,7 @@ class TestCliVersion:
 
 class TestCliMonitor:
     def test_missing_pid(self, gcmon_cli: list[str]) -> None:
-        result = subprocess.run([*gcmon_cli, CMD_MONITOR], capture_output=True, text=True)
+        result = subprocess.run([*gcmon_cli, CMD_MONITOR], capture_output=True, text=True, timeout=SUBPROCESS_WATCHDOG)
         assert result.returncode != 0
         assert "the following arguments are required: pid" in result.stderr
 
