@@ -10,8 +10,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import NamedTuple
 
-from perfetto.trace_processor import TraceProcessor
-
 from gcmon.exporters import PerfettoExporter
 from gcmon.exporters.perfetto_format import _interpreter_group_name
 from gcmon.exporters.perfetto_process_lifetime import process_track_name
@@ -246,18 +244,6 @@ def _write_trace_no_instant(tmp: Path, cmdline: tuple[str, ...] | None) -> Path:
     )
     exporter.close()
     return path
-
-
-def _misplaced_end_events(tp: TraceProcessor) -> int:
-    """Return the trace processor's ``misplaced_end_event`` counter.
-
-    The ``stats`` table is the trace processor's own diagnostics: each
-    row is a named counter the parser bumps when it hits something
-    wrong. ``misplaced_end_event`` (severity ``data_loss``) counts slice
-    ENDs that had nothing to close and were therefore thrown away.
-    """
-    rows = list(tp.query("SELECT value FROM stats WHERE name = 'misplaced_end_event'"))
-    return int(rows[0].value) if rows else 0
 
 
 _CROSS_A_START: int = 100_000_000
@@ -533,6 +519,24 @@ _RSS_TS_1: int = 500_000_000
 _RSS_TS_2: int = 1_500_000_000
 
 _RSS_TS_3: int = 2_500_000_000
+
+
+def _write_every_row_trace(tmp: Path) -> Path:
+    """One interpreter drawing every row it can: a pause with each counter
+    set, a loss span after it, and the process's `rss` beside them."""
+    path = tmp / "trace_every_row.pb"
+    exporter = PerfettoExporter(output_path=path, flush_threshold=1000)
+    pause = create_mock_incremental_item(gen=_GEN, iid=_IID, uncollectable=_UNCOLLECTABLE)
+    exporter.add_event(proc(DEFAULT_PID), pause)
+    exporter.add_loss_event(
+        proc(DEFAULT_PID),
+        create_mock_loss_item(
+            iid=_IID, gen=_GEN, ts_start=pause.ts_stop + 5_000_000, ts_stop=pause.ts_stop + 15_000_000
+        ),
+    )
+    exporter.add_rss_sample(proc(DEFAULT_PID), _RSS_VAL_1, pause.ts_start)
+    exporter.close()
+    return path
 
 
 def _write_trace_with_rss(tmp: Path) -> Path:

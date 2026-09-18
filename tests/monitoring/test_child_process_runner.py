@@ -89,9 +89,6 @@ class TestChildProcessRunnerInit:
         assert module_runner._target == "my_module"
         assert module_runner._is_module
 
-    def test_passthrough_args(self, runner_with_args: ChildProcessRunner) -> None:
-        assert runner_with_args._passthrough_args == ["--verbose", "--output=file.json"]
-
     def test_custom_env(self) -> None:
         runner = ChildProcessRunner("script.py", env={"VAR": "val"})
         assert runner._env == {"VAR": "val"}
@@ -278,11 +275,10 @@ class TestContextManager:
         self, runner: ChildProcessRunner, mock_popen: Mock, mock_runner_terminate: Mock
     ) -> None:
         runner._process = mock_popen
-        try:
-            with runner:
-                raise ValueError("test error")
-        except ValueError:
-            pass
+
+        with pytest.raises(ValueError), runner:
+            raise ValueError("test error")
+
         mock_runner_terminate.assert_called_once()
 
 

@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import time
 from collections.abc import Generator
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,14 @@ from gcmon.cli.monitor._env import (
     ENV_VERBOSE,
 )
 from gcmon.model.names import DURATION, PID
-from gcmon.support.vocabulary import CMD_MONITOR, DEFAULT_TRACE_FILE, FORMAT_JSONL, FORMAT_PERFETTO, FORMAT_STDOUT
+from gcmon.support.vocabulary import (
+    CMD_MONITOR,
+    DEFAULT_JSONL_FILE,
+    DEFAULT_TRACE_FILE,
+    FORMAT_JSONL,
+    FORMAT_PERFETTO,
+    FORMAT_STDOUT,
+)
 from tests.cli.monitor.conftest import MonitorArgsFactory
 from tests.helpers import assert_valid_perfetto_trace
 
@@ -33,13 +41,15 @@ def mock_monitoring_loop() -> Generator[MagicMock]:
 # =============================================================================
 
 
-def test_cmd_monitor_connect_failure(
-    caplog: pytest.LogCaptureFixture, monitor_args: MonitorArgsFactory, mock_monitoring_loop: MagicMock
+def test_cmd_monitor_returns_the_exit_code_of_the_loop(
+    monitor_args: MonitorArgsFactory, mock_monitoring_loop: MagicMock
 ) -> None:
     from gcmon.cli.monitor import monitor_cmd
 
     mock_monitoring_loop.return_value = 1
+
     result = monitor_cmd.cmd_monitor(monitor_args())
+
     assert result == 1
 
 
@@ -92,13 +102,6 @@ class TestCmdMonitorValidation:
         assert expected_msg in caplog.text
 
 
-def test_cmd_monitor_quiet_mode(monitor_args: MonitorArgsFactory, mock_monitoring_loop: MagicMock) -> None:
-    from gcmon.cli.monitor import monitor_cmd
-
-    mock_monitoring_loop.return_value = 0
-    assert monitor_cmd.cmd_monitor(monitor_args(verbose=0, duration=0.05)) == 0
-
-
 def test_cmd_monitor_self_pid(monitor_args: MonitorArgsFactory, mock_monitoring_loop: MagicMock) -> None:
     from gcmon.cli.monitor import monitor_cmd
 
@@ -143,12 +146,12 @@ class TestCliBasicRun:
         assert "Rate: 0.05" in result.stderr
 
     def test_duration_based(self, run_monitor_self: Any, tmp_path: Path) -> None:
-        import time
-
         start = time.monotonic()
+
         result = run_monitor_self(["-o", str(tmp_path / "test_trace.json"), "-d", "0.5", "-r", "0.1", "-v"])
+
         assert result.returncode == 0
-        assert time.monotonic() - start >= 0.05
+        assert time.monotonic() - start >= 0.5
         assert "Duration: 0.5s" in result.stderr
 
 
@@ -162,6 +165,8 @@ class TestCliOutput:
 
     def test_quiet(self, run_monitor: Any, tmp_path: Path) -> None:
         result = run_monitor(["-o", str(tmp_path / "test_trace.json"), "-d", "0.3"])
+
+        assert result.returncode == 0
         assert "Monitoring PID" not in result.stderr
 
     def test_trace_structure(self, run_monitor_self: Any, tmp_path: Path) -> None:
@@ -172,26 +177,17 @@ class TestCliOutput:
         assert run_monitor_self(["-o", str(output_file), "-d", "0.3"]).returncode == 0
         assert_valid_perfetto_trace(output_file)
 
-    def test_path_traversal_warning(self, run_monitor: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        output_file = tmp_path / "subdir" / "output.json"
-        output_file.parent.mkdir()
-        output_file.touch()
-        other = tmp_path / "other"
-        other.mkdir()
-        monkeypatch.chdir(other)
-        result = run_monitor(["-o", str(output_file), "-d", "0.1", "-v"], timeout=5)
-        assert "outside" in result.stderr or result.returncode == 0
-
 
 class TestCliStdoutFormat:
-    def test_jsonl_output(self, run_monitor: Any, tmp_path: Path) -> None:
-        result = run_monitor(["--format", FORMAT_STDOUT, "-d", "0.3"], cwd=tmp_path)
+    def test_jsonl_output(self, run_monitor_self: Any, tmp_path: Path) -> None:
+        """Against the running gcmon: pid 12345 holds no process, and a run
+        that read nothing prints nothing to parse."""
+        result = run_monitor_self(["--format", FORMAT_STDOUT, "-d", "0.3"], cwd=tmp_path)
+        records: list[dict[str, Any]] = [json.loads(line) for line in result.stdout.splitlines()]
+
         assert result.returncode == 0
-        for line in result.stdout.strip().split("\n"):
-            line = line.strip()
-            if line.startswith("{"):
-                data: dict[str, Any] = json.loads(line)
-                assert PID in data
+        assert records
+        assert [record for record in records if PID not in record] == []
 
     def test_verbose(self, run_monitor: Any, tmp_path: Path) -> None:
         result = run_monitor(["--format", FORMAT_STDOUT, "-d", "0.3", "-v"], cwd=tmp_path)
@@ -200,6 +196,8 @@ class TestCliStdoutFormat:
 
     def test_quiet(self, run_monitor: Any, tmp_path: Path) -> None:
         result = run_monitor(["--format", FORMAT_STDOUT, "-d", "0.5"], cwd=tmp_path)
+
+        assert result.returncode == 0
         assert "Monitoring PID" not in result.stderr
 
 
@@ -333,27 +331,40 @@ class TestCliEnvVars:
         assert "Duration: 0.4" in result.stderr
 
     def test_flush_threshold(self, monkeypatch: pytest.MonkeyPatch, run_monitor: Any, tmp_path: Path) -> None:
+        """A run prints no threshold, so the variable is given the one value
+        a run refuses."""
         output_file = tmp_path / "test.jsonl"
-        monkeypatch.setenv(ENV_FLUSH_THRESHOLD, "50")
-        assert run_monitor(["--format", FORMAT_JSONL, "-o", str(output_file), "-d", "0.1", "-v"]).returncode == 0
+        monkeypatch.setenv(ENV_FLUSH_THRESHOLD, "0")
+
+        result = run_monitor(["--format", FORMAT_JSONL, "-o", str(output_file), "-d", "0.1"], timeout=30)
+
+        assert result.returncode == 1
+        assert "Flush threshold must be positive, got 0" in result.stderr
 
     def test_flush_threshold_cli_override(
         self, monkeypatch: pytest.MonkeyPatch, run_monitor: Any, tmp_path: Path
     ) -> None:
         output_file = tmp_path / "test.jsonl"
-        monkeypatch.setenv(ENV_FLUSH_THRESHOLD, "50")
-        assert (
-            run_monitor(
-                ["--format", FORMAT_JSONL, "-o", str(output_file), "--flush-threshold", "200", "-d", "0.1"]
-            ).returncode
-            == 0
+        monkeypatch.setenv(ENV_FLUSH_THRESHOLD, "0")
+
+        result = run_monitor(
+            ["--format", FORMAT_JSONL, "-o", str(output_file), "--flush-threshold", "200", "-d", "0.1"], timeout=30
         )
 
+        assert result.returncode == 0
+
     def test_env_output_default_format_jsonl(
-        self, monkeypatch: pytest.MonkeyPatch, run_monitor: Any, tmp_path: Path
+        self, monkeypatch: pytest.MonkeyPatch, run_monitor_self: Any, tmp_path: Path
     ) -> None:
+        """Against the running gcmon, since a run that read nothing writes no
+        file to find."""
         monkeypatch.setenv(ENV_FORMAT, FORMAT_JSONL)
-        assert run_monitor(["-d", "0.1"], cwd=tmp_path).returncode == 0
+
+        result = run_monitor_self(["-d", "0.3"], cwd=tmp_path, timeout=30)
+
+        assert result.returncode == 0
+        assert (tmp_path / DEFAULT_JSONL_FILE).exists()
+        assert not (tmp_path / DEFAULT_TRACE_FILE).exists()
 
 
 class TestCliEnvHelp:

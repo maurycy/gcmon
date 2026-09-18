@@ -26,7 +26,11 @@ from gcmon.exporters.perfetto_process_lifetime import (
 )
 from gcmon.exporters.perfetto_proto import TrackEventType
 from gcmon.exporters.perfetto_track_state import PerfettoTrackState
-from gcmon.exporters.trace_converter import convert_item_to_trace_format, convert_loss_to_trace_format
+from gcmon.exporters.trace_converter import (
+    convert_item_to_trace_format,
+    convert_loss_to_trace_format,
+    counter_display_name,
+)
 from gcmon.model.data import GCStatsInfo, LossMsg
 from gcmon.model.names import (
     CANDIDATES,
@@ -72,6 +76,7 @@ from gcmon.model.trace_event import (
 from gcmon.support.vocabulary import CMD_RUN
 from tests.exporters.perfetto_helpers import (
     convert_item,
+    convert_items,
     lifetime_slices,
     parse_track_descriptor,
     pause_item,
@@ -120,6 +125,29 @@ def full_subphase_item() -> GCStatsInfo:
         ts_delete_garbage_stop=3_900,
         deleted_garbage_count=13,
     )
+
+
+def pause_spans(packets: list[bytes]) -> list[tuple[int, int]]:
+    """Where each gen-0 pause in *packets* begins and ends.
+
+    An END names nothing, so it is matched to its BEGIN by the track they
+    share, which carries nothing but pauses.
+    """
+    parsed = [TracePacket.FromString(raw) for raw in packets]
+    begins = [p for p in parsed if p.track_event.name == gc_pause_slice_name(0)]
+    rows = {p.track_event.track_uuid for p in begins}
+    ends = [
+        p for p in parsed if p.track_event.type == TrackEvent.Type.TYPE_SLICE_END and p.track_event.track_uuid in rows
+    ]
+    return [(begin.timestamp, end.timestamp) for begin, end in zip(begins, ends, strict=True)]
+
+
+def counters_written(descriptors: list[bytes], packets: list[bytes]) -> list[str]:
+    """The name of every counter track *packets* put a value on, sorted."""
+    described = [td for td in map(parse_track_descriptor, descriptors) if td is not None]
+    names = {td.uuid: td.name for td in described if td.HasField("counter")}
+    events = [TracePacket.FromString(raw).track_event for raw in packets]
+    return sorted({names[e.track_uuid] for e in events if e.type == TrackEvent.Type.TYPE_COUNTER})
 
 
 class TestConvertItemToPerfettoPackets:
@@ -197,13 +225,6 @@ class TestConvertItemToPerfettoPackets:
             process_track_name(proc(TARGET_PID, 2)): ("python", "second.py"),
         }
 
-    def test_basic_item_emits_descriptors(self, state: PerfettoTrackState) -> None:
-        item = pause_item()
-        descriptors, _ = convert_item(proc(TARGET_PID), item, state, sequence_id=1)
-        assert len(descriptors) >= 2
-        assert state.has_process_descriptor(proc(TARGET_PID))
-        assert state.has_track(interpreter_track(TARGET_PID, 0))
-
     def test_pause_track_has_sibling_order_rank_zero(self, state: PerfettoTrackState) -> None:
         item = pause_item()
         descriptors, _ = convert_item(proc(TARGET_PID), item, state, sequence_id=1)
@@ -217,6 +238,7 @@ class TestConvertItemToPerfettoPackets:
                 td = packet.track_descriptor
                 if td.uuid == pause_uuid:
                     assert td.parent_uuid == interpreter_uuid
+                    assert td.HasField("sibling_order_rank"), "an unset rank reads as 0 too"
                     assert td.sibling_order_rank == 0
                     assert not td.HasField("child_ordering")
                     assert not td.HasField("thread")
@@ -292,23 +314,25 @@ class TestConvertItemToPerfettoPackets:
 
     def test_basic_item_emits_counter_events(self, state: PerfettoTrackState) -> None:
         item = pause_item(uncollectable=2)
-        _, packets = convert_item(proc(TARGET_PID), item, state, sequence_id=1)
-        counter_packets: list[tuple[TracePacket, TrackEvent]] = []
-        for p in packets:
-            packet = TracePacket()
-            packet.ParseFromString(p)
-            if packet.HasField("track_event") and packet.track_event.type == TrackEvent.Type.TYPE_COUNTER:
-                counter_packets.append((packet, packet.track_event))
-        assert len(counter_packets) == 5
-        values = [track_event.counter_value for _, track_event in counter_packets]
-        assert 10 in values
-        assert 2 in values
-        assert 5 in values
-        assert 1000 in values
-        # The `duration` value is encoded as a double (DOUBLE_COUNTER_VALUE,
-        # field 44), not as a varint counter_value. Verify it is present.
-        double_values = [track_event.double_counter_value for _, track_event in counter_packets]
-        assert 0.001 in double_values
+
+        descriptors, packets = convert_item(proc(TARGET_PID), item, state, sequence_id=1)
+
+        described = [td for td in map(parse_track_descriptor, descriptors) if td is not None]
+        names = {td.uuid: td.name for td in described if td.HasField("counter")}
+        events = [TracePacket.FromString(raw).track_event for raw in packets]
+        written = {
+            names[e.track_uuid]: (field, getattr(e, field))
+            for e in events
+            if (field := e.WhichOneof("counter_value_field")) is not None
+        }
+        # `duration` alone is a double (DOUBLE_COUNTER_VALUE, field 44).
+        assert written == {
+            counter_display_name(0, COLLECTED): ("counter_value", 10),
+            counter_display_name(0, UNCOLLECTABLE): ("counter_value", 2),
+            counter_display_name(0, CANDIDATES): ("counter_value", 5),
+            counter_display_name(0, DURATION): ("double_counter_value", 0.001),
+            HEAP_SIZE: ("counter_value", 1000),
+        }
 
     def test_counter_descriptor_emitted_once(self, state: PerfettoTrackState) -> None:
         item = pause_item()
@@ -318,16 +342,20 @@ class TestConvertItemToPerfettoPackets:
         assert len(desc2) == 0
 
     def test_invalid_timestamps_produces_events(self, state: PerfettoTrackState) -> None:
+        """The pause goes out as the record gives it. Nothing reorders an
+        inverted one or drops it."""
         item = pause_item(ts_start=2_000, ts_stop=1_000)
-        descriptors, packets = convert_item(proc(TARGET_PID), item, state, sequence_id=1)
-        assert len(descriptors) >= 2
-        assert len(packets) >= 2
+
+        _descriptors, packets = convert_item(proc(TARGET_PID), item, state, sequence_id=1)
+
+        assert pause_spans(packets) == [(2_000, 1_000)]
 
     def test_equal_timestamps_produces_events(self, state: PerfettoTrackState) -> None:
         item = pause_item(ts_stop=1_000, duration=0.0)
-        descriptors, packets = convert_item(proc(TARGET_PID), item, state, sequence_id=1)
-        assert len(descriptors) >= 2
-        assert len(packets) >= 2
+
+        _descriptors, packets = convert_item(proc(TARGET_PID), item, state, sequence_id=1)
+
+        assert pause_spans(packets) == [(1_000, 1_000)]
 
     def test_incremental_item_emits_subphases(self, state: PerfettoTrackState) -> None:
         item = full_subphase_item()
@@ -350,33 +378,24 @@ class TestConvertItemToPerfettoPackets:
 
     def test_uncollectable_counter_omitted_when_zero(self, state: PerfettoTrackState) -> None:
         item = pause_item(collections=5, candidates=3)
-        _, packets = convert_item(proc(TARGET_PID), item, state, sequence_id=1)
-        counter_uuids: set[int] = set()
-        for p in packets:
-            packet = TracePacket()
-            packet.ParseFromString(p)
-            if not packet.HasField("track_event"):
-                continue
-            if packet.track_event.type != TrackEvent.Type.TYPE_COUNTER:
-                continue
-            counter_uuids.add(packet.track_event.track_uuid)
-        # collected, candidates, heap_size, duration; no uncollectable counter.
-        assert len(counter_uuids) == 4
+
+        descriptors, packets = convert_item(proc(TARGET_PID), item, state, sequence_id=1)
+
+        assert counters_written(descriptors, packets) == sorted(
+            [HEAP_SIZE, *(counter_display_name(0, metric) for metric in (COLLECTED, CANDIDATES, DURATION))]
+        )
 
     def test_uncollectable_counter_emitted_when_nonzero(self, state: PerfettoTrackState) -> None:
         item = pause_item(collections=5, uncollectable=2, candidates=3)
-        _, packets = convert_item(proc(TARGET_PID), item, state, sequence_id=1)
-        counter_uuids: set[int] = set()
-        for p in packets:
-            packet = TracePacket()
-            packet.ParseFromString(p)
-            if not packet.HasField("track_event"):
-                continue
-            if packet.track_event.type != TrackEvent.Type.TYPE_COUNTER:
-                continue
-            counter_uuids.add(packet.track_event.track_uuid)
-        # collected, uncollectable, candidates, heap_size, duration.
-        assert len(counter_uuids) == 5
+
+        descriptors, packets = convert_item(proc(TARGET_PID), item, state, sequence_id=1)
+
+        assert counters_written(descriptors, packets) == sorted(
+            [
+                HEAP_SIZE,
+                *(counter_display_name(0, metric) for metric in (COLLECTED, CANDIDATES, DURATION, UNCOLLECTABLE)),
+            ]
+        )
 
     def test_duration_counter_in_gc_metrics_group(self, state: PerfettoTrackState) -> None:
         item = pause_item(collections=5, uncollectable=2, candidates=3, duration=0.42)
@@ -494,16 +513,6 @@ class TestConvertItemToPerfettoPackets:
                 slice_names.append(packet.track_event.name or None)
         assert phase_slice_name(MARK_ALIVE, 1) not in slice_names
         assert phase_slice_name(FILL_INCREMENT, 1) in slice_names
-
-    def test_multiple_threads(self, state: PerfettoTrackState) -> None:
-        item0 = pause_item()
-        item1 = pause_item(iid=1)
-        desc0, _ = convert_item(proc(TARGET_PID), item0, state, sequence_id=1)
-        desc1, _ = convert_item(proc(TARGET_PID), item1, state, sequence_id=1)
-        assert len(desc0) >= 2
-        assert len(desc1) >= 1
-        assert state.has_track(interpreter_track(TARGET_PID, 0))
-        assert state.has_track(interpreter_track(TARGET_PID, 1))
 
     def test_debug_annotation_name_wire_format(self, state: PerfettoTrackState) -> None:
         item = pause_item(collections=5, uncollectable=2, candidates=3)
@@ -688,13 +697,19 @@ class TestConvertInstantToPerfettoPacket:
         assert "heap_size heap_size" not in track_names
 
     def test_shared_heap_size_track_reused_across_generations(self, state: PerfettoTrackState) -> None:
-        item_g0 = pause_item()
-        item_g1 = pause_item(gen=1, ts_start=3_000, ts_stop=4_000, heap_size=2000)
-        convert_item(proc(TARGET_PID), item_g0, state, sequence_id=1)
-        uuid_after_g0 = state.get_or_create_counter_track_uuid(interpreter_track(TARGET_PID, 0), HEAP_SIZE)
-        convert_item(proc(TARGET_PID), item_g1, state, sequence_id=1)
-        uuid_after_g1 = state.get_or_create_counter_track_uuid(interpreter_track(TARGET_PID, 0), HEAP_SIZE)
-        assert uuid_after_g0 == uuid_after_g1
+        """Read off the wire: asking the state for the track twice returns one
+        uuid whatever the two conversions did."""
+        items = [
+            (proc(TARGET_PID), pause_item(heap_size=1000)),
+            (proc(TARGET_PID), pause_item(gen=1, ts_start=3_000, ts_stop=4_000, heap_size=2000)),
+        ]
+
+        descriptors, packets, _closeout = convert_items(items, state, sequence_id=1)
+
+        described = [td for td in map(parse_track_descriptor, descriptors) if td is not None]
+        [heap_size] = [td.uuid for td in described if td.name == HEAP_SIZE]
+        events = [TracePacket.FromString(raw).track_event for raw in packets]
+        assert [event.counter_value for event in events if event.track_uuid == heap_size] == [1000, 2000]
 
 
 class TestAnInstantCanCarryArgs:
@@ -846,6 +861,7 @@ class TestTheInterpreterGroupsAreDerived:
         group = described[_interpreter_group_name(0)]
         assert group.parent_uuid == listing.uuid
         assert group.child_ordering == 3
+        assert group.HasField("sibling_order_rank"), "an unset rank reads as 0 too"
         assert group.sibling_order_rank == 0
 
     def test_the_list_precedes_the_group_it_holds(self, state: PerfettoTrackState) -> None:

@@ -81,7 +81,7 @@ class TestMarkAliveMetric:
         assert ts_start == 2000
         assert ts_stop == 4000
 
-    def test_get_values_asserts_non_incremental(
+    def test_get_values_returns_zero_without_mark_alive(
         self,
         gc_stats_item_factory: Callable[..., GCStatsInfo],
     ) -> None:
@@ -112,7 +112,7 @@ class TestFillIncrementMetric:
         assert ts_start == 3000
         assert ts_stop == 5000
 
-    def test_get_values_asserts_non_incremental(
+    def test_get_values_returns_zero_without_fill_increment(
         self,
         gc_stats_item_factory: Callable[..., GCStatsInfo],
     ) -> None:
@@ -143,7 +143,7 @@ class TestDeduceUnreachableMetric:
         assert ts_start == 7000
         assert ts_stop == 9000
 
-    def test_get_values_asserts_non_incremental(
+    def test_get_values_returns_zero_without_deduce_unreachable(
         self,
         gc_stats_item_factory: Callable[..., GCStatsInfo],
     ) -> None:
@@ -210,7 +210,7 @@ class TestFinalizeGarbageMetric:
         gc_stats_item_factory: Callable[..., GCStatsInfo],
     ) -> None:
         metric = FinalizeGarbageMetric()
-        item = gc_stats_item_factory()
+        item = gc_stats_item_factory(ts_finalize_garbage_stop=9000, finalized_garbage_count=1)
         ts1, ts2 = metric.get_values(item)
         assert ts1 == 0
         assert ts2 == 0
@@ -241,7 +241,7 @@ class TestHandleResurrectedMetric:
         gc_stats_item_factory: Callable[..., GCStatsInfo],
     ) -> None:
         metric = HandleResurrectedMetric()
-        item = gc_stats_item_factory()
+        item = gc_stats_item_factory(ts_handle_resurrected_stop=9000)
         ts1, ts2 = metric.get_values(item)
         assert ts1 == 0
         assert ts2 == 0
@@ -272,7 +272,7 @@ class TestClearWeakrefsMetric:
         gc_stats_item_factory: Callable[..., GCStatsInfo],
     ) -> None:
         metric = ClearWeakrefsMetric()
-        item = gc_stats_item_factory()
+        item = gc_stats_item_factory(ts_clear_weakrefs_stop=9000, clear_weakrefs_count=1)
         ts1, ts2 = metric.get_values(item)
         assert ts1 == 0
         assert ts2 == 0

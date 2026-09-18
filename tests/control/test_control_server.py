@@ -5,9 +5,9 @@ import sys
 import threading
 import time
 from collections.abc import Generator
-from multiprocessing.connection import Client, Connection, Listener
+from multiprocessing.connection import Client, Connection
 from typing import Any
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -525,33 +525,15 @@ class TestControlServerAcceptLoop:
         assert f"address={listener_address!r}" in caplog.text
         assert "accept failed" in caplog.text
 
-    def test_accept_loop_adds_connection(self, server_not_started: ControlServer, mock_conn: MagicMock) -> None:
-        server_not_started._listener = MagicMock()
-        with patch("gcmon.control.control_server._accept", return_value=mock_conn):
-            t = threading.Thread(target=server_not_started._accept_loop, daemon=True)
-            t.start()
-            time.sleep(0.05)
-            server_not_started._stop_event.set()
-            t.join(timeout=1)
-
-        assert mock_conn in server_not_started._connections
-
-    def test_accept_loop_closes_orphaned_conn_on_exception(
+    def test_a_failed_accept_keeps_the_connection_made_before_it(
         self, server_not_started: ControlServer, mock_conn: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
         mock_listener = MagicMock()
         mock_listener.address = "/tmp/gcmon-test"
         server_not_started._listener = mock_listener
+        accepts = [mock_conn, OSError("second accept fails")]
 
-        call_count = [0]
-
-        def _accept_side(listener: Listener) -> Mock | None:
-            call_count[0] += 1
-            if call_count[0] == 1:
-                return mock_conn
-            raise OSError("second accept fails")
-
-        with patch("gcmon.control.control_server._accept", side_effect=_accept_side):
+        with patch("gcmon.control.control_server._accept", side_effect=accepts):
             server_not_started._accept_loop()
 
         assert not mock_conn.close.called
@@ -749,8 +731,10 @@ class TestControlServerClose:
         server: ControlServer = self._make_server()
         server.start()
         _send_msg(server, MSG_STOP, 42)
-        _wait_msg(server, 42, False)
+        assert _wait_msg(server, 42, False)
+
         server.close()
+
         assert server.is_enabled(42) is True
 
     def test_close_is_idempotent(self) -> None:
@@ -866,21 +850,25 @@ class TestControlServerThreadSafety:
 
         assert len(errors) == 0
 
-    def test_concurrent_add_event(self, control_server: ControlServer) -> None:
+    def test_concurrent_add_event(self, server_not_started: ControlServer, mock_exporter: MagicMock) -> None:
+        """The registry holds pid 42, so every message reaches the exporter."""
         errors: list[Exception] = []
+        barrier = threading.Barrier(2)
 
         def add_event_loop() -> None:
             try:
+                barrier.wait(timeout=5)
                 for _ in range(20):
-                    control_server._add_event("test", 1, 0)
+                    server_not_started._add_event("test", 42, 0)
             except Exception as e:
                 errors.append(e)
 
-        t1 = threading.Thread(target=add_event_loop, daemon=True)
-        t2 = threading.Thread(target=add_event_loop, daemon=True)
-        t1.start()
-        t2.start()
-        t1.join(timeout=5)
-        t2.join(timeout=5)
+        threads = [threading.Thread(target=add_event_loop, daemon=True) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
 
-        assert len(errors) == 0
+        assert errors == []
+        assert not [t for t in threads if t.is_alive()]
+        assert len(mock_exporter.add_instant_event.call_args_list) == 40

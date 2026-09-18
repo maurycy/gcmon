@@ -45,20 +45,16 @@ def mock_psutil() -> Generator[MagicMock]:
 class TestRssSampler:
     """RssSampler unit tests; all use injectable rss_provider, no psutil dependency."""
 
-    def test_tick_no_live_pids(self) -> None:
-        """No sampling when live_pids is empty."""
+    def test_a_round_with_nobody_live_does_not_use_up_the_interval(self) -> None:
+        """Sampling nobody draws nothing either way. What an empty round must
+        not do is push the next real one a whole interval out."""
         exporter = MagicMock()
-        sampler = RssSampler(exporter, interval=0.0, rss_provider=_noop_rss_sampler)
-        sampler.tick(now_ns=1 * SEC, live=set())
-        exporter.add_rss_sample.assert_not_called()
+        sampler = RssSampler(exporter, interval=5.0, rss_provider=lambda pid: 42)
+        sampler.tick(now_ns=5 * SEC, live=set())
 
-    def test_tick_interval_not_elapsed(self) -> None:
-        """No sampling when interval has not elapsed."""
-        exporter = MagicMock()
-        sampler = RssSampler(exporter, interval=10.0, rss_provider=_noop_rss_sampler)
-        sampler._last_sample_ns = 100 * SEC
-        sampler.tick(now_ns=105 * SEC, live={proc(TARGET_PID)})
-        exporter.add_rss_sample.assert_not_called()
+        sampler.tick(now_ns=6 * SEC, live={proc(TARGET_PID)})
+
+        exporter.add_rss_sample.assert_called_once_with(proc(TARGET_PID), 42, 6 * SEC)
 
     def test_tick_samples_at_interval(self) -> None:
         """Sampling occurs when interval has elapsed."""
@@ -158,15 +154,20 @@ class TestRssSampler:
             rss_provider=lambda pid: results[pid],
         )
         sampler._last_sample_ns = -1 * SEC
+
         sampler.tick(now_ns=0, live={proc(TARGET_PID), proc(2), proc(3)})
-        assert exporter.add_rss_sample.call_count == 3
+
+        sampled = sorted(call.args for call in exporter.add_rss_sample.call_args_list)
+        assert sampled == [(proc(TARGET_PID), 100, 0), (proc(2), 200, 0), (proc(3), 300, 0)]
 
     def test_enabled_flag(self) -> None:
         """Disabled sampler does nothing even with high interval."""
         exporter = MagicMock()
-        sampler = RssSampler(exporter, interval=0.0, rss_provider=_noop_rss_sampler)
+        sampler = RssSampler(exporter, interval=0.0, rss_provider=lambda pid: 42)
         sampler._enabled = False
+
         sampler.tick(now_ns=0, live={proc(TARGET_PID)})
+
         exporter.add_rss_sample.assert_not_called()
 
     def test_default_provider_uses_default_rss_sampler(self) -> None:

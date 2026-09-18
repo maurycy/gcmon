@@ -308,7 +308,9 @@ class TestExporterThreadSafety:
     def test_concurrent_add_event_and_close_no_data_loss(
         self, exporter_factory: ExporterFactory, tmp_path: Path
     ) -> None:
-        exporter, capture = exporter_factory.build(tmp_path, threshold=5)
+        """A threshold nothing here reaches, so the whole pre-fill is still
+        buffered when the race starts and only `close` can write it."""
+        exporter, capture = exporter_factory.build(tmp_path, threshold=10_000)
         for ev in _make_gc_events(PRE_FILL, 1_500_000_000):
             exporter.add_event(proc(MAIN_PID), ev)
         more = _make_gc_events(N_GC, 1_500_000_000 + 100_000_000)
@@ -331,14 +333,16 @@ class TestExporterThreadSafety:
         # For Perfetto, add the pid's two span begins, one on the
         # Processes track and one on its own row.
         lifetime_extra = 2 if isinstance(capture, PerfettoFileCapture) else 0
-        assert PRE_FILL <= completes <= PRE_FILL + N_GC + lifetime_extra, (
-            f"[{exporter_factory.name}] expected between {PRE_FILL} and "
+        assert PRE_FILL + lifetime_extra <= completes <= PRE_FILL + N_GC + lifetime_extra, (
+            f"[{exporter_factory.name}] expected between {PRE_FILL + lifetime_extra} and "
             f"{PRE_FILL + N_GC + lifetime_extra} complete events, "
             f"got {completes}"
         )
 
     def test_double_close_safe(self, exporter_factory: ExporterFactory, tmp_path: Path) -> None:
-        exporter, capture = exporter_factory.build(tmp_path, threshold=1)
+        """A threshold the five events stay under, so they are still in the
+        buffer for the two closes to race over."""
+        exporter, capture = exporter_factory.build(tmp_path, threshold=100)
         for ev in _make_gc_events(5, 1_500_000_000):
             exporter.add_event(proc(MAIN_PID), ev)
 

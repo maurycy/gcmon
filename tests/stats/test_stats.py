@@ -172,10 +172,15 @@ class TestStatsPercentile:
 
     @pytest.mark.skipif(not HAS_DDSKETCH, reason="ddsketch not installed")
     def test_percentile_from_sketch_when_buffer_full(self, stats: Stats) -> None:
-        for i in range(Stats.MAX_BUFFER_LEN + 100):
-            stats.update(float(i))
+        """The buffer holds the long tail alone, and its median is the tail's."""
+        for _ in range(3 * Stats.MAX_BUFFER_LEN):
+            stats.update(1.0)
+        for _ in range(Stats.MAX_BUFFER_LEN):
+            stats.update(1000.0)
+
         p50 = stats.percentile(50)
-        assert p50 > 0.0
+
+        assert p50 == pytest.approx(1.0, rel=0.01)
 
     def test_percentile_empty_returns_zero(self, stats: Stats) -> None:
         assert stats.percentile(50) == 0.0
@@ -307,6 +312,17 @@ class TestExactTotals:
         assert stats.pause_totals(proc(TARGET_PID), 0, 0).coverage == pytest.approx(0.3)
         assert stats.pause_totals(proc(TARGET_PID), 0, 0).scale_factor == pytest.approx(10 / 3)
 
+    def test_the_scale_follows_pause_time_and_not_the_count(self) -> None:
+        """One lost collection as long as the three read between them: a
+        quarter of the count and half of the pause."""
+        stats = StreamingStats()
+        for _ in range(3):
+            stats.update(proc(TARGET_PID), _pause())
+
+        stats.record_loss(proc(TARGET_PID), 0, 0, 1, 3 * PAUSE_NS)
+
+        assert stats.pause_totals(proc(TARGET_PID), 0, 0).scale_factor == pytest.approx(2.0)
+
     def test_an_untouched_generation_is_neutral(self) -> None:
         """1.0 rather than a division by zero, so no call site has to guard."""
         stats = StreamingStats()
@@ -334,9 +350,10 @@ class TestExactTotals:
         """Recorded per poll rather than flushed at the end, so a child that
         exits mid-run still counts."""
         stats = self._stats()
-        before = stats.pause_totals_by_gen()[0].exact_count
 
-        assert before == stats.pause_totals_by_gen()[0].exact_count
+        stats.materialize(proc(TARGET_PID))
+
+        assert stats.pause_totals_by_gen()[0].exact_count == 10
         assert stats.pause_totals(proc(TARGET_PID), 0, 0).lost_count == 7
 
 
@@ -620,11 +637,15 @@ class TestAProcessThatExits:
 
     def test_a_running_ring_stays_open(self) -> None:
         """Only the pid that went is settled."""
-        stats = self._ran_and_exited()
+        stats = StreamingStats()
+        stats.update(proc(TARGET_PID), _pause())
         stats.update(proc(OTHER_PID), _pause())
-        stats.update(proc(OTHER_PID), _pause(5_000))
 
-        assert stats.pause_totals(proc(OTHER_PID), 0, 0).sampled_count == 2
+        stats.materialize(proc(TARGET_PID))
+
+        running = stats.get_ring_stats(proc(OTHER_PID), 0)
+        assert running is not None
+        assert running[PAUSE_KEY][0].percentiles is None
 
     def test_retain_settles_the_pids_it_leaves_out(self) -> None:
         stats = StreamingStats()

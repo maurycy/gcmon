@@ -233,16 +233,25 @@ class TestPerfettoExporter:
         exporter.add_event(proc(DEFAULT_PID), mock_stats_item)
         exporter.close()
 
-        packets = _read_trace_packets(path)
-        for packet in packets:
-            ts = packet.timestamp
-            if ts:
-                assert ts >= 1_500_000
+        stamps = {packet.timestamp for packet in _read_trace_packets(path) if packet.HasField("track_event")}
+        assert stamps == {1_500_000_000, 1_505_000_000}, "every event sits on one end of the record or the other"
 
     def test_close_with_no_events(self, perfetto_exporter: ExporterFactory) -> None:
         exporter, path = perfetto_exporter()
         exporter.close()
         assert not path.exists() or path.stat().st_size == 0
+
+    def test_an_event_added_after_close_is_dropped(self, perfetto_exporter: ExporterFactory) -> None:
+        """A threshold of one, so an event that got past `close` would be
+        written on the spot, after the closeout."""
+        exporter, path = perfetto_exporter(threshold=1)
+        exporter.add_event(proc(DEFAULT_PID), create_mock_stats_item())
+        exporter.close()
+        closed = path.read_bytes()
+
+        exporter.add_event(proc(DEFAULT_PID), create_mock_stats_item())
+
+        assert path.read_bytes() == closed
 
     def test_descriptors_written_before_events(self, perfetto_exporter: ExporterFactory) -> None:
         exporter, path = perfetto_exporter()
@@ -259,9 +268,11 @@ class TestPerfettoExporter:
         exporter.add_event(proc(200), item)
         exporter.close()
 
-        packets = _read_trace_packets(path)
-        descriptors = sum(1 for p in packets if p.HasField("track_descriptor"))
-        assert descriptors >= 4
+        described = [p.track_descriptor for p in _read_trace_packets(path) if p.HasField("track_descriptor")]
+        assert [td.name for td in described if td.HasField("process")] == [
+            process_track_name(proc(100)),
+            process_track_name(proc(200)),
+        ]
 
     def test_incremental_item_emits_subphases(self, perfetto_exporter: ExporterFactory) -> None:
         exporter, path = perfetto_exporter()

@@ -13,8 +13,14 @@ import pytest
 from perfetto.trace_processor import TraceProcessor
 
 from gcmon.exporters import PerfettoExporter
-from gcmon.exporters.perfetto_format import _COUNTER_GROUP_NAME, _interpreter_group_name
+from gcmon.exporters.perfetto_format import (
+    _COUNTER_GROUP_NAME,
+    _INTERPRETER_LIST_NAME,
+    _INTERPRETER_ROW_ORDER,
+    _interpreter_group_name,
+)
 from gcmon.exporters.perfetto_process_lifetime import (
+    _PROCESS_LIFETIME_TRACK_NAME,
     _PROCESS_ROW_PREFIX,
     process_track_name,
 )
@@ -296,73 +302,87 @@ class TestCounterTracks:
 
 
 class TestCounterYAxisShareKey:
-    """SQL-level tests for the new ``y_axis_share_key`` field on
-    ``CounterDescriptor``.
+    """``y_axis_share_key`` as the trace processor hands it to the UI.
 
-    The wire-level tests in ``TestCounterTrackYAxisShareKey``
-    (``test_perfetto_counter_tracks.py``) are the source of truth for the
-    values. This class is a forward-looking check that the values also
-    survive the round-trip through the Perfetto trace processor into
-    the ``counter_track`` SQL table.
-
-    As of Perfetto 0.56.0 (pinned in ``pyproject.toml:49``), the
-    ``counter_track`` SQL table does not expose ``y_axis_share_key`` as
-    a column. Both tests are therefore marked ``xfail`` unconditionally
-    with ``strict=False``: they will start passing automatically when
-    a future Perfetto version surfaces the column, and ``strict=False``
-    prevents an XPASS-and-fail flip from happening at that point.
+    ``counter_track`` has no such column. The stdlib table the UI builds its
+    TrackEvent rows from does, so that is where these read it. The wire-level
+    tests in ``TestCounterTrackYAxisShareKey``
+    (``test_perfetto_counter_tracks.py``) hold the bytes.
     """
 
-    @pytest.mark.xfail(
-        reason="counter_track.y_axis_share_key not exposed in Perfetto 0.56.0",
-        strict=False,
-    )
+    def _share_keys(self, tp: TraceProcessor) -> dict[str, set[str | None]]:
+        """Every key a counter track of each name carries. One name covers a
+        track per interpreter, hence a set."""
+        list(tp.query("INCLUDE PERFETTO MODULE viz.summary.track_event"))
+        keys: dict[str, set[str | None]] = {}
+        for r in tp.query("SELECT name, y_axis_share_key FROM _track_event_tracks_ordered_groups WHERE is_counter = 1"):
+            keys.setdefault(r.name, set()).add(r.y_axis_share_key)
+        return keys
+
     def test_y_axis_share_key_shared_across_generations(
         self,
         trace_processor: TraceProcessor,
     ) -> None:
-        """``G0 collected`` / ``G1 collected`` / ``G2 collected`` all
-        carry the same ``y_axis_share_key`` value, and that value
-        matches the metric suffix verbatim. Same for ``candidates`` and
-        ``duration``. Verified via ``counter_track.y_axis_share_key``.
-        """
-        rows = list(
-            trace_processor.query(
-                "SELECT name, y_axis_share_key FROM counter_track "
-                "WHERE name LIKE 'G_ %' AND name != 'heap_size' "
-                "ORDER BY name",
-            )
-        )
-        assert rows, "expected at least one G{N} <metric> track"
-        by_suffix: dict[str, set[str]] = {}
-        for r in rows:
-            suffix = r.name.split(" ", 1)[1]
-            by_suffix.setdefault(suffix, set()).add(r.y_axis_share_key)
-        for suffix, keys in by_suffix.items():
-            assert keys == {suffix}, (
-                f"expected y_axis_share_key for metric {suffix!r} to be exactly the metric name; got {keys}"
-            )
+        """``G0 collected`` and ``G1 collected`` share one axis, keyed by the
+        metric alone, and so does every other per-generation counter."""
+        keys = self._share_keys(trace_processor)
 
-    @pytest.mark.xfail(
-        reason="counter_track.y_axis_share_key not exposed in Perfetto 0.56.0",
-        strict=False,
-    )
+        assert {name: keys[name] for name in keys if name != HEAP_SIZE} == {
+            counter_display_name(gen, metric): {metric}
+            for gen in (0, 1)
+            for metric in (COLLECTED, UNCOLLECTABLE, CANDIDATES, DURATION)
+        }
+
     def test_heap_size_y_axis_share_key_is_null(
         self,
         trace_processor: TraceProcessor,
     ) -> None:
-        """The top-level ``heap_size`` track has no ``y_axis_share_key``:
-        the SQL value is NULL or empty string, depending on how the
-        trace processor surfaces an absent optional string field.
-        """
-        rows = list(
-            trace_processor.query(
-                "SELECT name, y_axis_share_key FROM counter_track WHERE name = 'heap_size'",
-            )
+        """A heap is sized in objects and shares an axis with nothing."""
+        assert self._share_keys(trace_processor)[HEAP_SIZE] == {None}
+
+
+def rows_drawn_under(tp: TraceProcessor, *path: str) -> list[str]:
+    """The rows under the row *path* names, top to bottom. No path is the top
+    level.
+
+    `order_id` is the key the Perfetto UI sorts a TrackEvent row's children
+    on, and the trace processor computes it: by `sibling_order_rank` under a
+    parent whose `child_ordering` is explicit, by name under one with none.
+    """
+    list(tp.query("INCLUDE PERFETTO MODULE viz.summary.track_event"))
+    rows = list(
+        tp.query("SELECT min_track_id AS id, parent_id, name, order_id FROM _track_event_tracks_ordered_groups")
+    )
+    parent: int | None = None
+    for name in path:
+        [parent] = [r.id for r in rows if r.parent_id == parent and r.name == name]
+    return [r.name for r in sorted((r for r in rows if r.parent_id == parent), key=lambda r: r.order_id)]
+
+
+class TestTheOrderRowsAreDrawnIn:
+    """Read off the trace processor, which is where the UI gets it. Neither
+    order below is the alphabetical one, so a rank that stopped reaching the
+    wire would show as rows sorted by name."""
+
+    def test_an_interpreter_s_rows_follow_their_ranks(self, every_row_trace_processor: TraceProcessor) -> None:
+        drawn = rows_drawn_under(every_row_trace_processor, _INTERPRETER_LIST_NAME, _interpreter_group_name(0))
+
+        assert drawn == list(_INTERPRETER_ROW_ORDER)
+
+    def test_the_counters_in_a_group_follow_their_ranks(self, every_row_trace_processor: TraceProcessor) -> None:
+        drawn = rows_drawn_under(
+            every_row_trace_processor, _INTERPRETER_LIST_NAME, _interpreter_group_name(0), _COUNTER_GROUP_NAME
         )
-        assert len(rows) == 1, f"expected exactly one heap_size row, got {len(rows)}"
-        r = rows[0]
-        assert r.y_axis_share_key == "", f"heap_size should have no y_axis_share_key, got {r.y_axis_share_key!r}"
+
+        assert drawn == [counter_display_name(0, metric) for metric in (COLLECTED, UNCOLLECTABLE, CANDIDATES, DURATION)]
+
+    def test_the_top_level_rows_come_out_by_name(self, every_row_trace_processor: TraceProcessor) -> None:
+        """No rank reaches these: a process track is OS-scoped and the trace
+        processor discards one there (ADR-0003). The name is all that places
+        the interpreter list under the process row (ADR-0027)."""
+        drawn = rows_drawn_under(every_row_trace_processor)
+
+        assert drawn == [_DEFAULT_ROW_NAME, _PROCESS_LIFETIME_TRACK_NAME, _INTERPRETER_LIST_NAME, RSS]
 
 
 class TestTrackDescriptors:
@@ -465,12 +485,6 @@ class TestCmdlineEncoding:
         assert self._description(trace_processor_with_cmdline, _DEFAULT_ROW_NAME) == _FAKE_CMDLINE_JOINED
         assert self._description(trace_processor_with_cmdline, _SECOND_ROW_NAME) == _FAKE_CMDLINE_JOINED
 
-    def test_cmdline_absent_for_pid_outside_provider(
-        self,
-        trace_processor_with_cmdline: TraceProcessor,
-    ) -> None:
-        assert self._description(trace_processor_with_cmdline, process_track_name(proc(1))) is None
-
     def test_cmdline_none_for_unknown_pid(
         self,
         trace_processor: TraceProcessor,
@@ -482,15 +496,6 @@ class TestCmdlineEncoding:
 class TestRssCounterTrackIntegration:
     """Integration tests verifying RSS counter tracks are populated in
     Perfetto traces and queryable through the trace processor."""
-
-    def test_rss_counter_track_present(
-        self,
-        trace_processor_with_rss: TraceProcessor,
-    ) -> None:
-        rows = list(trace_processor_with_rss.query("SELECT name FROM counter_track WHERE name = 'rss'"))
-        assert len(rows) >= 1, "expected at least one 'rss' counter track"
-        for r in rows:
-            assert r.name == RSS
 
     def test_rss_counter_values_match(
         self,
@@ -563,16 +568,16 @@ class TestRssCounterTrackIntegration:
             )
             assert len(proc_rows) == 1, f"expected process row for PID {pid}"
 
-    def test_rss_counter_track_name_and_unit(
+    def test_rss_counter_track_carries_no_unit(
         self,
         trace_processor_with_rss: TraceProcessor,
     ) -> None:
-        """The RSS counter track is named ``rss``. Its unit column comes
-        back as ``None`` or ``''``: gcmon sets no explicit unit."""
-        rows = list(trace_processor_with_rss.query("SELECT name, unit FROM counter_track WHERE name = 'rss'"))
-        assert len(rows) >= 1
-        for r in rows:
-            assert r.name == RSS
+        """The unit column comes back as ``None`` or ``''``: gcmon sets no
+        explicit unit."""
+        rows = list(trace_processor_with_rss.query(f"SELECT unit FROM counter_track WHERE name = '{RSS}'"))
+
+        assert rows
+        assert {r.unit for r in rows} <= {None, ""}
 
     def test_rss_does_not_affect_gc_counters(
         self,

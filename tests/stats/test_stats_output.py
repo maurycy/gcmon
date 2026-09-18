@@ -109,13 +109,16 @@ class TestStatsOutput:
         capsys: pytest.CaptureFixture[str],
         gc_stats_item_factory: Callable[..., GCStatsInfo],
     ) -> None:
-        """Test plain table format uses dashes in separators."""
+        """The rule under the header is dashes in either format, so the ones
+        that count are the rules between blocks."""
         stats = StreamingStats()
         for pid in (11111, 22222):
             stats.update(proc(pid), gc_stats_item_factory())
+
         print_stats(stats, StatsView.FULL, table_format=TableFormat.PLAIN)
-        captured = capsys.readouterr()
-        assert "--------" in captured.out
+        table = [line for line in capsys.readouterr().out.splitlines() if line.startswith("|")]
+
+        assert [set(line) for line in table[2:] if "-" in line] == [{"|", "-"}, {"|", "-"}]
 
     def test_print_stats_table_format_markdown(
         self,
@@ -135,6 +138,11 @@ class TestStatsOutput:
         assert blank
 
 
+def _pipes(line: str) -> list[int]:
+    """Where a table line puts its column borders."""
+    return [at for at, char in enumerate(line) if char == "|"]
+
+
 class TestPrintTable:
     """Tests for _print_table function."""
 
@@ -143,22 +151,27 @@ class TestPrintTable:
         captured = capsys.readouterr()
         assert captured.out == ""
 
-    def test_column_width_calculation(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_a_wide_cell_widens_its_column_on_every_line(self, capsys: pytest.CaptureFixture[str]) -> None:
         rows = [
             ["12345", "0", "100", "1000.000", "10.000", "20.000", "30.000", "40.000", "50.000", "1.00", "1.00"],
+            ["1", "a metric wider than its header", "1", "1", "1", "1", "1", "1", "1", "1", "1"],
         ]
+
         _print_table(rows)
-        captured = capsys.readouterr()
-        lines = captured.out.strip().splitlines()
-        assert len(lines) >= 2
+        lines = capsys.readouterr().out.strip().splitlines()
+
+        assert {tuple(_pipes(line)) for line in lines} == {tuple(_pipes(lines[0]))}
 
     def test_separator_full_format(self, capsys: pytest.CaptureFixture[str]) -> None:
         rows = [
             ["12345", "0", "100", "1000.000", "10.000", "20.000", "30.000", "40.000", "50.000", "1.00", "1.00"],
         ]
+
         _print_table(rows, table_format=TableFormat.PLAIN)
-        captured = capsys.readouterr()
-        assert "---" in captured.out
+        header, rule, *_ = capsys.readouterr().out.strip().splitlines()
+
+        assert set(rule) == {"|", "-"}
+        assert _pipes(rule) == _pipes(header)
 
     def test_separator_phase_format(self, capsys: pytest.CaptureFixture[str]) -> None:
         from gcmon.stats.stats_output import _SEP_PHASE
@@ -168,10 +181,12 @@ class TestPrintTable:
             _SEP_PHASE,
             ["12345", "1", "200", "2000.000", "20.000", "30.000", "40.000", "50.000", "60.000", "1.00", "1.00"],
         ]
+
         _print_table(rows, table_format=TableFormat.PLAIN)
-        captured = capsys.readouterr()
-        lines = captured.out.strip().splitlines()
-        assert len(lines) >= 4
+        first, *rest = capsys.readouterr().out.strip().splitlines()[3].strip("|").split("|")
+
+        assert first.strip() == ""
+        assert [set(cell) for cell in rest] == [{"-"}] * 10
 
     def test_separator_blank_markdown(self, capsys: pytest.CaptureFixture[str]) -> None:
         from gcmon.stats.stats_output import _SEP_GROUP
@@ -197,18 +212,15 @@ class TestBuildRows:
         assert len(rows) == 0
 
     def test_formats_values_correctly(self) -> None:
+        """Whole milliseconds in, so each percentile lands in a cell of its own."""
         s = Stats()
-        for v in [1000.0, 2000.0, 3000.0]:
+        for v in [1_000_000.0, 2_000_000.0, 3_000_000.0]:
             s.update(v)
         s.materialize()
 
         rows = _build_rows({0: s}, "Test", {}, False)
-        assert len(rows) == 1
-        row = rows[0]
-        assert row[0] == "Test(0)"
-        assert row[1] == "3"
-        assert float(row[2]) > 0
-        assert float(row[3]) > 0
+
+        assert rows == [["Test(0)", "3", "6.000", "2.000", "2.000", "2.800", "2.900", "2.980", "100.0%", "1.000"]]
 
     def test_sorted_by_generation(self) -> None:
         stats_dict: dict[int, Stats] = {}
@@ -235,23 +247,22 @@ class TestPrintStatsEdgeCases:
             stats.update(proc(pid), gc_stats_item_factory())
 
         print_stats(stats, StatsView.FULL)
-        captured = capsys.readouterr()
-        pid_11111_pos = captured.out.find("11111:0")
-        pid_22222_pos = captured.out.find("22222:0")
-        pid_33333_pos = captured.out.find("33333:0")
-        assert pid_11111_pos < pid_22222_pos < pid_33333_pos
+        labels = [row[0] for row in table_rows(capsys.readouterr().out)[1:] if ":" in row[0]]
+
+        assert labels == ["11111:0", "22222:0", "33333:0"]
 
     def test_total_label_first_metric(
         self,
         capsys: pytest.CaptureFixture[str],
-        gc_stats_item_factory: Callable[..., GCStatsInfo],
+        incremental_gc_stats_item_factory: Callable[..., GCStatsInfo],
     ) -> None:
         stats = StreamingStats()
-        stats.update(proc(DEFAULT_PID), gc_stats_item_factory())
+        stats.update(proc(DEFAULT_PID), incremental_gc_stats_item_factory())
 
-        print_stats(stats, StatsView.FULL)
-        captured = capsys.readouterr()
-        assert TOTAL_LABEL in captured.out
+        print_stats(stats, StatsView.TOTAL)
+        _header, *block = table_rows(capsys.readouterr().out)
+
+        assert [row[0] for row in block] == [TOTAL_LABEL] + [""] * 8
 
     def test_incremental_metrics_output(
         self,
@@ -340,20 +351,20 @@ class TestPrintStatsEdgeCases:
         assert READ_TIME_LABEL in captured.out
         assert "2.500" in captured.out
 
-    def test_markdown_format(
+    def test_a_markdown_table_keeps_the_rule_under_its_header(
         self,
         capsys: pytest.CaptureFixture[str],
         gc_stats_item_factory: Callable[..., GCStatsInfo],
     ) -> None:
+        """Every other rule goes blank. Without this one Markdown reads the
+        lines as a paragraph."""
         stats = StreamingStats()
         stats.update(proc(DEFAULT_PID), gc_stats_item_factory())
 
         print_stats(stats, StatsView.FULL, table_format=TableFormat.MARKDOWN)
-        captured = capsys.readouterr()
-        lines = captured.out.strip().splitlines()
-        assert len(lines) >= 2
-        assert lines[0].startswith("|")
-        assert lines[1].startswith("|")
+        _header, rule, *_ = capsys.readouterr().out.strip().splitlines()
+
+        assert set(rule) == {"|", "-"}
 
 
 def table_rows(out: str) -> list[list[str]]:
@@ -507,11 +518,10 @@ class TestLossColumns:
 
     def test_cov_and_f_are_columns(self, capsys: pytest.CaptureFixture[str]) -> None:
         print_stats(self._lossy(), StatsView.FULL)
-        out = capsys.readouterr().out
+        header, total, *_ = table_rows(capsys.readouterr().out)
 
-        assert "Cov" in out
-        assert "30.0%" in out
-        assert "3.333" in out
+        assert header[9:] == ["Cov", "F"]
+        assert total[9:] == ["30.0%", "3.333"]
 
     def test_a_lossless_run_shows_one_number_per_cell(self, capsys: pytest.CaptureFixture[str]) -> None:
         """`3/3` in every cell would say nothing was lost twice over."""
@@ -558,9 +568,9 @@ class TestLossColumns:
         stats.record_read_time(500_000)
 
         print_stats(stats, StatsView.FULL)
-        lines = [ln for ln in capsys.readouterr().out.splitlines() if READ_TIME_LABEL in ln]
+        read_time = next(row for row in table_rows(capsys.readouterr().out) if row[1] == READ_TIME_LABEL)
 
-        assert lines[0].rstrip().endswith("|      |      |") or lines[0].count("|") == 12
+        assert read_time[9:] == ["", ""]
 
     def test_cov_never_rounds_up_past_a_visible_gap(self, capsys: pytest.CaptureFixture[str]) -> None:
         """1763 of 1771 is 99.5%, but a coarser format would print 100% beside
@@ -578,8 +588,9 @@ class TestLossColumns:
         assert "100.0%" not in out
 
     def test_a_gap_too_small_to_show_still_says_so(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """One lost past 2000 read is where both cells round to a whole."""
         stats = StreamingStats()
-        for _ in range(1_000_000):
+        for _ in range(3_000):
             stats.update(proc(TARGET_PID), _pause(1_000))
         stats.record_loss(proc(TARGET_PID), 0, 0, 1, 1_000)
 

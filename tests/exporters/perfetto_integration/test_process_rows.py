@@ -52,12 +52,11 @@ from tests.exporters.perfetto_integration.traces import (
     _ZERO_CROSSER_START,
     _ZERO_CROSSER_STOP,
     _ZERO_INSTANT_TS,
-    _misplaced_end_events,
-    _process_filter,
     _process_row_filter,
 )
 from tests.helpers import (
     create_mock_stats_item,
+    misplaced_end_events,
     open_trace_processor,
     proc,
 )
@@ -477,7 +476,7 @@ class TestProcessesTrack:
         no slice to close. It is the trace processor reporting data loss
         directly, rather than an inference from the slice table.
         """
-        assert _misplaced_end_events(trace_processor) == 0
+        assert misplaced_end_events(trace_processor) == 0
 
     def test_slice_name_format(
         self,
@@ -494,48 +493,35 @@ class TestProcessesTrack:
             )
         )
         pat = re.compile(r"^Process \d+(#\d+)?$")
+        assert rows
         for r in rows:
             assert pat.match(r.name), (
                 f"slice name {r.name!r} on the {_PROCESS_LIFETIME_TRACK_NAME!r} track "
                 f"must match 'Process <pid>' or 'Process <pid>#N'"
             )
 
-    def test_begin_end_match_first_last_event(
+    @pytest.mark.parametrize(
+        ("row_name", "first_event"),
+        [(_DEFAULT_ROW_NAME, _TS_START - 1_000_000), (_SECOND_ROW_NAME, _TS_START - 2_000_000)],
+    )
+    def test_a_slice_begins_at_its_process_s_first_event(
         self,
         trace_processor: TraceProcessor,
+        row_name: str,
+        first_event: int,
     ) -> None:
-        """For each pid, the slice BEGIN is at the first non-meta event
-        ts, and the slice END (BEGIN + dur) is at the last Begin/End/
-        Instant event ts (counter events excluded)."""
-        # The fixture adds an instant event at _TS_START - 1_000_000,
-        # then a GC item at _TS_START / _TS_START + dur, then a second
-        # item etc. The first non-meta event for each pid is the
-        # instant event. The last non-counter non-meta event for each
-        # pid is the end of the last GC item's pause.
-        #
-        # We compare against SQL: take the min(ts) of every Begin/End/
-        # Instant event for the pid, all of them reached by one join
-        # through process_track (ADR-0027), then verify the slice matches.
-        for pid in (DEFAULT_PID, _SECOND_PID):
-            candidates = [
-                r.ts for r in trace_processor.query(f"SELECT MIN(s.ts) AS ts FROM slice s {_process_filter(pid)}")
-            ]
-            assert candidates, f"no first event found for pid {pid}"
-            expected_first = min(candidates)
+        """The instant each process opens on, which the trace writes ahead of
+        that process's first record."""
+        rows = list(
+            trace_processor.query(
+                f"SELECT s.ts FROM slice s "
+                f"JOIN track t ON s.track_id = t.id "
+                f"WHERE t.name = '{_PROCESS_LIFETIME_TRACK_NAME}' "
+                f"AND s.name = '{row_name}'"
+            )
+        )
 
-            slice_rows = list(
-                trace_processor.query(
-                    f"SELECT s.ts, s.dur FROM slice s "
-                    f"JOIN track t ON s.track_id = t.id "
-                    f"WHERE t.name = '{_PROCESS_LIFETIME_TRACK_NAME}' "
-                    f"AND s.name = '{process_track_name(proc(pid))}' "
-                    f"AND s.dur > 0"
-                )
-            )
-            assert len(slice_rows) == 1, f"expected exactly one duration-bearing Process {pid} slice, got {slice_rows}"
-            assert slice_rows[0].ts == expected_first, (
-                f"slice begin ts mismatch for pid {pid}: got {slice_rows[0].ts}, expected {expected_first}"
-            )
+        assert [r.ts for r in rows] == [first_event]
 
     def test_cmdline_arg_present(
         self,
@@ -575,7 +561,7 @@ class TestCrossingProcessSpans:
     """
 
     def test_no_misplaced_end_events(self, crossing_trace_processor: TraceProcessor) -> None:
-        assert _misplaced_end_events(crossing_trace_processor) == 0
+        assert misplaced_end_events(crossing_trace_processor) == 0
 
     def test_earlier_span_is_clipped_and_later_span_is_intact(
         self,
@@ -665,7 +651,7 @@ class TestZeroDurationProcessSpans:
     def test_no_misplaced_end_events(self, zero_duration_trace_processor: TraceProcessor) -> None:
         """A zero-duration slice is a BEGIN and an END at the same ts.
         The trace processor must pair them, not orphan the END."""
-        assert _misplaced_end_events(zero_duration_trace_processor) == 0
+        assert misplaced_end_events(zero_duration_trace_processor) == 0
 
     def test_every_pid_keeps_a_slice(
         self,

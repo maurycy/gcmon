@@ -203,7 +203,8 @@ class TestTerminateProcessWindows:
 class TestTerminateProcessCommon:
     """Platform-independent terminate_process tests."""
 
-    def test_verbose_logging(self, mock_process: Mock, patched_logger: Mock) -> None:
+    def test_each_escalation_is_logged(self, mock_process: Mock, patched_logger: Mock) -> None:
+        """A process that never exits walks the whole ladder."""
         mock_process.returncode = None
         mock_process.poll.side_effect = lambda: mock_process.returncode
 
@@ -214,7 +215,12 @@ class TestTerminateProcessCommon:
                 force_timeout=2.0,
             )
 
-            assert patched_logger.debug.call_count >= 2
+        logged = [call.args[0] for call in patched_logger.debug.call_args_list]
+        assert [message for message in logged if message.startswith("Process ")] == [
+            "Process did not exit gracefully, escalating to forceful termination",
+            "Process did not terminate, escalating to kill",
+            "Process still running after kill, waiting indefinitely",
+        ]
 
     def test_signal_failure(self, mock_process: Mock, patched_logger: Mock) -> None:
         mock_process.returncode = None
@@ -229,18 +235,6 @@ class TestTerminateProcessCommon:
 
             patched_logger.warning.assert_called()
             mock_process.communicate.assert_called()
-            assert result == (b"stdout data", b"stderr data")
-
-    def test_default_logger(self, mock_process: Mock) -> None:
-        mock_process.returncode = None
-        mock_process.poll.side_effect = lambda: mock_process.returncode
-
-        with patch.object(mock_process, "send_signal"):
-            result = terminate_process(
-                process=mock_process,
-                graceful_timeout=5.0,
-                force_timeout=2.0,
-            )
             assert result == (b"stdout data", b"stderr data")
 
     def test_terminate_then_exits(self, mock_process: Mock) -> None:
