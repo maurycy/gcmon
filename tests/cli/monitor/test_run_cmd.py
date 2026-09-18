@@ -78,8 +78,8 @@ sys.stdout.flush()
 
 def _print_output(tool: str, pid: int, result: subprocess.CompletedProcess[str] | subprocess.TimeoutExpired) -> None:
     print(f"--- {tool} PID {pid} ---")
-    out = getattr(result, FORMAT_STDOUT, None) or getattr(result, "output", "")
-    err = getattr(result, "stderr", None) or ""
+    out = result.stdout or ""
+    err = result.stderr or ""
     if out:
         print("STDOUT")
         print(out)
@@ -334,6 +334,16 @@ class TestCmdRunUnit:
             control_address="test-addr",
         )
         assert runner is mock_runner
+
+    def test_cmd_run_names_the_control_plane_as_asked(
+        self, mock_monitoring_loop_and_runner: tuple[MagicMock, MagicMock, MagicMock]
+    ) -> None:
+        mock_loop, _, _ = mock_monitoring_loop_and_runner
+        from gcmon.cli.monitor import run_cmd
+
+        run_cmd.cmd_run(self._make_run_args(module_name="timeit", control_name="bench-7"))
+
+        assert mock_loop.call_args.kwargs["address"] == "bench-7"
 
     def test_cmd_run_subprocess_returncode(self) -> None:
         """Test non-zero subprocess returncode is propagated from run_monitoring_loop."""

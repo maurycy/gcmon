@@ -147,7 +147,7 @@ class TestEventsMonitorExtra:
         assert [e.ts_start for e in exporter.events] == [5_000]
 
 
-class TestGCMonitor:
+class TestEventsMonitor:
     def test_init(self, monitor: EventsMonitor) -> None:
         assert monitor.is_enabled
         assert monitor.pid == 12345
@@ -320,7 +320,7 @@ class TestGCMonitor:
         assert reader.attached == set()
 
 
-class TestGCMonitorReadTime:
+class TestEventsMonitorReadTime:
     """Tests for read time tracking around the reader."""
 
     def test_poll_records_read_time(
@@ -973,6 +973,22 @@ class _OrderedExporter(MockExporter):
         super().add_process_liveness(processes, ts_ns)
 
 
+class TestTheCommandLineReachesTheExporter:
+    """The monitor creates a process and hands the exporter what it is
+    running in the same call, once (ADR-0025)."""
+
+    def test_it_arrives_once_however_often_the_pid_is_polled(self, exporter: MockExporter) -> None:
+        registry = ProcessRegistry(cmdline_provider=lambda pid: ("python", "-m", f"target_{pid}"))
+
+        _drive(
+            _monitor(exporter, registry=registry),
+            listings=[[], []],
+            rings={12345: [_ring(1), _ring(1, 2)]},
+        )
+
+        assert exporter.launched == [(proc(DEFAULT_PID), ("python", "-m", "target_12345"))]
+
+
 class TestARetirementIsReported:
     """The exporter is told the moment gcmon lets go of a process, so it can
     draw that process's row without waiting for the end of the run. A run
@@ -990,6 +1006,17 @@ class TestARetirementIsReported:
         )
 
         assert [process.pid for process in exporter.retired] == [999]
+
+    def test_several_leaving_in_one_tick_are_reported_in_pid_order(self, exporter: MockExporter) -> None:
+        """Not in the order they were first polled, which is the order the
+        child listing happened to give."""
+        _drive(
+            _monitor(exporter),
+            listings=[[999, 555, 777], []],
+            rings={12345: [_ring(1), _ring(1)], 999: [_ring(1)], 555: [_ring(1)], 777: [_ring(1)]},
+        )
+
+        assert [process.pid for process in exporter.retired] == [555, 777, 999]
 
     def test_a_pid_the_policy_gave_up_on_is_reported(self, exporter: MockExporter) -> None:
         factory = Mock(side_effect=[_policy(True, True), _policy(True, False)])

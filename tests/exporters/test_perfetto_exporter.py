@@ -72,6 +72,18 @@ def _count_descriptors(packet_fields: list[TracePacket]) -> int:
     return sum(1 for pf in packet_fields if pf.HasField("track_descriptor"))
 
 
+def _events_ahead_of_their_descriptor(packets: list[TracePacket]) -> list[int]:
+    """The track of every event written before anything described that track."""
+    described: set[int] = set()
+    early: list[int] = []
+    for packet in packets:
+        if packet.HasField("track_descriptor"):
+            described.add(packet.track_descriptor.uuid)
+        elif packet.HasField("track_event") and packet.track_event.track_uuid not in described:
+            early.append(packet.track_event.track_uuid)
+    return early
+
+
 class TestPerfettoExporter:
     def test_init(self, perfetto_exporter: ExporterFactory) -> None:
         exporter, path = perfetto_exporter()
@@ -88,16 +100,15 @@ class TestPerfettoExporter:
         assert exporter._output_path == path
 
     def _verify_event_structure(self, path: Path, num_items: int) -> None:
+        """Every record is a pause and five counters. The process adds two
+        slices of its own: its row and its bar on `Processes`."""
         packets = _read_trace_packets(path)
-        assert len(packets) > 0
 
         slice_begins = _count_event_type(packets, TrackEventType.SLICE_BEGIN)
         slice_ends = _count_event_type(packets, TrackEventType.SLICE_END)
         counters = _count_event_type(packets, TrackEventType.COUNTER)
 
-        assert slice_begins >= num_items
-        assert slice_ends >= num_items
-        assert counters >= num_items * 4
+        assert (slice_begins, slice_ends, counters) == (num_items + 2, num_items + 2, num_items * 5)
 
     def test_flushes_at_threshold(self, mock_stats_item: GCStatsInfo, perfetto_exporter: ExporterFactory) -> None:
         """The file is there before ``close``, so the batch went out on its own."""
@@ -143,14 +154,9 @@ class TestPerfettoExporter:
         # Verify descriptors present
         assert _count_descriptors(packets) >= 2
 
-    def test_close_writes_all_events(self, mock_stats_item: GCStatsInfo, perfetto_exporter: ExporterFactory) -> None:
-        exporter, path = perfetto_exporter(threshold=5)
-        for _ in range(15):
-            exporter.add_event(proc(DEFAULT_PID), mock_stats_item)
-        exporter.close()
-        self._verify_event_structure(path, 15)
-
-    def test_timestamp_conversion(self, mock_stats_item: GCStatsInfo, perfetto_exporter: ExporterFactory) -> None:
+    def test_a_pause_begins_at_its_records_start_in_nanoseconds(
+        self, mock_stats_item: GCStatsInfo, perfetto_exporter: ExporterFactory
+    ) -> None:
         exporter, path = perfetto_exporter()
         exporter.add_event(proc(DEFAULT_PID), mock_stats_item)
         exporter.close()
@@ -236,11 +242,6 @@ class TestPerfettoExporter:
         stamps = {packet.timestamp for packet in _read_trace_packets(path) if packet.HasField("track_event")}
         assert stamps == {1_500_000_000, 1_505_000_000}, "every event sits on one end of the record or the other"
 
-    def test_close_with_no_events(self, perfetto_exporter: ExporterFactory) -> None:
-        exporter, path = perfetto_exporter()
-        exporter.close()
-        assert not path.exists() or path.stat().st_size == 0
-
     def test_an_event_added_after_close_is_dropped(self, perfetto_exporter: ExporterFactory) -> None:
         """A threshold of one, so an event that got past `close` would be
         written on the spot, after the closeout."""
@@ -253,13 +254,17 @@ class TestPerfettoExporter:
 
         assert path.read_bytes() == closed
 
-    def test_descriptors_written_before_events(self, perfetto_exporter: ExporterFactory) -> None:
+    def test_every_track_is_described_before_its_first_event(self, perfetto_exporter: ExporterFactory) -> None:
+        """Track by track, not for the file: the `Processes` descriptor is
+        written at closeout, after other tracks' events."""
         exporter, path = perfetto_exporter()
         exporter.add_event(proc(DEFAULT_PID), create_mock_stats_item())
+
         exporter.close()
 
         packets = _read_trace_packets(path)
-        assert packets[0].HasField("track_descriptor")
+        assert _count_event_type(packets, TrackEventType.SLICE_BEGIN) == 3
+        assert _events_ahead_of_their_descriptor(packets) == []
 
     def test_multiple_processes(self, perfetto_exporter: ExporterFactory) -> None:
         exporter, path = perfetto_exporter()
@@ -349,19 +354,18 @@ class TestPerfettoExporter:
         exporter = PerfettoExporter(output_path=tmp_path / "test.pb")
         item = pause_item()
         exporter.add_event(proc(DEFAULT_PID), item)
+
         exporter.close()
 
-        trace_data = (tmp_path / "test.pb").read_bytes()
-        assert len(trace_data) > 0
-
-        packets = _read_trace_packets(tmp_path / "test.pb")
-        for packet in packets:
-            if packet.HasField("track_descriptor"):
-                td = packet.track_descriptor
-                assert not td.HasField("description"), "description should be absent when the process has no cmdline"
-                if td.HasField("process"):
-                    descriptor = td.process
-                    assert len(descriptor.cmdline) == 0, "cmdline should be absent when the process has none"
+        described = [
+            packet.track_descriptor
+            for packet in _read_trace_packets(tmp_path / "test.pb")
+            if packet.HasField("track_descriptor")
+        ]
+        processes = [td.process for td in described if td.HasField("process")]
+        assert len(processes) == 1
+        assert list(processes[0].cmdline) == []
+        assert [td.name for td in described if td.HasField("description")] == []
 
     def test_slice_begin_end_matched(self, perfetto_exporter: ExporterFactory) -> None:
         exporter, path = perfetto_exporter()

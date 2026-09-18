@@ -65,9 +65,9 @@ class TestCounterTrackYAxisShareKey:
             state,
             sequence_id=1,
         )
-        for gen in ("G0", "G1", "G2"):
+        for gen in (0, 1, 2):
             for metric in (COLLECTED, CANDIDATES, DURATION):
-                track_name = f"{gen} {metric}"
+                track_name = counter_display_name(gen, metric)
                 assert _counter_track_y_axis_share_key(descriptors, track_name) == metric, (
                     f"{track_name} should share Y-axis under {metric!r}"
                 )
@@ -101,7 +101,7 @@ class TestCounterTrackYAxisShareKey:
         """Two pids each emit a ``G0 collected`` counter. Both must
         carry ``y_axis_share_key = "collected"``; the parent-scoping
         is what the docs require for safe sharing, and is implicit in
-        the existing per-``(pid, tid)`` ``GC Metrics`` group.
+        the existing per-``(pid, iid)`` ``GC Metrics`` group.
         """
         events: list[TraceEvent] = [
             gen_counter(interpreter_track(TARGET_PID, 0), 0, COLLECTED, 1_000, 10),
@@ -176,38 +176,41 @@ class TestRssCounterTrack:
                 return
         pytest.fail("RSS counter track descriptor not found")
 
-    def test_no_thread_descriptor_for_rss_tid(self, state: PerfettoTrackState) -> None:
-        """No ``ThreadDescriptor`` track should be emitted for
-        ``tid=-1``; RSS is process-level."""
+    def test_the_rss_track_gets_no_thread_descriptor(self, state: PerfettoTrackState) -> None:
+        """RSS is process-level, so no ``ThreadDescriptor`` track is emitted
+        for it."""
         events: list[TraceEvent] = [
             _rss_sample(),
         ]
+
         descriptors, _ = convert_trace_events_to_perfetto(events, state, sequence_id=1)
-        for d in descriptors:
-            td = parse_track_descriptor(d)
-            if td is not None and td.HasField("thread"):
-                pytest.fail(f"unexpected thread descriptor for RSS: uuid={td.uuid}")
+
+        parsed = [td for td in map(parse_track_descriptor, descriptors) if td]
+        assert RSS in [td.name for td in parsed]
+        assert [td.name for td in parsed if td.HasField("thread")] == []
 
     def test_multiple_pids_get_separate_rss_tracks(self, state: PerfettoTrackState) -> None:
         events: list[TraceEvent] = [
             _rss_sample(),
             Counter(process_track(200), RSS, RSS, 2_000, 8192),
         ]
-        _, _ = convert_trace_events_to_perfetto(events, state, sequence_id=1)
-        for pid in (100, 200):
-            ctr_key = (process_track(pid), RSS)
-            assert state.has_counter_track(*ctr_key), f"no RSS track for pid {pid}"
-        # Each RSS counter track is parented to the respective process
-        # track, and process tracks have distinct UUIDs.
-        assert state.get_process_track_uuid(proc(TARGET_PID)) != state.get_process_track_uuid(proc(200))
+
+        descriptors, _ = convert_trace_events_to_perfetto(events, state, sequence_id=1)
+
+        rss = [td for td in map(parse_track_descriptor, descriptors) if td and td.name == RSS]
+        assert [td.parent_uuid for td in rss] == [
+            state.get_process_track_uuid(proc(TARGET_PID)),
+            state.get_process_track_uuid(proc(200)),
+        ]
+        assert len({td.uuid for td in rss}) == 2
 
     def test_rss_renders_at_top_level(self, state: PerfettoTrackState) -> None:
         """RSS is a top-level counter metric, parented directly to the
         process track, NOT inside the GC Metrics group."""
         events: list[TraceEvent] = [
-            # RSS sample (tid=-1, process-level)
+            # RSS sample (process-level)
             _rss_sample(),
-            # GC counter (tid=0, thread-level, inside GC Metrics group)
+            # GC counter (per interpreter, inside the GC Metrics group)
             gen_counter(interpreter_track(TARGET_PID, 0), 0, COLLECTED, 1_000, 42),
             gen_counter(interpreter_track(TARGET_PID, 0), 0, CANDIDATES, 1_000, 10),
             gen_counter(interpreter_track(TARGET_PID, 0), 0, DURATION, 1_000, 0.005),

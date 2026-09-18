@@ -3,6 +3,7 @@
 import os
 from collections.abc import Generator
 from itertools import count
+from multiprocessing.connection import Connection
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -133,6 +134,25 @@ class TestSend:
         assert client._conn is None
         mock_conn.close.assert_called_once()
 
+    def test_a_close_between_the_connect_and_the_send_sends_nothing(
+        self, client: ControlClient, mock_conn: MagicMock
+    ) -> None:
+        """The close another thread would make in the gap, made here on the
+        way out of the connect. The connection `_send` was handed is closed by
+        then, and a send on it would be an error to swallow."""
+        connect = client._ensure_connected
+
+        def connect_then_lose_it() -> Connection | None:
+            conn = connect()
+            client.close()
+            return conn
+
+        with patch.object(client, "_ensure_connected", side_effect=connect_then_lose_it):
+            client._send("test")
+
+        mock_conn.close.assert_called_once_with()
+        mock_conn.send.assert_not_called()
+
     def test_reconnects_after_cleared_connection(
         self, mock_connection_factory: MagicMock, mock_conn: MagicMock
     ) -> None:
@@ -153,6 +173,28 @@ class TestConnectionLifecycle:
         assert result1 is mock_conn
         assert result2 is mock_conn
         mock_connection_factory.assert_called_once_with("test-address")
+
+    def test_a_thread_that_lost_the_race_to_connect_takes_the_winner_s_connection(
+        self, mock_connection_factory: MagicMock
+    ) -> None:
+        """It saw no connection, waited on the lock, and got it after the
+        winner had connected. The double is that wait: entering it is when
+        the winner's connection appears."""
+        client = ControlClient("test-address", connection_factory=mock_connection_factory)
+        winner = MagicMock()
+
+        class HeldByTheWinner:
+            def __enter__(self) -> None:
+                client._conn = winner
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+        with patch.object(client, "_lock", HeldByTheWinner()):
+            conn = client._ensure_connected()
+
+        assert conn is winner
+        mock_connection_factory.assert_not_called()
 
     def test_ensure_connected_returns_none_without_address(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(CONTROL_ADDRESS_ENV, raising=False)

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import importlib.util
 import math
+import sys
 from unittest.mock import MagicMock
 
 import pytest
 
 from gcmon.model.data import GCStatsInfo
+from gcmon.stats import stats as stats_module
 from gcmon.stats.metrics import PAUSE_KEY
 from gcmon.stats.stats import HAS_DDSKETCH, Stats
 from gcmon.stats.streaming_stats import StreamingStats
@@ -823,6 +826,19 @@ class TestAFanOutThatDeparts:
 
         assert stats._admitted_rings == 0
 
+    def test_the_bound_is_explained_once(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Four interpreters over the bound, one warning. A fan-out that
+        overshoots by hundreds would otherwise bury the log."""
+        stats = StreamingStats()
+
+        with caplog.at_level("WARNING", logger="gcmon.stats.streaming_stats"):
+            for pid in range(StreamingStats.MAX_ACTIVE_RINGS + 4):
+                stats.update(proc(pid), _pause())
+
+        warnings = [record.getMessage() for record in caplog.records]
+        assert len(warnings) == 1
+        assert f"PID {StreamingStats.MAX_ACTIVE_RINGS} interpreter 0" in warnings[0]
+
     def test_the_slots_a_departed_fan_out_frees_are_whole(self) -> None:
         stats = StreamingStats()
         for pid in range(StreamingStats.MAX_ACTIVE_RINGS + 4):
@@ -1078,3 +1094,46 @@ class TestASettledRingNeverReopens:
         stats.update(proc(TARGET_PID), _pause(9_000))
 
         assert stats.pause_totals(proc(TARGET_PID), 0, 0).sampled_count == 2
+
+
+class TestTheHeapSizePercentile:
+    """`heap_size_p99` ranks one high-water mark per process."""
+
+    def test_a_run_with_no_record_has_none(self) -> None:
+        """`None` and not zero, so a caller leaves the metric out."""
+        assert StreamingStats().heap_size_p99() is None
+
+    def test_one_process_gives_its_high_water_mark(self) -> None:
+        stats = StreamingStats()
+        stats.update(proc(TARGET_PID), _pause(heap_size=3_000))
+        stats.update(proc(TARGET_PID), _pause(heap_size=9_000))
+        stats.update(proc(TARGET_PID), _pause(heap_size=5_000))
+
+        assert stats.heap_size_p99() == 9_000
+
+    def test_two_processes_are_ranked_whatever_order_they_came_in(self) -> None:
+        """The larger mark arrives first. The 99th percentile of two values
+        sits 99% of the way from the smaller to the larger."""
+        stats = StreamingStats()
+        stats.update(proc(TARGET_PID), _pause(heap_size=2_000))
+        stats.update(proc(OTHER_PID), _pause(heap_size=1_000))
+
+        assert stats.heap_size_p99() == pytest.approx(1_990)
+
+
+class TestAnInstallWithoutTheSketch:
+    """`ddsketch` comes with the `stats` extra, and gcmon runs without it."""
+
+    def test_the_module_imports_and_says_so(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A second copy under its own name, so the module every other test
+        holds keeps its classes. `None` in `sys.modules` is how Python spells
+        a module that cannot be imported."""
+        monkeypatch.setitem(sys.modules, "ddsketch", None)
+        spec = importlib.util.spec_from_file_location("stats_without_the_sketch", stats_module.__file__)
+        assert spec is not None and spec.loader is not None
+        copy = importlib.util.module_from_spec(spec)
+
+        spec.loader.exec_module(copy)
+
+        assert copy.HAS_DDSKETCH is False
+        assert not copy.Stats().has_sketch

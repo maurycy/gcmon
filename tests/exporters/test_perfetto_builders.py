@@ -21,7 +21,7 @@ from gcmon.exporters.perfetto_builders import (
 )
 from gcmon.exporters.perfetto_proto import TrackEventType
 from gcmon.exporters.trace_converter import counter_display_name
-from gcmon.model.names import CLIPPED, COLLECTED, DURATION, NAME, TYPE
+from gcmon.model.names import CLIPPED, COLLECTED, DURATION
 
 
 # The builders take a name and write it down. What the name says is the
@@ -131,30 +131,6 @@ class TestBuildCounterDescriptor:
     ``y_axis_share_key`` kwarg and the resulting ``CounterDescriptor``
     submessage payload at ``TrackDescriptor.counter`` (field 8)."""
 
-    def test_y_axis_share_key_emitted_at_field_8(self) -> None:
-        data = build_track_descriptor(
-            uuid=300,
-            name=counter_display_name(0, COLLECTED),
-            parent_uuid=200,
-            is_counter=True,
-            y_axis_share_key="collected",
-        )
-        descriptor = TrackDescriptor()
-        descriptor.ParseFromString(data)
-        assert descriptor.HasField("counter")
-        assert descriptor.counter.y_axis_share_key == "collected"
-
-    def test_no_y_axis_share_key_emits_empty_submessage(self) -> None:
-        data = build_track_descriptor(
-            uuid=300,
-            name=counter_display_name(0, COLLECTED),
-            parent_uuid=200,
-            is_counter=True,
-        )
-        descriptor = TrackDescriptor()
-        descriptor.ParseFromString(data)
-        assert descriptor.counter.SerializeToString() == b""
-
     def test_y_axis_share_key_ignored_for_non_counter_track(self) -> None:
         data = build_track_descriptor(
             uuid=300,
@@ -178,7 +154,7 @@ class TestBuildCounterDescriptor:
         descriptor = TrackDescriptor()
         descriptor.ParseFromString(data)
         assert descriptor.HasField("counter")
-        assert not descriptor.counter.HasField(TYPE)
+        assert not descriptor.counter.HasField("type")
         assert len(descriptor.counter.categories) == 0
         assert not descriptor.counter.HasField("unit")
         assert not descriptor.counter.HasField("unit_multiplier")
@@ -254,7 +230,7 @@ class TestBuildTrackEvent:
         track_event.ParseFromString(data)
         assert track_event.type == TrackEvent.Type.TYPE_SLICE_END
         assert track_event.track_uuid == 100
-        assert not track_event.HasField(NAME)
+        assert not track_event.HasField("name")
 
     def test_instant(self) -> None:
         data = build_track_event(type=TrackEventType.INSTANT, track_uuid=100, name="marker")

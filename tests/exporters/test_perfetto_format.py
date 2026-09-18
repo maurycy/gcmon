@@ -56,7 +56,6 @@ from gcmon.model.names import (
     LOST_PAUSE,
     LOST_PAUSE_NS,
     MARK_ALIVE,
-    NAME,
     OBSERVED_COUNT,
     PID,
     PID_EPOCH,
@@ -73,7 +72,6 @@ from gcmon.model.trace_event import (
     TraceEvent,
     Track,
 )
-from gcmon.support.vocabulary import CMD_RUN
 from tests.exporters.perfetto_helpers import (
     convert_item,
     convert_items,
@@ -284,14 +282,6 @@ class TestConvertItemToPerfettoPackets:
         # Find the GC pause slice by name to disambiguate.
         assert len(packets) >= 2
         lifetime_uuid = state.get_or_create_process_lifetime_track_uuid()
-
-        def _packet_name(p: bytes) -> str | None:
-            packet = TracePacket()
-            packet.ParseFromString(p)
-            if not packet.HasField("track_event"):
-                return None
-            name = packet.track_event.name
-            return name or None
 
         begin_packet = None
         for p in packets:
@@ -540,7 +530,7 @@ class TestConvertItemToPerfettoPackets:
             assert not ann.HasField("name_iid"), (
                 "field 1 of DebugAnnotation is `name_iid` (uint64); the annotation name must not be written there"
             )
-            assert ann.HasField(NAME)
+            assert ann.HasField("name")
 
     def test_debug_annotations_on_pause(self, state: PerfettoTrackState) -> None:
         item = pause_item(collections=5, uncollectable=2, candidates=3)
@@ -734,13 +724,13 @@ class TestAnInstantCanCarryArgs:
 
     def test_the_args_reach_the_packet_as_debug_annotations(self) -> None:
         track_event = self._instant_packet(
-            Instant(process_track(TARGET_PID), "benchmark", 1_000, {"benchmark": "json_loads", CMD_RUN: 3})
+            Instant(process_track(TARGET_PID), "benchmark", 1_000, {"benchmark": "json_loads", "loops": 3})
         )
         annotations = {
             a.name: (a.string_value or None, a.int_value if a.HasField("int_value") else None)
             for a in track_event.debug_annotations
         }
-        assert annotations == {"benchmark": ("json_loads", None), CMD_RUN: (None, 3)}
+        assert annotations == {"benchmark": ("json_loads", None), "loops": (None, 3)}
 
     def test_an_instant_with_no_args_writes_no_annotations_field(self) -> None:
         """The bytes an instant produces today, so the field costs a trace
@@ -1018,7 +1008,7 @@ class TestLossTrackDescriptor:
             state.get_or_create_interpreter_group_track_uuid(proc(TARGET_PID), 1),
         ]
 
-    def test_it_hangs_off_the_interpreter_group(self, state: PerfettoTrackState) -> None:
+    def test_it_parents_to_the_interpreter_group(self, state: PerfettoTrackState) -> None:
 
         found = self._loss_descriptors(self._convert([self._msg()], state))
 

@@ -104,8 +104,10 @@ class TestASliceExpandsIntoAPair:
         assert not end.track_event.debug_annotations
 
     def test_both_packets_name_the_track_the_slice_names(self, expansion: Converted) -> None:
-        _, packets = expansion
-        assert len({p.track_event.track_uuid for p in _slice_packets(packets)}) == 1
+        descriptors, packets = expansion
+
+        row = [td.uuid for td in map(parse_track_descriptor, descriptors) if td and td.name == _PAUSE_TRACK_NAME]
+        assert [p.track_event.track_uuid for p in _slice_packets(packets)] == row * 2
 
     def test_a_zero_length_slice_still_produces_both_packets(self) -> None:
         """A span whose ends are equal. BEGIN first, so it reads as
@@ -115,7 +117,7 @@ class TestASliceExpandsIntoAPair:
         assert [e.track_event.type for e in events] == [TrackEventType.SLICE_BEGIN, TrackEventType.SLICE_END]
         assert [e.timestamp for e in events] == [1_000, 1_000]
 
-    def test_a_slice_describes_its_track_before_naming_it(self, expansion: Converted) -> None:
+    def test_a_slice_describes_its_process_and_its_row(self, expansion: Converted) -> None:
         descriptors, _ = expansion
         named = [td.name for td in (parse_track_descriptor(d) for d in descriptors) if td is not None and td.name]
         assert ROW_PROCESS_NAME in named

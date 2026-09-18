@@ -63,8 +63,6 @@ _UNCOLLECTABLE: int = 2
 
 _CANDIDATES: int = 3
 
-_DURATION: float = 0.005
-
 _TS_START: int = 1_500_000_000
 
 _TS_STOP: int = 1_500_005_000
@@ -97,6 +95,12 @@ _EXPECTED_COUNTER_NAMES: frozenset[str] = frozenset(
 )
 
 _ARG_PREFIX: str = "debug"
+
+
+def flat_key(arg: str) -> str:
+    """The key the `args` table files a debug annotation under."""
+    return f"{_ARG_PREFIX}.{arg}"
+
 
 _FAKE_CMDLINE: tuple[str, ...] = ("python3", "-m", "fake_target")
 

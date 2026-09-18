@@ -6,11 +6,11 @@ from gcmon.exporters.trace_converter import (
     duration_text,
     seen_text,
 )
-from gcmon.model.names import GENERATIONS, HEAP_SIZE
+from gcmon.model.names import ALIVE_SIZE, GENERATIONS, HEAP_SIZE, INCREMENT_SIZE, gc_pause_slice_name
 from gcmon.model.protocol import TItem
 from gcmon.model.trace_event import Counter, Instant, Slice
 from tests.data_helpers import create_instant_msg
-from tests.helpers import create_mock_loss_item, create_mock_stats_item, proc
+from tests.helpers import create_mock_incremental_item, create_mock_loss_item, create_mock_stats_item, proc
 
 
 class TestDurationText:
@@ -30,6 +30,7 @@ class TestDurationText:
             (90_000_000_000, "1m 30s"),
             (3_600_000_000_000, "1h"),
             (0, "0ns"),
+            (-5_000_100, "-5ms 100ns"),
         ],
     )
     def test_it_reads_as_a_duration(self, ns: int, text: str) -> None:
@@ -98,6 +99,27 @@ class TestAGenerationTheCounterTableNeverHeld:
         """
         beyond = set(self._counters(max(GENERATIONS) + 1).values())
         assert beyond & set(self._counters(max(GENERATIONS)).values()) == {HEAP_SIZE}
+
+
+class TestTheSizesAPauseCarries:
+    """`increment_size` stops below the oldest generation and `alive_size`
+    starts above the youngest, whatever the record itself holds."""
+
+    @pytest.mark.parametrize(
+        ("gen_number", "sizes"),
+        [
+            (0, {INCREMENT_SIZE}),
+            (1, {INCREMENT_SIZE, ALIVE_SIZE}),
+            (2, {ALIVE_SIZE}),
+        ],
+    )
+    def test_a_generation_gets_only_the_sizes_it_has(self, gen_number: int, sizes: set[str]) -> None:
+        record = create_mock_incremental_item(gen=gen_number)
+
+        events = convert_item_to_trace_format(proc(1), record)
+
+        pause = next(e for e in events if isinstance(e, Slice) and e.name == gc_pause_slice_name(gen_number))
+        assert pause.args.keys() & {INCREMENT_SIZE, ALIVE_SIZE} == sizes
 
 
 class TestAnItemOfNoKnownKind:

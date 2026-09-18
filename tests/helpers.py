@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import threading
 import zlib
 from collections.abc import Callable, Iterator, Sequence, Set
 from contextlib import contextmanager
@@ -205,7 +204,6 @@ class MockExporter(EventsExporter):
     """Mock GCMonitorExporter for testing.
 
     This class simulates an exporter that collects events in memory.
-    It supports event-based synchronization for tests.
     """
 
     def __init__(self) -> None:
@@ -223,8 +221,9 @@ class MockExporter(EventsExporter):
         self.liveness: list[tuple[Set[int], int]] = []
         # One entry per process gcmon let go of, in the order it did.
         self.retired: list[Process] = []
+        # One entry per process gcmon created, with what it was running.
+        self.launched: list[tuple[Process, tuple[str, ...] | None]] = []
         self._close_called = False
-        self._event_added = threading.Event()
 
     @override
     def add_event(self, process: Process, item: TGCStatsInfo) -> None:
@@ -236,22 +235,21 @@ class MockExporter(EventsExporter):
         """
         self.events.append(item)
         self.events_by_pid.setdefault(process.pid, []).append(item)
-        self._event_added.set()  # Signal that event was added
 
     @override
     def add_loss_event(self, process: Process, item: TLossMsg) -> None:
-        """Record a loss window the monitor's arithmetic produced.
-
-        Does not set ``_event_added``: a caller blocking on
-        ``wait_for_event`` is waiting for a GC record, and releasing it on a
-        loss record would let it wake and assert against an empty ``events``.
-        """
+        """Record a loss window the monitor's arithmetic produced."""
         self.loss_events.append((process.pid, item))
 
     @override
     def add_process_liveness(self, processes: Set[Process], ts_ns: int) -> None:
         """Record one tick's liveness observation, as the pids it named."""
         self.liveness.append(({process.pid for process in processes}, ts_ns))
+
+    @override
+    def add_process_cmdline(self, process: Process, cmdline: tuple[str, ...] | None) -> None:
+        """Record the command line the monitor read as it created *process*."""
+        self.launched.append((process, cmdline))
 
     @override
     def add_process_retired(self, process: Process) -> None:
@@ -267,25 +265,11 @@ class MockExporter(EventsExporter):
             item: The instant message to add.
         """
         self.instant_events.append((process.pid, item))
-        self._event_added.set()
 
     @override
     def close(self) -> None:
         """Close the exporter."""
         self._close_called = True
-
-    def wait_for_event(self, timeout: float = 1.0) -> bool:
-        """Wait for an event to be added.
-
-        Args:
-            timeout: Maximum time to wait in seconds.
-
-        Returns:
-            True if an event was added within timeout, False otherwise.
-        """
-        result = self._event_added.wait(timeout=timeout)
-        self._event_added.clear()
-        return result
 
 
 def create_mock_stats_item(
@@ -465,9 +449,8 @@ def create_jsonl_record(
 def read_jsonl_file(path: Path) -> list[JsonlRecord]:
     """Every record in a JSONL file, blank lines skipped.
 
-    A test that expects the file to hold something wants
-    :func:`assert_valid_jsonl_format` instead; this one returns an empty list
-    for an empty file, which is what a flush-threshold test asserts on.
+    An empty file gives an empty list, which is what a flush-threshold test
+    asserts on.
     """
     assert path.exists(), f"File {path} does not exist"
 
@@ -480,13 +463,6 @@ def read_jsonl_file(path: Path) -> list[JsonlRecord]:
             obj = json.loads(line)
             assert isinstance(obj, dict), f"Line {line_no} in JSONL file should be a JSON object, got {type(obj)}"
             data.append(obj)
-    return data
-
-
-def assert_valid_jsonl_format(file_path: Path) -> list[JsonlRecord]:
-    """The records in a JSONL file, which a caller here expects to hold some."""
-    data = read_jsonl_file(file_path)
-    assert len(data) > 0, f"JSONL file {file_path} is empty"
     return data
 
 
