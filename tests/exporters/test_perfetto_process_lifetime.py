@@ -417,7 +417,7 @@ class TestProcessLifetimeLaminarClipping:
         _assert_laminar(intervals)
 
     def test_no_spans_emits_nothing(self) -> None:
-        assert _finalize_spans([]) == ({}, {})
+        assert finalize_perfetto_packets(PerfettoTrackState(), sequence_id=1) == []
 
     def test_undescribed_pid_without_a_cmdline_still_gets_a_slice(self, state: PerfettoTrackState) -> None:
         """A span is drawn for a pid that never reached ``mark_process_descriptor``
@@ -928,16 +928,16 @@ class TestARetiredProcessRowGoesOutEarly:
         closeout = finalize_perfetto_packets(state, sequence_id=1)
 
         lifetime_uuid = state.get_or_create_process_lifetime_track_uuid()
-        begins = [
-            (ts, name, annotations)
-            for ts, event_type, name, annotations in lifetime_slices(closeout, lifetime_uuid)
-            if event_type == TrackEventType.SLICE_BEGIN
+        drawn = lifetime_slices(closeout, lifetime_uuid)
+        assert [(ts, event_type, name) for ts, event_type, name, _ in drawn] == [
+            (500, TrackEventType.SLICE_BEGIN, TARGET_ROW_NAME),
+            (1_999, TrackEventType.SLICE_END, TARGET_ROW_NAME),
+            (2_000, TrackEventType.SLICE_BEGIN, OTHER_ROW_NAME),
+            (9_000, TrackEventType.SLICE_END, OTHER_ROW_NAME),
         ]
-        assert [(ts, name) for ts, name, _ in begins] == [
-            (500, TARGET_ROW_NAME),
-            (2_000, OTHER_ROW_NAME),
-        ]
-        assert begins[0][2][REAL_END_TS] == 5_000, "the observed pair is untouched by clipping"
+        retired = drawn[0][3]
+        assert retired[CLIPPED] is True
+        assert retired[REAL_END_TS] == 5_000, "the observed pair is untouched by clipping"
 
     def test_a_process_with_no_span_writes_nothing(self, state: PerfettoTrackState) -> None:
         """gcmon never observed it, so there is nothing to draw."""
@@ -1276,7 +1276,7 @@ class TestCloseoutAtFinalize:
         assert len(end_packets) == 1
         assert end_packets[0].timestamp == 2_000
 
-    def test_closeout_emitted_only_at_finalize(self, state: PerfettoTrackState) -> None:
+    def test_two_batches_still_leave_the_closeout_to_finalize(self, state: PerfettoTrackState) -> None:
         """Across two ``convert_trace_events_to_perfetto`` calls for the
         same pid, the convert call never emits a slice END on the
         ``Processes`` track (the END is the caller's job, and

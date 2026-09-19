@@ -118,7 +118,7 @@ class TestEventsMonitorExtra:
 
         assert exporter.events == []
 
-    def test_poll_tracks_last_timestamp_per_pid(
+    def test_each_pid_keeps_its_own_cursor(
         self, monitor: EventsMonitor, exporter: MockExporter, reader: FakeEventsReader
     ) -> None:
         """A child PID's events are not suppressed by a later timestamp seen on
@@ -138,7 +138,7 @@ class TestEventsMonitorExtra:
 
         assert [e.ts_start for e in exporter.events] == [5_000, 4_000, 6_000]
 
-    def test_poll_still_skips_already_seen_timestamps_for_same_pid(
+    def test_a_record_already_read_is_not_written_twice(
         self, monitor: EventsMonitor, exporter: MockExporter, reader: FakeEventsReader
     ) -> None:
         reader.reads = _reads([create_mock_stats_item(ts_start=5_000, ts_stop=5_100)])
@@ -834,6 +834,7 @@ class TestOnePruneOverOneSet:
         reader = _reader_of(monitor)
         assert reader.retained == [frozenset({12345, 999, 888}), frozenset({12345, 999})]
         assert reader.attached == {12345, 999}
+        assert monitor._pids.keys() == {12345, 999}
 
     def test_a_failed_listing_prunes_no_attachment_either(self, exporter: MockExporter) -> None:
         """``None`` from the listing means "no answer". Dropping attachments on

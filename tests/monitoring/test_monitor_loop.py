@@ -55,7 +55,7 @@ def loop(mock_monitor: MagicMock, mock_runner: Mock) -> MonitorLoop:
     return MonitorLoop(mock_monitor, mock_runner, rate=0.01)
 
 
-class TestMonitorLoopInit:
+class TestMonitorLoopInitAndClose:
     @pytest.mark.parametrize("rate", [0.0, -0.1, 1e-12])
     def test_a_rate_it_cannot_hold_is_refused(self, mock_monitor: MagicMock, mock_runner: Mock, rate: float) -> None:
         """Zero, negative, and small enough to round to no nanoseconds at all.
@@ -93,9 +93,11 @@ class TestMonitorLoopRun:
         assert mock_monitor.tick.call_count == 3
 
     def test_stop_before_run_skips_the_loop(self, mock_monitor: MagicMock) -> None:
-        runner = Mock(spec=Runner)
-        runner.run.return_value = iter([])
-        loop = MonitorLoop(mock_monitor, runner, rate=0.01)
+        """A real runner, since the loop has no stop check of its own: the
+        runner is what reads the stop. The report ends a run that ticks
+        anyway, so losing the stop fails here instead of hanging."""
+        mock_monitor.tick.return_value = _report(12345, keep_running=False)
+        loop = MonitorLoop(mock_monitor, InfinityRunner(), rate=0.01)
         loop._stop_event.set()
 
         report = loop.run()
@@ -242,7 +244,7 @@ class TestTheTickInstant:
         assert sampler_ns == tick_ns, "no conversion between the two"
         assert tick_ns[0] < tick_ns[1], "a tick is stamped with its own instant, not the run's"
 
-    def test_nothing_downstream_converts_the_instant(self, mock_monitor: MagicMock) -> None:
+    def test_the_sampler_and_the_monitor_get_the_same_integer_instant(self, mock_monitor: MagicMock) -> None:
         """The loop used to hand the sampler `now_ns / 1e9`, which was the only
         place gcmon converted out of nanoseconds before the encoder."""
         rss_sampler = Mock(spec=RssSampler)
@@ -452,7 +454,7 @@ class TestTheLoopHoldsNoPerPidState:
 
 
 class TestADeadTargetDoesNotExtendTheRun:
-    def test_the_loop_stops_when_every_policy_gives_up(self) -> None:
+    def test_a_stop_on_a_later_tick_ends_the_run_there(self) -> None:
         """The regression a policy deletion once caused, now expressed against
         the report: a target that dies while a child is still alive must not
         keep the loop polling until a fresh startup timeout expires."""

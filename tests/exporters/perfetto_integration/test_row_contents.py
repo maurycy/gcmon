@@ -130,7 +130,7 @@ class TestSliceArgs:
 
         assert len(rows) == 1, f"expected exactly one '{gc_pause_slice_name(1)}' slice, got {rows}"
 
-    def test_full_fields_pause_encodes_all_optional_fields(
+    def test_a_full_record_draws_every_sub_step_slice(
         self,
         trace_processor: TraceProcessor,
     ) -> None:
@@ -152,7 +152,7 @@ class TestSliceArgs:
         missing = set(expected_sub_slices) - slice_names
         assert not missing, f"missing sub-slices: {missing}"
 
-    def test_deduce_unreachable_slice_args_has_candidates(
+    def test_deduce_unreachable_carries_candidates_and_the_pause_the_sizes(
         self,
         trace_processor: TraceProcessor,
     ) -> None:
@@ -502,7 +502,7 @@ class TestCmdlineEncoding:
         assert self._description(trace_processor_with_cmdline, _DEFAULT_ROW_NAME) == _FAKE_CMDLINE_JOINED
         assert self._description(trace_processor_with_cmdline, _SECOND_ROW_NAME) == _FAKE_CMDLINE_JOINED
 
-    def test_cmdline_none_for_unknown_pid(
+    def test_a_process_with_no_cmdline_gets_no_description(
         self,
         trace_processor: TraceProcessor,
     ) -> None:
@@ -707,8 +707,11 @@ class TestTwoInterpretersHeapSizes:
     def test_every_other_counter_name_is_what_it_was(self, two_interpreters: TraceProcessor) -> None:
         names = {r.name.strip() for r in two_interpreters.query("SELECT name FROM counter_track")}
 
-        assert {
+        assert names == {
             counter_display_name(0, COLLECTED),
+            counter_display_name(0, UNCOLLECTABLE),
             counter_display_name(0, CANDIDATES),
             counter_display_name(0, DURATION),
-        } <= names
+            HEAP_SIZE,
+            RSS,
+        }

@@ -176,7 +176,7 @@ class TestGapDetection:
         assert entry.lost_count == 0
 
 
-class TestObserveBatch:
+class TestIngestingARunAtOnce:
     """A poll hands over one ring's run at once. Whatever that saves, it has
     to leave the accumulator where folding the same records one at a time
     would have left it."""
@@ -190,7 +190,7 @@ class TestObserveBatch:
 
         assert batched == fold_singly(events)
 
-    def test_a_poll_returning_nothing_new_folds_nothing(self, accumulator: RingAccumulator) -> None:
+    def test_a_poll_returning_nothing_new_leaves_nothing_to_fold(self, accumulator: RingAccumulator) -> None:
         """`ingest` takes a non-empty run, and `unseen` is what keeps
         that true. A generation whose ring returned only records gcmon already
         has contributed neither loss nor coverage."""
