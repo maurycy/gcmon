@@ -1,4 +1,7 @@
-"""Minimal write-only protobuf wire-format encoder."""
+"""Minimal write-only protobuf wire-format encoder.
+
+Hand-rolled so that ``perfetto`` stays out of the runtime tree (ADR-0001).
+"""
 
 import struct
 
