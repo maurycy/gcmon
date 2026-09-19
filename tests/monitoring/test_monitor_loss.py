@@ -208,6 +208,18 @@ def observe_all(batches: Iterable[Sequence[GCStatsInfo]]) -> Ingested:
     return ingested
 
 
+def polls_losing_three(polls: int = 2, ts0: int = TS0) -> list[list[GCStatsInfo]]:
+    """One batch per poll. Each batch holds one record, and each poll after
+    the first misses three collections.
+
+    `build_run` counts from one and every fourth record is polled, so two
+    polls read collections 1 and 5. A monitor that kept the first poll
+    reports 2, 3 and 4 lost on the second: three lost, two observed, five in
+    all.
+    """
+    return [[event] for event in build_run(4 * (polls - 1) + 1, ts0=ts0)[::4]]
+
+
 @pytest.fixture
 def captured() -> Ingested:
     """The verbatim two-poll capture, ingested the way the monitor would."""
@@ -361,24 +373,23 @@ class TestTheIntervalIsTheOneBetweenTwoPolls:
     """
 
     def test_the_span_runs_from_the_previous_poll_to_this_one(self) -> None:
-        events = build_run(6)
-
+        before, after = polls_losing_three()
         ingested = Ingested()
-        ingested.poll([events[0]], ts=5_000_000_000)
+        ingested.poll(before, ts=5_000_000_000)
 
-        emitted = ingested.poll([events[4]], ts=6_000_000_000)
+        emitted = ingested.poll(after, ts=6_000_000_000)
 
         assert [(loss.ts_start, loss.ts_stop) for loss in emitted] == [(5_000_000_000, 6_000_000_000)]
 
     def test_consecutive_intervals_tile(self) -> None:
         """Each poll is one span's right edge and the next span's left edge, so
         the intervals abut exactly rather than overlapping by a read."""
-        events = build_run(12)
+        first, second, third = polls_losing_three(polls=3)
 
         ingested = Ingested()
-        ingested.poll([events[0]], ts=1_000)
-        ingested.poll([events[4]], ts=2_000)
-        ingested.poll([events[8]], ts=3_000)
+        ingested.poll(first, ts=1_000)
+        ingested.poll(second, ts=2_000)
+        ingested.poll(third, ts=3_000)
 
         assert [(loss.ts_start, loss.ts_stop) for loss in ingested.spans()] == [(1_000, 2_000), (2_000, 3_000)]
 
@@ -392,13 +403,15 @@ class TestTheIntervalIsTheOneBetweenTwoPolls:
     def test_the_edges_do_not_move_with_the_records(self) -> None:
         """The same loss, with the bounding records shifted in time. The span
         is where the reads were, so it does not follow them."""
+        before, after = polls_losing_three()
         near = Ingested()
-        near.poll([build_run(6)[0]], ts=1_000)
-        near.poll([build_run(6)[4]], ts=2_000)
+        near.poll(before, ts=1_000)
+        near.poll(after, ts=2_000)
 
+        shifted_before, shifted_after = polls_losing_three(ts0=TS0 + 50_000_000)
         far = Ingested()
-        far.poll([build_run(6, ts0=TS0 + 50_000_000)[0]], ts=1_000)
-        far.poll([build_run(6, ts0=TS0 + 50_000_000)[4]], ts=2_000)
+        far.poll(shifted_before, ts=1_000)
+        far.poll(shifted_after, ts=2_000)
 
         assert [(m.ts_start, m.ts_stop) for m in near.spans()] == [(m.ts_start, m.ts_stop) for m in far.spans()]
 
@@ -779,11 +792,10 @@ class TestTheStatsAreRecordedWhateverIsDrawn:
     the same arithmetic whatever the trace ends up showing."""
 
     def ingested(self) -> Ingested:
-        events = build_run(6)
-
+        before, after = polls_losing_three()
         ingested = Ingested()
-        ingested.poll([events[0]], ts=1_000)
-        ingested.poll([events[4]], ts=2_000)
+        ingested.poll(before, ts=1_000)
+        ingested.poll(after, ts=2_000)
         return ingested
 
     def test_the_collections_reach_the_table(self) -> None:
@@ -802,25 +814,25 @@ class TestTheStatsAreRecordedWhateverIsDrawn:
 class TestForgettingAPid:
     """A reused pid must inherit neither a counter nor an interval."""
 
-    def test_forget_drops_the_poll_instant(self) -> None:
-        events = build_run(6)
-
+    def test_the_poll_after_a_forget_reports_no_loss(self) -> None:
+        before, after = polls_losing_three()
         ingested = Ingested()
-        ingested.poll([events[0]], ts=1_000)
+        ingested.poll(before, ts=1_000)
         ingested.monitor._forget(PID, 0)
-        ingested.poll([events[4]], ts=2_000)
 
-        assert ingested.recorder.losses == []
+        emitted = ingested.poll(after, ts=2_000)
 
-    def test_retain_drops_it_too(self) -> None:
-        events = build_run(6)
+        assert emitted == []
 
+    def test_the_poll_after_a_retain_without_it_reports_none_either(self) -> None:
+        before, after = polls_losing_three()
         ingested = Ingested()
-        ingested.poll([events[0]], ts=1_000)
+        ingested.poll(before, ts=1_000)
         ingested.monitor._retain(set(), 0)
-        ingested.poll([events[4]], ts=2_000)
 
-        assert ingested.recorder.losses == []
+        emitted = ingested.poll(after, ts=2_000)
+
+        assert emitted == []
 
 
 class TestADuplicateCounterInOnePoll:
