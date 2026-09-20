@@ -40,6 +40,7 @@ This file holds the open set and the order to take it in. The other two:
 | [0062](0062-name-a-workload-from-a-sanitized-command-line.md) | Feature (enhancement) | M | A pyperformance run prints one `Total` folding sixty benchmarks and hundreds of blocks keyed by a pid that means nothing afterwards; the level anyone asks about is missing |
 | [0063](0063-compare-two-tracefiles.md) | Feature (enhancement) | L | Nothing answers "did GC get worse between these two runs"; two tables side by side works for one row and fails for sixty |
 | [0070](0070-keep-a-fanned-out-process-width-on-the-processes-track.md) | Feature (enhancement) | S | Workers forked in one loop each ran for seconds and are drawn microseconds wide on the `Processes` track, because the clip cuts a span at its next sibling's start |
+| [0071](0071-draw-every-process-span-at-its-observed-width.md) | Feature (enhancement) | M | Two processes whose lifetimes cross cannot both keep their width on the `Processes` row, and `dur` there is not a duration gcmon observed; a track per process, merged by name, draws each span as observed |
 
 Every row here has a file. A missing number either retired or never became
 one; [RETIRED.md](RETIRED.md) says which.
@@ -76,6 +77,8 @@ the position. A blank cell means no recorded reason, so that row can move.
   one measurement that would put it back in play sooner.
 - **0070** needs one number before anyone can build it: the gap between
   sibling starts in a real fan-out capture, which is what its ε has to exceed.
+  0071 removes the clip it works around, and retires it when it lands.
+- **0071** waits on the ADR-0011 rewrite its section 7 asks for first.
 - **0054** was found in CPython's source and not in a run. Nobody should size
   it until the ports have been counted on a Mac.
 
