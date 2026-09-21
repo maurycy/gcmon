@@ -15349,6 +15349,35 @@ track_event {
   counter_value: 0
 }
 --- packet ---
+trusted_packet_sequence_id: 1
+track_descriptor {
+  uuid: 46
+  name: "Processes"
+}
+--- packet ---
+timestamp: 1002600000
+trusted_packet_sequence_id: 1
+track_event {
+  debug_annotations {
+    int_value: 33512
+    name: "pid"
+  }
+  debug_annotations {
+    int_value: 1
+    name: "pid_epoch"
+  }
+  type: TYPE_SLICE_BEGIN
+  track_uuid: 46
+  name: "Process 33512"
+}
+--- packet ---
+timestamp: 2802600000
+trusted_packet_sequence_id: 1
+track_event {
+  type: TYPE_SLICE_END
+  track_uuid: 46
+}
+--- packet ---
 timestamp: 1002600000
 trusted_packet_sequence_id: 1
 track_event {
@@ -15394,7 +15423,13 @@ track_event {
 --- packet ---
 trusted_packet_sequence_id: 1
 track_descriptor {
-  uuid: 46
+  uuid: 47
+  name: "Processes"
+}
+--- packet ---
+trusted_packet_sequence_id: 1
+track_descriptor {
+  uuid: 48
   name: "Processes"
 }
 --- packet ---
@@ -15409,20 +15444,8 @@ track_event {
     int_value: 1
     name: "pid_epoch"
   }
-  debug_annotations {
-    int_value: 1000000000
-    name: "real_start_ts"
-  }
-  debug_annotations {
-    int_value: 5802600000
-    name: "real_end_ts"
-  }
-  debug_annotations {
-    bool_value: false
-    name: "clipped"
-  }
   type: TYPE_SLICE_BEGIN
-  track_uuid: 46
+  track_uuid: 47
   name: "Process 33328"
 }
 --- packet ---
@@ -15430,8 +15453,7 @@ timestamp: 5802600000
 trusted_packet_sequence_id: 1
 track_event {
   type: TYPE_SLICE_END
-  track_uuid: 46
-  name: "Process 33328"
+  track_uuid: 47
 }
 --- packet ---
 timestamp: 1000000000
@@ -15477,42 +15499,6 @@ track_event {
   track_uuid: 1
 }
 --- packet ---
-timestamp: 1002600000
-trusted_packet_sequence_id: 1
-track_event {
-  debug_annotations {
-    int_value: 33512
-    name: "pid"
-  }
-  debug_annotations {
-    int_value: 1
-    name: "pid_epoch"
-  }
-  debug_annotations {
-    int_value: 1002600000
-    name: "real_start_ts"
-  }
-  debug_annotations {
-    int_value: 2802600000
-    name: "real_end_ts"
-  }
-  debug_annotations {
-    bool_value: false
-    name: "clipped"
-  }
-  type: TYPE_SLICE_BEGIN
-  track_uuid: 46
-  name: "Process 33512"
-}
---- packet ---
-timestamp: 2802600000
-trusted_packet_sequence_id: 1
-track_event {
-  type: TYPE_SLICE_END
-  track_uuid: 46
-  name: "Process 33512"
-}
---- packet ---
 timestamp: 3497509800
 trusted_packet_sequence_id: 1
 track_event {
@@ -15524,20 +15510,8 @@ track_event {
     int_value: 2
     name: "pid_epoch"
   }
-  debug_annotations {
-    int_value: 3497509800
-    name: "real_start_ts"
-  }
-  debug_annotations {
-    int_value: 5802600000
-    name: "real_end_ts"
-  }
-  debug_annotations {
-    bool_value: false
-    name: "clipped"
-  }
   type: TYPE_SLICE_BEGIN
-  track_uuid: 46
+  track_uuid: 48
   name: "Process 33512#2"
 }
 --- packet ---
@@ -15545,8 +15519,7 @@ timestamp: 5802600000
 trusted_packet_sequence_id: 1
 track_event {
   type: TYPE_SLICE_END
-  track_uuid: 46
-  name: "Process 33512#2"
+  track_uuid: 48
 }
 --- packet ---
 timestamp: 3497509800

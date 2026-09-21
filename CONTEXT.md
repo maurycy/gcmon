@@ -86,8 +86,17 @@ _Avoid_: timeline, profile, output file
 One row in a trace. An **event** names the track it is drawn on: a
 **process**'s row for its marks and its RSS, an **interpreter**'s **pause
 row** for that interpreter's collections, or its **loss** row.
-_Avoid_: lane, thread (none of the three is one), tid, row (in output; fine in
-prose)
+_Avoid_: thread (a track is not one), tid, row (in output; fine in prose). A
+**lane** is not a track either; it is the entry below.
+
+**Lane**:
+One of the sub-rows a **track** stacks overlapping slices into. Every process
+draws its **span** on a track of its own and the `Processes` row is those
+tracks merged, so the row is as many lanes tall as the largest number of
+processes alive at once, and which lane a span lands in follows from the spans
+before it and means nothing else.
+_Avoid_: track and sub-track (the merge leaves a lane no track of its own to
+name), slot, depth, level
 
 **Interpreter group**:
 The `Interpreter {iid}` row every track one **interpreter** owns hangs under:

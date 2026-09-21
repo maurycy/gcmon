@@ -13,7 +13,7 @@ a `Process` names which holder of it a record came from
 [ADR-0010](0010-process-identity-cmdline-and-start-marker.md) gives a process
 a track and a `Lifetime` slice that keeps it visible, and
 [ADR-0011](0011-process-lifetime-and-ordering.md) draws one span per process
-on the shared `Processes` track. Two processes that held one pid still have to
+on the shared `Processes` row. Two processes that held one pid still have to
 come out as two rows, each with its own start stamp, command line and
 counters.
 
@@ -22,9 +22,9 @@ the track uuid, so descriptors sharing a pid do not reliably draw a row each:
 two descriptors on one pid split, and a third does not. Measured against the
 trace processor the suite pins.
 
-The shared track clips a span that crosses another (ADR-0011), so a reader
-also needs somewhere to find the span as observed, and how much of the process
-gcmon read.
+A span on the shared row says when gcmon watched a process and nothing about
+how much of it gcmon read (ADR-0011), so a reader needs somewhere to find
+that.
 
 ## Decision
 
@@ -55,16 +55,14 @@ no collections from
 row: a `ProcessDescriptor` stamped and ranked from its first observation, its
 command line, and a `Lifetime` slice with nothing under it.
 
-**The process's own row draws the observed pair; the shared row draws the
-clipped one.** Clipping exists because every process shares the `Processes`
-track and slices on a Perfetto track are a stack. A process's own row carries
-one `Lifetime` slice
+**Both rows draw the pair gcmon observed.** A process's own row carries one
+`Lifetime` slice
 ([ADR-0010](0010-process-identity-cmdline-and-start-marker.md)) and the
-workload's `Instant` marks, which nest without closing anything, so nothing on
-that row can cross the slice and nothing needs clipping. The two rows
-therefore disagree for a clipped process, and the row able to draw the
-observed pair draws it. `Lifetime` needs no `real_*` annotations: its own `ts`
-and `dur` are those two numbers.
+workload's `Instant` marks, which nest without closing anything; its span on
+the shared row has a track to itself (ADR-0011). Neither row has to give up an
+end to draw, and both carry the command line, the pid and the epoch. The rows
+differ in what they answer: this one is about one process, the shared one
+about the run.
 
 **How much of the process gcmon read is counted in the convert pass.** The
 `Lifetime` slice says `sampled_count` against `lost_count`, and the exporter's
@@ -86,22 +84,19 @@ reports an interval only when it lost something, so the `observed_count`
 riding there covers lossy intervals alone; a process that lost nothing has no
 slice to sum and would read as one gcmon never sampled.
 
-**A retired process's row goes out at the next flush; the shared slice waits
-for close.** Once gcmon lets go of a pid the process's span is final: a record
-read afterwards is filed under whatever holds the pid now (ADR-0025), and
-liveness and RSS both work off the tick's live set. The `Lifetime` slice needs
-nothing but that one span, so it is drawn as soon as the events queued ahead
-of it have reached the accumulator. The `Processes` slice needs every other
-span in the run: the sweep is global, and a process discovered later can still
-open one inside a retired process's, because a poll returns collections that
-already happened. A slice drawn early could not be clipped against a sibling
-that did not exist yet, and two crossing slices on one track come back at
-widths neither was given with nothing reported.
+**A retired process's row and its span on the shared row both go out at the
+next flush.** Once gcmon lets go of a pid the process's span is final: a
+record read afterwards is filed under whatever holds the pid now (ADR-0025),
+and liveness and RSS both work off the tick's live set. Neither slice needs
+anything but that one span, since no span is measured against another
+(ADR-0011), so both are drawn as soon as the events queued ahead of them have
+reached the accumulator. A process still held when the run stops is drawn at
+close instead.
 
 The Perfetto UI hides a row holding no events, so a `Lifetime` slice that
 never reached the file takes its whole row with it, its interpreters' rows and
-all. A process already retired keeps its row; one still running does not, and
-neither does the minimap.
+all. A process already retired keeps its row and its place on the minimap; one
+still running keeps neither.
 
 The exception is the control plane, which files an instant by timestamp and
 can still name a retired process (ADR-0025). One arriving after the row was

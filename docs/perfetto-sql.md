@@ -198,8 +198,8 @@ ORDER BY p.start_ts
 ```
 
 A `cmdline` debug annotation carries the same string on each slice of the
-`Processes` lifetime track, which pairs it with that process's start and end
-times. On a reused PID both are per process, and the two agree:
+`Processes` row, which pairs it with that process's start and end times. On a
+reused PID both are per process, and the two agree:
 
 ```sql
 -- Command line alongside each process's lifetime
@@ -207,9 +207,7 @@ SELECT
     s.name,
     s.ts,
     s.dur,
-    EXTRACT_ARG(s.arg_set_id, 'debug.cmdline') AS cmdline,
-    EXTRACT_ARG(s.arg_set_id, 'debug.real_end_ts')
-        - EXTRACT_ARG(s.arg_set_id, 'debug.real_start_ts') AS observed_dur
+    EXTRACT_ARG(s.arg_set_id, 'debug.cmdline') AS cmdline
 FROM slice s
 JOIN track t ON s.track_id = t.id
 WHERE t.name = 'Processes'
@@ -219,33 +217,32 @@ ORDER BY s.ts
 Both return nothing when the extra is missing or gcmon could not read the
 command line. The rest of the trace still queries.
 
-**Do not read `dur` on this track as an observed duration.** Crossing spans
-cut each other short, sometimes to a microsecond. `s.dur` is what Perfetto
-could draw; `real_start_ts` and `real_end_ts` are what gcmon observed, and
-every slice carries them whether it was cut or not.
+`s.dur` is the duration gcmon observed. Each process draws on a track of its
+own and the row is those tracks merged, so a span keeps its width however many
+others overlap it, and a `track_id` names no one process.
 
 Every monitored process gets one slice, a process that never collected
-included. A process known from liveness alone drew no row of its own and has
-no `process` entry at all, so this track is the only place it appears.
+included. One gcmon only ever saw answer a poll draws a row and a `process`
+entry like any other; what it has none of is a `GC Pauses` row or a pause
+slice, since those come from records it never produced.
 
 **Scope by `upid` or by name.** A reused PID has one entry per process, none
 of them under the operating system's PID. To gather every process that held
 one, filter on the `debug.pid` annotation or on the name, `Process 12345` and
 `Process 12345#2` from the second process on. A `dur = 0` slice is one
-observed at a single instant, or cut down to nothing.
+observed at a single instant.
 
 A slice and the process it describes carry **the same name**. That is the
 pairing: `p.pid` is per process, and the epoch reaches no column of its own.
-Start from the span and left-join the process, so one with a span and no entry
-keeps its row:
+Left-join what a process may not own, so one that recorded no pause keeps its
+row and counts zero instead of dropping out:
 
 ```sql
 -- Each process's observed lifetime beside the pauses it recorded
 SELECT
     span.name,
-    COUNT(gc.id) AS pauses,
-    EXTRACT_ARG(span.arg_set_id, 'debug.real_end_ts')
-        - EXTRACT_ARG(span.arg_set_id, 'debug.real_start_ts') AS observed_dur
+    span.dur AS observed_dur,
+    COUNT(gc.id) AS pauses
 FROM slice span
 JOIN track spant ON span.track_id = spant.id AND spant.name = 'Processes'
 LEFT JOIN process p ON p.name = span.name
@@ -255,25 +252,8 @@ GROUP BY span.id
 ORDER BY span.ts
 ```
 
-Processes still alive when monitoring stops share an end timestamp and nest,
-and the trace processor closes at most **512** nested slices. Past that they
-return `dur = -1` with no diagnostic, so filter on `s.dur >= 0` if more than
-512 processes may have been running at the end. Compare spans only across
-traces captured the same way: `gcmon combine` spans cover GC activity alone.
-
-```sql
--- Processes whose drawn duration is shorter than what gcmon observed
-SELECT
-    s.name,
-    s.dur AS drawn_dur,
-    EXTRACT_ARG(s.arg_set_id, 'debug.real_end_ts')
-        - EXTRACT_ARG(s.arg_set_id, 'debug.real_start_ts') AS observed_dur
-FROM slice s
-JOIN track t ON s.track_id = t.id
-WHERE t.name = 'Processes'
-  AND observed_dur > s.dur
-ORDER BY observed_dur - s.dur DESC
-```
+Compare spans only across traces captured the same way: `gcmon combine` spans
+cover GC activity alone.
 
 ## Tips for Writing Queries
 

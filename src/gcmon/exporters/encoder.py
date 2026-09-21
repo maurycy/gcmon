@@ -92,24 +92,25 @@ class ProtobufEventEncoder:
         ``Processes``-track span accumulator: *processes* are the ones
         gcmon read GC state out of at *ts_ns*.
 
-        See ADR-0029. Writes nothing; the observations reach the file at
+        See ADR-0029. Writes nothing; the observations reach the file when
+        the span is drawn, at the flush that retires the process or at
         ``close()``.
         """
         for process in processes:
             self._track_state.update_process_lifetime(process, ts_ns)
 
     def record_process_retired(self, process: Process) -> None:
-        """Note that gcmon has let go of *process*, so its own row can be
-        drawn without waiting for the end of the run.
+        """Note that gcmon has let go of *process*, so everything it draws can
+        be drawn without waiting for the end of the run.
 
-        Writes nothing here: the row goes out with the next batch, once the
-        events queued ahead of it have reached the span accumulator. See
-        ADR-0028 for what that buys a run killed mid-flight.
+        Writes nothing here: the row and the span go out with the next batch,
+        once the events queued ahead of them have reached the span
+        accumulator. See ADR-0028 for what that buys a run killed mid-flight.
         """
         self._retired.append(process)
 
     def _drain_retired(self) -> list[bytes]:
-        """The rows of every process retired since the last batch."""
+        """What every process retired since the last batch draws."""
         packets: list[bytes] = []
         for process in self._retired:
             packets.extend(emit_retired_process_row(process, self._track_state, self._sequence_id))
