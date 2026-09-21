@@ -9,7 +9,7 @@
 ## Context
 
 `TraceExporter` (Chrome) and `PerfettoExporter` each independently implemented
-the same lifecycle: a two-lock model (one for state, one for I/O),
+the same lifecycle: one lock for state and another for I/O,
 `flush_threshold`-based buffering, the `add_event` / `add_instant_event` /
 `close` sequence, and per-pid/iid deduplication of `ProcessMeta` /
 `ThreadMeta`.
@@ -22,6 +22,12 @@ Both copies also carried the same bug. The meta-dedup did its "have I seen
 this pid?" check and its emit in separate critical sections, so two threads
 adding events for a brand-new pid could both pass the check and both emit a
 `process_name` event, putting a duplicate process descriptor in the output.
+
+Splitting the locks by resource was the other hazard. A flush emptied the
+buffer under the state lock and took the I/O lock separately to write, so
+another thread could reach encoder state between the two. What that costs
+depends on what the encoder keeps: line order for a writer that keeps nothing,
+and a wrong span for one accumulating what it draws.
 
 ## Decision
 
