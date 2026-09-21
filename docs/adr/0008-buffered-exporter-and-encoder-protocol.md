@@ -91,11 +91,13 @@ The split settles further questions:
   buffer and the lock around it.
 - **A second lock for the buffer alone.** Rejected: a flush would empty the
   buffer under one lock and write under the other, with a gap between the two.
-  A retirement can land in that gap and draw the process's `Lifetime` bar from
-  the span accumulator. The events still in flight have not reached the
-  accumulator, so the bar comes out short at whichever end those events would
-  have moved ([ADR-0029](0029-report-liveness-and-fold-it-into-the-span.md)).
-  The price of one lock is that an append waits for a write already running.
+  A retirement can land in that gap and draw the process's span on the
+  `Processes` row and its `Lifetime` bar, both out of one accumulator. The
+  events still in flight have not reached the accumulator, so both come out
+  short at whichever end those events would have moved
+  ([ADR-0011](0011-process-lifetime-and-ordering.md),
+  [ADR-0029](0029-report-liveness-and-fold-it-into-the-span.md)). The price of
+  one lock is that an append waits for a write already running.
 - **A `Protocol` declared over the encoder.** Rejected: with one format there
   is one implementation and nothing typed against the protocol.
 - **A common base class with abstract encode methods instead of a separate
