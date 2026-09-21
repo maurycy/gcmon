@@ -12,15 +12,10 @@ importer needs one name.
 from collections.abc import Sequence
 
 from ..model.names import (
-    ALIVE_SIZE,
     CANDIDATES,
-    CLEAR_WEAKREFS_COUNT,
     COLLECTED,
-    DELETED_GARBAGE_COUNT,
     DURATION,
-    FINALIZED_GARBAGE_COUNT,
     HEAP_SIZE,
-    INCREMENT_SIZE,
     UNCOLLECTABLE,
 )
 from ..model.trace_event import (
@@ -124,19 +119,18 @@ _INTERPRETER_ROW_ORDER: tuple[str, ...] = (
 )
 _INTERPRETER_ROW_RANKS: dict[str, int] = {name: rank for rank, name in enumerate(_INTERPRETER_ROW_ORDER)}
 
-# What a `GC Metrics` group holds, ranked the same way. `rss` is absent
-# because it parents to the process track, which is OS-scoped, and the trace
-# processor discards a rank there (ADR-0003).
+# What a `GC Metrics` group holds, ranked the same way. A metric that reaches
+# a trace as an annotation on the pause slice is not here: ranking a row
+# nothing draws is an edit paid in advance for a case nobody has (ADR-0005).
+# Nor is either counter drawn elsewhere: `heap_size` ranks among its
+# interpreter's own rows through `_INTERPRETER_ROW_RANKS`, and `rss` parents
+# to the process track, which is OS-scoped, and the trace processor discards
+# a rank there (ADR-0003).
 _COUNTER_ORDER: tuple[str, ...] = (
     COLLECTED,
     UNCOLLECTABLE,
     CANDIDATES,
     DURATION,
-    INCREMENT_SIZE,
-    ALIVE_SIZE,
-    FINALIZED_GARBAGE_COUNT,
-    DELETED_GARBAGE_COUNT,
-    CLEAR_WEAKREFS_COUNT,
 )
 _COUNTER_RANKS: dict[str, int] = {metric: rank for rank, metric in enumerate(_COUNTER_ORDER)}
 
@@ -419,7 +413,7 @@ def convert_trace_events_to_perfetto(
                     sequence_id,
                     timestamp=event.ts,
                     track_event=build_track_event(
-                        type=TrackEventType.INSTANT,
+                        event_type=TrackEventType.INSTANT,
                         track_uuid=proc_uuid,
                         name=event.name,
                         debug_annotations=_args_to_debug_annotations(event.args),
