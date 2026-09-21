@@ -25,12 +25,12 @@ adding events for a brand-new pid could both pass the check and both emit a
 
 ## Decision
 
-**`PerfettoExporter` owns the lifecycle:** the two locks, the buffer and flush
+**`PerfettoExporter` owns the lifecycle:** the lock, the buffer and flush
 threshold, and `add_event` / `add_instant_event` / `close`.
 
-**`ProtobufEventEncoder` owns byte production** through three methods:
-`open(path)`, `write_events(events)`, `close()`. It is a class of its own
-because `combine` drives it with no exporter around it.
+**`ProtobufEventEncoder` owns byte production** through `open(path)`,
+`write_events(events)` and `close()`. It is a class of its own because
+`combine` drives it with no exporter around it.
 
 The exporter constructs its encoder, and its public constructor signature is
 unchanged.
@@ -41,9 +41,12 @@ implementation ([ADR-0021](0021-write-one-trace-format.md)), and both callers,
 defends is the encoder being a separate class that runs with no exporter, no
 buffer and no lock around it, and a class boundary needs no declaration.
 
+**One lock guards the buffer and every touch of encoder state.** A flush holds
+it across both deciding what to write and writing it.
+
 **Meta building is atomic.** The check and the emit happen inside a single
-critical section under the state lock, which is what closes the race between
-two threads reaching a brand-new pid.
+critical section under that lock, which is what closes the race between two
+threads reaching a brand-new pid.
 
 The split settles further questions:
 
@@ -63,11 +66,11 @@ The split settles further questions:
 
 ## Consequences
 
-- A second output format is a second encoder class with the same three
-  methods. No lifecycle, locking or dedup code to copy.
-  [ADR-0021](0021-write-one-trace-format.md)'s
-  `combine --output-format perfetto` reuses `ProtobufEventEncoder` directly,
-  outside any exporter.
+- A second trace format is a second encoder class with those same methods. The
+  lifecycle and the locking stay with the exporter, so neither gets copied.
+  The dedup is the encoder's own since
+  [ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md), so a new
+  encoder writes that part itself.
 - Output bytes were unchanged by the refactor, verified by the existing
   structural tests, which decode the output and assert on each meaningful
   field.
@@ -84,8 +87,15 @@ The split settles further questions:
   ([ADR-0021](0021-write-one-trace-format.md)) the base has a fan-out of one.
   Meta building sits in the encoder
   ([ADR-0024](0024-an-event-names-the-track-it-is-drawn-on.md)), with the
-  seen-pid set and the atomic check-and-emit, so what is left to merge is a
-  buffer, two locks and four one-line calls.
+  seen-pid set and the atomic check-and-emit, so what is left to merge is the
+  buffer and the lock around it.
+- **A second lock for the buffer alone.** Rejected: a flush would empty the
+  buffer under one lock and write under the other, with a gap between the two.
+  A retirement can land in that gap and draw the process's `Lifetime` bar from
+  the span accumulator. The events still in flight have not reached the
+  accumulator, so the bar comes out short at whichever end those events would
+  have moved ([ADR-0029](0029-report-liveness-and-fold-it-into-the-span.md)).
+  The price of one lock is that an append waits for a write already running.
 - **A `Protocol` declared over the encoder.** Rejected: with one format there
   is one implementation and nothing typed against the protocol.
 - **A common base class with abstract encode methods instead of a separate

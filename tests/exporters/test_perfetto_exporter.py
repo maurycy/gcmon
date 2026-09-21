@@ -34,7 +34,12 @@ from tests.conftest import DEFAULT_PID
 from tests.data_helpers import create_instant_msg
 from tests.exporters.conftest import ExporterFactory
 from tests.exporters.perfetto_helpers import pause_item
-from tests.helpers import create_mock_incremental_item, create_mock_stats_item, perfetto_packets, proc
+from tests.helpers import (
+    create_mock_incremental_item,
+    create_mock_stats_item,
+    perfetto_packets,
+    proc,
+)
 
 # Pids that only ever show up as liveness observations: gcmon polled
 # them successfully but they never collected, so they produce no events.
