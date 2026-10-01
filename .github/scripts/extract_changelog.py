@@ -16,16 +16,24 @@ VERSION_HEADER_RE = re.compile(r"^## Version (?P<version>\S+)", re.MULTILINE)
 
 
 def resolve_version(tag: str | None) -> str:
-    if tag and tag.startswith("v"):
-        return tag[1:]
-    with PYPROJECT_PATH.open("rb") as f:
-        version: str = tomllib.load(f)["tool"]["poetry"]["version"]
-    return version
+    if tag:
+        if tag == "latest":
+            with PYPROJECT_PATH.open("rb") as f:
+                version: str = tomllib.load(f)["tool"]["poetry"]["version"]
+            return version
+        elif match := re.match(r"^v?(\d+\.\d+\.\d+[a-z0-9]*(?:\.dev[0-9]+)?)$", tag):
+            return match.group(1)
+        print("::error::Version tag isn't properly formatted")
+        return ""
+    return "WIP"
 
 
 def extract(version: str) -> str:
     text = CHANGELOG_PATH.read_text(encoding="utf-8")
-    pattern = rf"## Version {re.escape(version)}(?=\s|$).*?\n(.*?)(?=\n## |\Z)"
+    if version == "WIP":
+        pattern = r"## WIP(?=\s|$).*?\n(.*?)(?=\n## |\Z)"
+    else:
+        pattern = rf"## Version {re.escape(version)}(?=\s|$).*?\n(.*?)(?=\n## |\Z)"
     match = re.search(pattern, text, re.DOTALL)
     if match:
         return match.group(1).strip()
@@ -44,6 +52,8 @@ def main() -> int:
     )
     args = parser.parse_args()
     version = resolve_version(args.tag)
+    if not version:
+        return 1
     body = extract(version)
     if not body:
         return 1

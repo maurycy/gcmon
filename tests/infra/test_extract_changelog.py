@@ -62,11 +62,26 @@ class TestResolveVersion:
     def test_keeps_pep440_suffix(self) -> None:
         assert extract_changelog.resolve_version("v0.2.0a1") == "0.2.0a1"
 
-    def test_falls_back_to_pyproject_when_tag_missing(self, fake_pyproject: Path) -> None:
-        assert extract_changelog.resolve_version(None) == "0.2.0"
+    def test_wip_when_tag_missing(self, fake_pyproject: Path) -> None:
+        assert extract_changelog.resolve_version(None) == "WIP"
 
-    def test_falls_back_to_pyproject_when_tag_lacks_v_prefix(self, fake_pyproject: Path) -> None:
-        assert extract_changelog.resolve_version("refs/heads/main") == "0.2.0"
+    def test_empty_string_when_tag_is_git_ref(self, fake_pyproject: Path) -> None:
+        assert not extract_changelog.resolve_version("refs/heads/main")
+
+    def test_falls_back_to_pyproject_when_tag_is_latest(self, fake_pyproject: Path) -> None:
+        assert extract_changelog.resolve_version("latest") == "0.2.0"
+
+    def test_empty_string_when_incomplete_tag(self, fake_pyproject: Path) -> None:
+        assert not extract_changelog.resolve_version("v0.6")
+
+    def test_empty_string_when_dash_in_tag(self, fake_pyproject: Path) -> None:
+        assert not extract_changelog.resolve_version("v0.6.0-rc1")
+
+    def test_empty_string_when_tag_not_start_with_v_prefix_or_number(self, fake_pyproject: Path) -> None:
+        assert not extract_changelog.resolve_version("release-0.6.0")
+
+    def test_dev_tag_version(self, fake_pyproject: Path) -> None:
+        assert extract_changelog.resolve_version("v0.2.0.dev1") == "0.2.0.dev1"
 
 
 class TestExtract:
@@ -100,6 +115,21 @@ class TestMain:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr("sys.argv", ["extract_changelog.py"])
+        monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+
+        rc = extract_changelog.main()
+
+        assert rc == 0
+        assert capsys.readouterr().out.strip() == "- upcoming stuff"
+
+    def test_prints_latest_version_when_tag_is_latest(
+        self,
+        fake_changelog: Path,
+        fake_pyproject: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr("sys.argv", ["extract_changelog.py", "latest"])
         monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
 
         rc = extract_changelog.main()
@@ -149,7 +179,7 @@ class TestMainWritesToGitHubOutput:
         out_file = tmp_path / "gh_output"
         out_file.write_text("", encoding=ENCODING)
         monkeypatch.setenv("GITHUB_OUTPUT", str(out_file))
-        monkeypatch.setattr("sys.argv", ["extract_changelog.py"])
+        monkeypatch.setattr("sys.argv", ["extract_changelog.py", "v0.2.0"])
 
         rc = extract_changelog.main()
 
@@ -170,7 +200,7 @@ class TestMainWritesToGitHubOutput:
         out_file = tmp_path / "gh_output"
         out_file.write_text("preface=true\n", encoding=ENCODING)
         monkeypatch.setenv("GITHUB_OUTPUT", str(out_file))
-        monkeypatch.setattr("sys.argv", ["extract_changelog.py"])
+        monkeypatch.setattr("sys.argv", ["extract_changelog.py", "v0.2.0"])
 
         rc = extract_changelog.main()
 
@@ -190,7 +220,7 @@ class TestMainWritesToGitHubOutput:
         out_file = tmp_path / "gh_output"
         out_file.write_text("", encoding=ENCODING)
         monkeypatch.setenv("GITHUB_OUTPUT", str(out_file))
-        monkeypatch.setattr("sys.argv", ["extract_changelog.py"])
+        monkeypatch.setattr("sys.argv", ["extract_changelog.py", "v0.2.0"])
 
         rc = extract_changelog.main()
 
