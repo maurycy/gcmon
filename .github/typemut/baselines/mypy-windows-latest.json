@@ -508,7 +508,7 @@
     "operator": "WidenContainerType",
     "original": "dict[str, int]",
     "mutated": "Mapping[str, int]",
-    "source": "_COUNTER_RANKS: dict[str, int] = {metric: rank for rank, metric in enumerate(PausePhase.counter_metrics)}"
+    "source": "_COUNTER_RANKS: dict[str, int] = {metric: rank for rank, metric in enumerate(Counters.counter_metrics)}"
   },
   {
     "file": "src\\gcmon\\exporters\\perfetto_format.py",
@@ -779,9 +779,9 @@
   {
     "file": "src\\gcmon\\model\\phases.py",
     "operator": "WidenContainerType",
-    "original": "list[tuple[str, str, int | float]]",
-    "mutated": "Sequence[tuple[str, str, int | float]]",
-    "source": "def counters(cls, gen: int, item: Info) -> list[tuple[str, str, int | float]]:"
+    "original": "list[tuple[str, str, int, int | float]]",
+    "mutated": "Sequence[tuple[str, str, int, int | float]]",
+    "source": ") -> list[tuple[str, str, int, int | float]]:"
   },
   {
     "file": "src\\gcmon\\model\\phases.py",
