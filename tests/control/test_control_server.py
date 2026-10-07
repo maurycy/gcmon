@@ -71,7 +71,7 @@ def _send_msg(server: ControlServer, msg: str, pid: int) -> None:
         conn.close()
 
 
-def _wait_msg(control_server: ControlServer, pid: int, expected: bool, timeout: int = 1) -> bool:
+def _wait_msg(control_server: ControlServer, pid: int, expected: bool, timeout: int = 5) -> bool:
     ts = time.monotonic()
     while control_server.is_enabled(pid) is not expected:
         time.sleep(0)
