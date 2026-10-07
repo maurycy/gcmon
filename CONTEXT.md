@@ -108,6 +108,15 @@ before it and means nothing else.
 _Avoid_: track and sub-track (the merge leaves a lane no track of its own to
 name), slot, depth, level
 
+**Layout**:
+Which tracks a **trace** draws its events on. The **process layout** gives
+every process a row of its own with its interpreters inside it. The **merged
+layout** draws the run by kind: one row holds every `Gen0` pause in it,
+another every **loss window**, each made of tracks merged by name. Both are
+Perfetto traces, and an operator picks one per run.
+_Avoid_: format (that is `--format`, the file type), short, full, compact,
+overview, summary
+
 **Interpreter group**:
 The `Interpreter {iid}` row every track one **interpreter** owns hangs under:
 its pause row, its loss row, its `heap_size` and its **counter group**. One

@@ -37,6 +37,8 @@ This file holds the open set and the order to take it in. The other two:
 | [0061](0061-build-the-statistics-table-from-a-tracefile.md) | Feature (enhancement) | L | The statistics table exists only while gcmon is running; a capture from last week holds every number and offers no way to see them |
 | [0062](0062-name-a-workload-from-a-sanitized-command-line.md) | Feature (enhancement) | M | A pyperformance run prints one `Total` folding sixty benchmarks and hundreds of blocks keyed by a pid that means nothing afterwards; the level anyone asks about is missing |
 | [0063](0063-compare-two-tracefiles.md) | Feature (enhancement) | L | Nothing answers "did GC get worse between these two runs"; two tables side by side works for one row and fails for sixty |
+| [0072](0072-draw-a-run-on-rows-by-kind.md) | Feature (enhancement) | M | On a wide tree a process's pauses sit two groups down in one of thousands of rows, and nothing draws the run's pauses, loss and processes on a few rows |
+| [0073](0073-convert-a-merged-trace-to-the-process-layout.md) | Feature (enhancement) | M | A trace recorded with `--layout merged` cannot become the process layout, so its counter charts and per-process rows cost a rerun |
 
 Every row here has a file. A missing number either retired or never became
 one; [RETIRED.md](RETIRED.md) says which.
@@ -53,6 +55,8 @@ one; [RETIRED.md](RETIRED.md) says which.
 | 0040 | Rewrites the option declarations 0045 edited |
 | 0042 | |
 | 0020 | Unblocked: 0067 landed, and the `Lifetime` slice is where both fields go |
+| 0072 | |
+| 0073 | Constrained: after 0072 |
 | 0051 | Unblocked: 0039 landed, and `StreamingStats` is in the module it will keep |
 | 0060 | Smallest of the comparison set and depends on none of it |
 | 0061 | Unblocked: 0059 landed, and a trace now says which process held a pid |
@@ -72,10 +76,11 @@ the position. A blank cell means no recorded reason, so that row can move.
 - **0054** was found in CPython's source and not in a run. Nobody should size
   it until the ports have been counted on a Mac.
 
-**The only ordering constraint:**
+**The ordering constraints:**
 
 | First | Then | Why |
 |-------|------|-----|
 | 0060, 0061, 0062 | 0063 | 0063 builds two of the tables those three produce and diffs them; it computes no statistic of its own |
+| 0072 | 0073 | 0073 reads the merged trace 0072 writes |
 
 0042 depends on nothing else here; take it at any time.
