@@ -42,5 +42,7 @@ jobs:
       - name: Run benchmarks
         uses: CodSpeedHQ/action@f842b9a3ffe213dbb81768fd7f7eeb4dfcf1c369 # v5.4.2
         with:
+          # Walltime needs a CodSpeed Macro Runner, which a personal account
+          # cannot use; on a shared runner its noise swamps every benchmark.
           mode: simulation
           run: poetry run just bench
