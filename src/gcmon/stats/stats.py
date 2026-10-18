@@ -102,5 +102,9 @@ class Stats:
         return self._sketch is not None
 
     @property
+    def windowed(self) -> bool:
+        return not HAS_DDSKETCH and self._count > self.MAX_BUFFER_LEN
+
+    @property
     def percentiles(self) -> dict[int, float] | None:
         return self._percentiles
