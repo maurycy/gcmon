@@ -36,7 +36,7 @@ from .perfetto_proto import (
 from .perfetto_track_state import PerfettoTrackState, ProcessSpan
 from .trace_converter import duration_text
 
-__all__ = ["emit_retired_process_row", "finalize_perfetto_packets", "process_track_name"]
+__all__ = ["emit_retired_process_row", "finalize_perfetto_packets", "fold_batch", "process_track_name"]
 
 
 # Name every process's lifetime track carries. The trace processor merges
@@ -274,18 +274,18 @@ def _draw_retired_span(
     process: Process,
     state: PerfettoTrackState,
     sequence_id: int,
-) -> tuple[list[ProcessSpan], list[bytes]]:
+) -> tuple[ProcessSpan | None, list[bytes]]:
     """The shared part's share of retiring *process*: the track it draws its
-    span on, and the span. Returns the span with the packets, for the rows
-    that draw over the same interval.
+    span on, and the span. Returns the span with the packets, for the process
+    rows to draw its ``Lifetime`` bar over.
     """
     if state.has_process_lifetime_emitted() or state.has_process_lifetime_track(process):
-        return [], []
+        return None, []
     span = state.get_process_lifetime(process)
     if span is None:
-        return [], []
+        return None, []
     state.rank_processes([process])
-    return [span], [
+    return span, [
         _emit_process_lifetime_track_descriptor(process, state, sequence_id),
         *_emit_process_lifetime_slice(span, state, sequence_id),
     ]
@@ -311,8 +311,10 @@ def emit_retired_process_row(
     Returns nothing for a process gcmon never observed, for one already drawn,
     and for a trace whose closeout has gone out.
     """
-    spans, packets = _draw_retired_span(process, state, sequence_id)
-    return [*packets, *_draw_spans_on_process_rows(spans, state, sequence_id)]
+    span, packets = _draw_retired_span(process, state, sequence_id)
+    if span is None:
+        return []
+    return [*packets, *_draw_spans_on_process_rows([span], state, sequence_id)]
 
 
 def _record_process_lifetime(
@@ -334,7 +336,7 @@ def _record_process_lifetime(
         state.update_process_lifetime(process, event.ts)
 
 
-def _fold_batch(
+def fold_batch(
     events: Sequence[TraceEvent],
     state: PerfettoTrackState,
 ) -> None:
@@ -393,7 +395,8 @@ def _draw_final_spans(
 ) -> tuple[list[ProcessSpan], list[bytes]]:
     """The shared part's share of the closeout: for every process still
     held, the track it draws its span on, and the span. Returns the spans
-    with the packets, for the rows that draw over the same intervals.
+    with the packets, for the process rows to draw their ``Lifetime`` bars
+    over.
     """
     if state.has_process_lifetime_emitted():
         return [], []
