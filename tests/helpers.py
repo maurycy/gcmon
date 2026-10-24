@@ -53,7 +53,7 @@ from gcmon.model.phases import (
 )
 from gcmon.model.process import Process
 from gcmon.model.protocol import TGCStatsInfo, TInstantMsg, TLossMsg, is_gc_stats
-from gcmon.model.trace_event import Counter, InterpreterTrack, LossTrack, ProcessTrack, Track
+from gcmon.model.trace_event import Counter, InterpreterTrack, LossTrack, PauseTrack, ProcessTrack
 from gcmon.monitoring.events_reader import EventsReader
 from gcmon.monitoring.monitor import EventsMonitor
 from gcmon.monitoring.process_registry import ProcessRegistry
@@ -141,8 +141,14 @@ def process_track(pid: int, pid_epoch: int = 1) -> ProcessTrack:
     return ProcessTrack(proc(pid, pid_epoch))
 
 
+def pause_track(pid: int, iid: int, gen: int, *, pid_epoch: int = 1) -> PauseTrack:
+    """Interpreter *iid*'s collections in generation *gen* on *pid*. See
+    :func:`process_track`."""
+    return PauseTrack(proc(pid, pid_epoch), iid, gen)
+
+
 def interpreter_track(pid: int, iid: int, pid_epoch: int = 1) -> InterpreterTrack:
-    """Interpreter *iid*'s row on *pid*. See :func:`process_track`."""
+    """Interpreter *iid*'s counters on *pid*. See :func:`process_track`."""
     return InterpreterTrack(proc(pid, pid_epoch), iid)
 
 
@@ -151,7 +157,7 @@ def loss_track(pid: int, iid: int, pid_epoch: int = 1) -> LossTrack:
     return LossTrack(proc(pid, pid_epoch), iid)
 
 
-def gen_counter(track: Track, gen: int, metric: str, ts: int, value: float) -> Counter:
+def gen_counter(track: InterpreterTrack, gen: int, metric: str, ts: int, value: float) -> Counter:
     """One generation's counter series, named the way the converter names it.
 
     The display name is derived rather than passed: it is a function of the

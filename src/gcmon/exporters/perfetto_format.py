@@ -18,6 +18,7 @@ from ..model.trace_event import (
     Instant,
     InterpreterTrack,
     LossTrack,
+    PauseTrack,
     ProcessTrack,
     Slice,
     TraceEvent,
@@ -26,8 +27,8 @@ from ..model.trace_event import (
 from .perfetto_builders import (
     _args_to_debug_annotations,
     _make_counter_event,
-    _make_slice_begin,
-    _make_slice_end,
+    _make_instant_packet,
+    _make_slice_packets,
     build_trace,
     build_trace_packet,
     build_track_descriptor,
@@ -36,8 +37,8 @@ from .perfetto_builders import (
 from .perfetto_process_lifetime import (
     _emit_process_descriptor,
     _emit_root_descriptor,
+    _fold_batch,
     _record_capture_totals,
-    _record_process_lifetime,
     emit_retired_process_row,
     finalize_perfetto_packets,
 )
@@ -73,6 +74,7 @@ __all__ = [
     "build_track_event",
     "convert_trace_events_to_perfetto",
     "emit_retired_process_row",
+    "encode_batch_args",
     "finalize_perfetto_packets",
 ]
 
@@ -126,7 +128,7 @@ _UNLISTED_COUNTER_RANK: int = len(_COUNTER_RANKS)
 
 
 def _emit_interpreter_group_descriptors(
-    track: InterpreterTrack | LossTrack,
+    track: PauseTrack | InterpreterTrack | LossTrack,
     state: PerfettoTrackState,
     sequence_id: int,
 ) -> tuple[int, list[bytes]]:
@@ -161,7 +163,7 @@ def _emit_interpreter_group_descriptors(
 
 
 def _emit_pause_descriptor(
-    track: InterpreterTrack,
+    track: PauseTrack,
     state: PerfettoTrackState,
     sequence_id: int,
 ) -> list[bytes]:
@@ -207,7 +209,7 @@ def _emit_loss_descriptor(
 
 
 def _emit_counter_group_descriptor(
-    track: InterpreterTrack | LossTrack,
+    track: InterpreterTrack,
     state: PerfettoTrackState,
     sequence_id: int,
 ) -> tuple[int, list[bytes]]:
@@ -233,7 +235,7 @@ def _emit_counter_group_descriptor(
 
 
 def _emit_counter_track_descriptor(
-    track: Track,
+    track: ProcessTrack | InterpreterTrack,
     metric: str,
     display_name: str,
     state: PerfettoTrackState,
@@ -303,7 +305,8 @@ def _emit_track_descriptors(
 
     The process descriptor whichever kind of track this is, then the track's
     own where it has one of its own to write. A ``ProcessTrack`` has none: the
-    process descriptor *is* its descriptor.
+    process descriptor *is* its descriptor. An ``InterpreterTrack`` has none
+    either: each of its counters gets one of its own.
     """
     process = track.process
     descriptors = _emit_process_descriptor(
@@ -313,99 +316,58 @@ def _emit_track_descriptors(
         sibling_order_rank=state.get_process_track_rank(process),
         start_timestamp_ns=state.get_process_lifetime_start_ts(process),
     )
-    if isinstance(track, InterpreterTrack):
+    if isinstance(track, PauseTrack):
         descriptors.extend(_emit_pause_descriptor(track, state, sequence_id))
     elif isinstance(track, LossTrack):
         descriptors.extend(_emit_loss_descriptor(track, state, sequence_id))
     return descriptors
 
 
-def convert_trace_events_to_perfetto(
+def _draw_batch_on_process_rows(
     events: Sequence[TraceEvent],
+    annotations: Sequence[list[bytes]],
     state: PerfettoTrackState,
     sequence_id: int,
 ) -> tuple[list[bytes], list[bytes]]:
-    """Convert a list of ``TraceEvent`` objects to Perfetto protobuf packets.
+    """The process rows' share of a batch: every descriptor its events need
+    and the packets drawing them.
 
     A track's descriptor goes out because an event named that track, ahead of
     the packet that named it. No producer sends metadata first, and none can
     forget to.
 
-    Returns ``(descriptors, packets)``, two lists of encoded ``TracePacket``
-    bytes ready for ``build_trace``. The first call on a given *state* also
-    emits the root descriptor.
-
     Each process descriptor carries a ``sibling_order_rank`` and a
     ``process.start_timestamp_ns``, both taken from that process's first
-    event. *state* accumulates those across batches, and the pre-pass below
-    folds this batch in before the main loop, so a process described in this
-    batch is ranked against the events of it. Both fields are always present:
-    a descriptor goes out only for a process that named a track, which is a
-    process the pre-pass has folded in.
-
-    A span on the ``Processes`` row goes out with its process's own row, at
-    the flush that retires it or at trace close
-    (``emit_retired_process_row``, ``finalize_perfetto_packets``).
+    event. The shared part has folded this batch in already, so a process
+    described in this batch is ranked against the events of it.
     """
     descriptors: list[bytes] = []
     packets: list[bytes] = []
 
     if events:
-        for event in events:
-            _record_process_lifetime(event, state)
-            _record_capture_totals(event, state)
         descriptors.extend(_emit_root_descriptor(state, sequence_id))
 
-    # Ranked after the pre-pass folded the batch in, so the processes this
-    # batch describes are ordered against each other by first observation
-    # rather than by the order their events happen to sit in.
-    state.rank_processes(event.track.process for event in events)
-
-    for event in events:
+    for event, encoded in zip(events, annotations, strict=True):
+        _record_capture_totals(event, state)
         process = event.track.process
         descriptors.extend(_emit_track_descriptors(event.track, state, sequence_id))
 
         if isinstance(event, Slice):
-            track_uuid = state.get_track_uuid(event.track)
-            # An adjacent pair, not interleaved into stack order: the trace
-            # processor sorts by timestamp and builds the nesting itself.
-            # BEGIN first, so a zero-length slice reads as ``dur = 0`` rather
-            # than ``-1``. See ADR-0011 for the pattern. An END here carries no
-            # name and closes the top of the stack, so it does not need the
-            # naming ADR-0011 relies on.
-            packets.append(
-                build_trace_packet(
+            packets.extend(
+                _make_slice_packets(
                     sequence_id,
-                    timestamp=event.ts_start,
-                    track_event=_make_slice_begin(
-                        track_uuid,
-                        event.name,
-                        [event.cat],
-                        _args_to_debug_annotations(event.args),
-                    ),
-                )
-            )
-            packets.append(
-                build_trace_packet(
-                    sequence_id,
-                    timestamp=event.ts_stop,
-                    track_event=_make_slice_end(track_uuid),
+                    state.get_track_uuid(event.track),
+                    event.name,
+                    event.cat,
+                    event.ts_start,
+                    event.ts_stop,
+                    encoded,
                 )
             )
 
         elif isinstance(event, Instant):
-            proc_uuid = state.get_process_track_uuid(process)
             packets.append(
-                build_trace_packet(
-                    sequence_id,
-                    timestamp=event.ts,
-                    track_event=build_track_event(
-                        event_type=TrackEventType.INSTANT,
-                        track_uuid=proc_uuid,
-                        name=event.name,
-                        debug_annotations=_args_to_debug_annotations(event.args),
-                    ),
-                )
+                _make_instant_packet(sequence_id, state.get_process_track_uuid(process), event.name, event.ts, encoded)
             )
 
         else:
@@ -427,3 +389,35 @@ def convert_trace_events_to_perfetto(
             )
 
     return descriptors, packets
+
+
+def encode_batch_args(events: Sequence[TraceEvent]) -> list[list[bytes]]:
+    """Every event's args as debug annotations, one list per event, encoded
+    once for every set of rows that draws the batch."""
+    return [[] if isinstance(event, Counter) else _args_to_debug_annotations(event.args) for event in events]
+
+
+def convert_trace_events_to_perfetto(
+    events: Sequence[TraceEvent],
+    state: PerfettoTrackState,
+    sequence_id: int,
+    annotations: Sequence[list[bytes]] | None = None,
+) -> tuple[list[bytes], list[bytes]]:
+    """Convert a list of ``TraceEvent`` objects to Perfetto protobuf packets:
+    the shared part folds the batch in, then the process rows draw it.
+
+    *annotations* are ``encode_batch_args(events)``, passed in when the run
+    rows draw the same batch, and encoded here when they are not.
+
+    Returns ``(descriptors, packets)``, two lists of encoded ``TracePacket``
+    bytes ready for ``build_trace``. The first call on a given *state* also
+    emits the root descriptor.
+
+    A span on the ``Processes`` row goes out with its process's own row, at
+    the flush that retires it or at trace close
+    (``emit_retired_process_row``, ``finalize_perfetto_packets``).
+    """
+    _fold_batch(events, state)
+    if annotations is None:
+        annotations = encode_batch_args(events)
+    return _draw_batch_on_process_rows(events, annotations, state, sequence_id)

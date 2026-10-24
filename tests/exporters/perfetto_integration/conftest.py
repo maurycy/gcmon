@@ -20,9 +20,13 @@ from tests.exporters.perfetto_integration.traces import (
     _write_killed_run_trace,
     _write_liveness_only_trace,
     _write_liveness_trace,
+    _write_marks_and_rss_trace,
     _write_nested_mark_trace,
+    _write_overlapping_losses_trace,
+    _write_overlapping_pauses_trace,
     _write_pid_held_four_times_trace,
     _write_reused_pid_trace,
+    _write_three_generations_trace,
     _write_trace,
     _write_trace_no_instant,
     _write_trace_with_rss,
@@ -83,6 +87,30 @@ def liveness_only_trace_processor(tmp_path: Path) -> Iterator[TraceProcessor]:
 def reused_pid_trace_processor(tmp_path: Path) -> Iterator[TraceProcessor]:
     path = _write_reused_pid_trace(tmp_path)
     with open_trace_processor(path) as tp:
+        yield tp
+
+
+@pytest.fixture
+def three_generations_trace_processor(tmp_path: Path) -> Iterator[TraceProcessor]:
+    with open_trace_processor(_write_three_generations_trace(tmp_path)) as tp:
+        yield tp
+
+
+@pytest.fixture
+def overlapping_pauses_trace_processor(tmp_path: Path) -> Iterator[TraceProcessor]:
+    with open_trace_processor(_write_overlapping_pauses_trace(tmp_path)) as tp:
+        yield tp
+
+
+@pytest.fixture
+def marks_and_rss_trace_processor(tmp_path: Path) -> Iterator[TraceProcessor]:
+    with open_trace_processor(_write_marks_and_rss_trace(tmp_path)) as tp:
+        yield tp
+
+
+@pytest.fixture
+def overlapping_losses_trace_processor(tmp_path: Path) -> Iterator[TraceProcessor]:
+    with open_trace_processor(_write_overlapping_losses_trace(tmp_path)) as tp:
         yield tp
 
 

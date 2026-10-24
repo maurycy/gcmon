@@ -2,6 +2,21 @@
 
 ## WIP
 
+### Features
+
+- Every pause in the run sits on its generation's row under `All GC Pauses`
+- A pause under `All GC Pauses` carries `pid` and `pid_epoch`
+- Every loss window in the run sits on one `GC Loss` row at the top level
+- A loss window on the top-level `GC Loss` row carries `pid` and `pid_epoch`
+- Every mark in the run sits on one `Marks` row at the top level
+- A mark on the `Marks` row carries `pid` and `pid_epoch`
+- With `--rss`, each process's RSS sits on a row of its own under `RSS`, in the order of the process rows
+- `--layout process`, or `GCMON_LAYOUT=process`, writes the rows per process alone, without the run rows
+
+### Internal
+
+- Stability, correctness and performance improvements
+
 ## Version 0.9.1 (2026-10-18)
 
 ### Bugfixes

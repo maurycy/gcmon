@@ -66,8 +66,9 @@ from gcmon.model.phases import (
 from gcmon.model.trace_event import (
     Counter,
     Instant,
+    InterpreterTrack,
+    ProcessTrack,
     TraceEvent,
-    Track,
 )
 from tests.exporters.perfetto_helpers import (
     convert_item,
@@ -81,6 +82,7 @@ from tests.helpers import (
     create_mock_loss_item,
     gc_pause_slice_name,
     interpreter_track,
+    pause_track,
     phase_slice_name,
     proc,
     process_track,
@@ -235,7 +237,7 @@ class TestConvertItemToPerfettoPackets:
         descriptors, _ = convert_item(proc(TARGET_PID), item, state, sequence_id=1)
 
         interpreter_uuid = state.get_or_create_interpreter_group_track_uuid(proc(TARGET_PID), 0)
-        pause_uuid = state.get_track_uuid(interpreter_track(TARGET_PID, 0))
+        pause_uuid = state.get_track_uuid(pause_track(TARGET_PID, 0, 0))
         pause_found = False
         for desc_bytes in descriptors:
             packet = TracePacket()
@@ -1027,7 +1029,7 @@ class TestTheCountersInsideAMetricsGroupAreRanked:
 
 
 class TestACounterTakesItsRankFromItsMetric:
-    def _counter(self, track: Track, metric: str) -> list[TrackDescriptor]:
+    def _counter(self, track: ProcessTrack | InterpreterTrack, metric: str) -> list[TrackDescriptor]:
         state = PerfettoTrackState()
         descriptors, _ = convert_trace_events_to_perfetto(
             [Counter(track, metric, f"G0 {metric}", 1_000, 42)],
@@ -1056,7 +1058,7 @@ class TestACounterTakesItsRankFromItsMetric:
 class TestLossTrackDescriptor:
     """Nothing but the slices describes the loss track.
 
-    A ``LossTrack`` is not an ``InterpreterTrack``, so a batch holding loss
+    A ``LossTrack`` is not a ``PauseTrack``, so a batch holding loss
     and no collection describes only the loss row. The descriptor has to come
     off the slices themselves, or they land on a uuid nothing ever named.
     """

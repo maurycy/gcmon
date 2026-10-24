@@ -107,15 +107,16 @@ class TestPerfettoExporter:
         assert exporter._output_path == path
 
     def _verify_event_structure(self, path: Path, num_items: int) -> None:
-        """Every record is a pause and five counters. The process adds two
-        slices of its own: its row and its bar on `Processes`."""
+        """Every record is a pause on each set of rows and five counters. The
+        process adds two slices of its own: its row and its bar on
+        `Processes`."""
         packets = _read_trace_packets(path)
 
         slice_begins = _count_event_type(packets, TrackEventType.SLICE_BEGIN)
         slice_ends = _count_event_type(packets, TrackEventType.SLICE_END)
         counters = _count_event_type(packets, TrackEventType.COUNTER)
 
-        assert (slice_begins, slice_ends, counters) == (num_items + 2, num_items + 2, num_items * 5)
+        assert (slice_begins, slice_ends, counters) == (2 * num_items + 2, 2 * num_items + 2, num_items * 5)
 
     def test_flushes_at_threshold(self, mock_stats_item: GCStatsInfo, perfetto_exporter: ExporterFactory) -> None:
         """The file is there before ``close``, so the batch went out on its own."""
@@ -188,9 +189,9 @@ class TestPerfettoExporter:
         exporter.close()
 
         packets = _read_trace_packets(path)
-        # 1 GC pause slice begin + 1 Processes-track lifetime begin
+        # The GC pause on each set of rows + 1 Processes-track lifetime begin
         # + 1 Lifetime bar on the pid's own row.
-        assert _count_event_type(packets, TrackEventType.SLICE_BEGIN) == 3
+        assert _count_event_type(packets, TrackEventType.SLICE_BEGIN) == 4
 
     def test_different_generation_events(self, perfetto_exporter: ExporterFactory) -> None:
         exporter, path = perfetto_exporter()
@@ -225,9 +226,10 @@ class TestPerfettoExporter:
                 name = track_event.name
                 if name:
                     names.append(name)
-        # Only what the caller sent: the process row is kept rendered by
-        # the "Lifetime" slice, which is not an instant.
-        assert names == [START_EVENT]
+        # Only what the caller sent, once on each set of rows: the process
+        # row is kept rendered by the "Lifetime" slice, which is not an
+        # instant.
+        assert names == [START_EVENT, START_EVENT]
 
     def test_multiple_add_instant_event(self, perfetto_exporter: ExporterFactory) -> None:
         exporter, path = perfetto_exporter()
@@ -244,7 +246,8 @@ class TestPerfettoExporter:
                 event_name = track_event.name
                 if event_name:
                     names.append(event_name)
-        assert names == [START_EVENT, STOP_EVENT]
+        # The process rows' marks, then the run rows'.
+        assert names == [START_EVENT, STOP_EVENT, START_EVENT, STOP_EVENT]
 
     def test_events_have_valid_timestamps(
         self, mock_stats_item: GCStatsInfo, perfetto_exporter: ExporterFactory
@@ -278,7 +281,7 @@ class TestPerfettoExporter:
         exporter.close()
 
         packets = _read_trace_packets(path)
-        assert _count_event_type(packets, TrackEventType.SLICE_BEGIN) == 3
+        assert _count_event_type(packets, TrackEventType.SLICE_BEGIN) == 4
         assert _events_ahead_of_their_descriptor(packets) == []
 
     def test_multiple_processes(self, perfetto_exporter: ExporterFactory) -> None:
@@ -417,10 +420,9 @@ class TestRssRoundTrip:
                 continue
             counter_packets.append((track_event.track_uuid, track_event.counter_value, packet.timestamp))
 
-        assert len(counter_packets) == 1, f"expected 1 counter event, got {len(counter_packets)}"
-        _, value, ts = counter_packets[0]
-        assert value == 4096
-        assert ts == 1_000_000
+        # One sample on each set of rows, each on a counter of its own.
+        assert [(value, ts) for _, value, ts in counter_packets] == [(4096, 1_000_000)] * 2
+        assert len({track_uuid for track_uuid, _, _ in counter_packets}) == 2
 
     def test_rss_uses_separate_counter_track(self, perfetto_exporter: ExporterFactory) -> None:
         """RSS counter uses a different track UUID than GC counters."""

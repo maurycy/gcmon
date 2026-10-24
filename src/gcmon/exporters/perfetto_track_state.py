@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from typing import NamedTuple
 
 from ..model.process import Process
-from ..model.trace_event import InterpreterTrack, Track
+from ..model.trace_event import LossTrack, PauseTrack, ProcessTrack, Track
 
 
 class ProcessSpan(NamedTuple):
@@ -40,6 +40,7 @@ class PerfettoTrackState:
     def __init__(self) -> None:
         self._described_processes: set[Process] = set()
         self._tracks: set[Track] = set()
+        self._interpreter_iids: dict[Process, set[int]] = {}
         self._counter_tracks: dict[tuple[Track, str], int] = {}
         self._counter_group_uuids: dict[Track, int] = {}
         self._interpreter_list_uuids: dict[Process, int] = {}
@@ -60,6 +61,13 @@ class PerfettoTrackState:
         self._process_lifetime_emitted: bool = False
         self._process_rows_drawn: set[Process] = set()
         self._root_descriptor_emitted: bool = False
+        self._run_tracks: set[PauseTrack | LossTrack | ProcessTrack] = set()
+        self._run_track_uuids: dict[PauseTrack | LossTrack | ProcessTrack, int] = {}
+        self._run_counter_tracks: set[ProcessTrack] = set()
+        self._run_counter_track_uuids: dict[ProcessTrack, int] = {}
+        self._run_groups: set[str] = set()
+        self._run_group_uuids: dict[str, int] = {}
+        self._pid_annotations: dict[Process, tuple[bytes, bytes]] = {}
         self._next_uuid: int = 1
         self._next_row_pid: int = 1
 
@@ -79,6 +87,8 @@ class PerfettoTrackState:
 
     def mark_track(self, track: Track) -> None:
         self._tracks.add(track)
+        if isinstance(track, PauseTrack):
+            self._interpreter_iids.setdefault(track.process, set()).add(track.iid)
 
     def get_row_pid(self, process: Process) -> int:
         """The pid *process*'s row is written under, gcmon's own.
@@ -105,11 +115,11 @@ class PerfettoTrackState:
     def get_interpreter_count(self, process: Process) -> int:
         """How many of *process*'s interpreters gcmon read a record from.
 
-        `convert_item_to_trace_format` is the only place an
-        `InterpreterTrack` is built and it takes the iid off a record, so an
-        interpreter that produced nothing reaches no part of the exporter.
+        `convert_item_to_trace_format` is the only place a `PauseTrack` is
+        built and it takes the iid off a record, so an interpreter that
+        produced nothing reaches no part of the exporter.
         """
-        return sum(1 for track in self._tracks if isinstance(track, InterpreterTrack) and track.process == process)
+        return len(self._interpreter_iids.get(process, ()))
 
     def record_sampled(self, process: Process) -> None:
         """Count one more record read for *process*.
@@ -175,9 +185,9 @@ class PerfettoTrackState:
     def get_or_create_interpreter_group_track_uuid(self, process: Process, iid: int) -> int:
         """The uuid of the group holding every row interpreter *iid* owns.
 
-        Keyed on the pair rather than on a `Track`, because an
-        `InterpreterTrack` and a `LossTrack` naming the same interpreter
-        share a group (ADR-0027).
+        Keyed on the pair rather than on a `Track`, because every
+        `PauseTrack`, the `InterpreterTrack` and the `LossTrack` naming the
+        same interpreter share a group (ADR-0027).
         """
         key = (process, iid)
         if key not in self._interpreter_group_uuids:
@@ -290,3 +300,52 @@ class PerfettoTrackState:
 
     def mark_root_descriptor_emitted(self) -> None:
         self._root_descriptor_emitted = True
+
+    def has_run_track(self, track: PauseTrack | LossTrack | ProcessTrack) -> bool:
+        return track in self._run_tracks
+
+    def mark_run_track(self, track: PauseTrack | LossTrack | ProcessTrack) -> None:
+        self._run_tracks.add(track)
+
+    def get_or_create_run_track_uuid(self, track: PauseTrack | LossTrack | ProcessTrack) -> int:
+        """The uuid of the track *track*'s pauses, loss windows or marks draw
+        on among the run rows.
+
+        Keyed apart from the process rows' track, which is keyed on the same
+        *track*: neither set may take the other's descriptor for its own.
+        """
+        if track not in self._run_track_uuids:
+            self._run_track_uuids[track] = self._alloc_uuid()
+        return self._run_track_uuids[track]
+
+    def has_run_counter_track(self, track: ProcessTrack) -> bool:
+        return track in self._run_counter_tracks
+
+    def mark_run_counter_track(self, track: ProcessTrack) -> None:
+        self._run_counter_tracks.add(track)
+
+    def get_or_create_run_counter_track_uuid(self, track: ProcessTrack) -> int:
+        """The uuid of the counter *track*'s samples draw on among the run
+        rows, which is not the track its marks draw on."""
+        if track not in self._run_counter_track_uuids:
+            self._run_counter_track_uuids[track] = self._alloc_uuid()
+        return self._run_counter_track_uuids[track]
+
+    def has_run_group(self, name: str) -> bool:
+        return name in self._run_groups
+
+    def mark_run_group(self, name: str) -> None:
+        self._run_groups.add(name)
+
+    def get_or_create_run_group_uuid(self, name: str) -> int:
+        if name not in self._run_group_uuids:
+            self._run_group_uuids[name] = self._alloc_uuid()
+        return self._run_group_uuids[name]
+
+    def get_pid_annotations(self, process: Process) -> tuple[bytes, bytes] | None:
+        """*process*'s ``pid`` and ``pid_epoch`` annotations as the run rows
+        encoded them, or ``None`` before they first did."""
+        return self._pid_annotations.get(process)
+
+    def set_pid_annotations(self, process: Process, encoded: tuple[bytes, bytes]) -> None:
+        self._pid_annotations[process] = encoded

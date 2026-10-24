@@ -156,6 +156,12 @@ inverting the per-generation names in `model.names`. The converter has the
 generation when it builds the slice, and the track is where an event says
 which row it is drawn on (ADR-0024).
 
+Rejected: choosing the row from the pause's `generation` arg. A sub-phase
+carries none. Writing the arg on every sub-phase costs an annotation per
+sub-phase of every record, where the tracks cost two descriptors per
+interpreter, once. Taking a sub-phase's generation from the pause written
+before it relies on an order nothing checks.
+
 **Each track maps to a row in each set:**
 
 | An event on | Process rows | Run rows |
@@ -164,7 +170,7 @@ which row it is drawn on (ADR-0024).
 | `InterpreterTrack`, a counter | `heap_size`, or the `GC Metrics` group | not drawn |
 | `LossTrack` | `GC Loss` in the interpreter group | a track per `(process, iid)` named `GC Loss` at the root |
 | `ProcessTrack`, an instant | the process row | a track per process named `Marks` at the root |
-| `ProcessTrack`, a counter | `rss` on the process row | a counter per process named for its span, parented to `RSS`, ranked by `get_process_track_rank` |
+| `ProcessTrack`, a counter | `rss` on the process row | a counter per process named `<span> rss`, parented to `RSS`, ranked by `get_process_track_rank` |
 
 A span goes on `Processes`, once, from the shared part.
 
