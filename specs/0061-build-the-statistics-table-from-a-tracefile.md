@@ -12,6 +12,11 @@
   - [ADR-0026](../docs/adr/0026-two-subsystems-over-a-shared-base.md): the
     reader and `report` are analysis-subsystem code, and why `perfetto` on the
     analysis path is not the decision ADR-0001 took.
+  - [ADR-0022](../docs/adr/0022-compress-each-batch-of-packets.md): a zstd
+    trace needs Perfetto v58 or newer, and the suite pins its own trace
+    processor. Amended when this lands: the analysis subsystem holds the pin,
+    the suite takes it from there, and `perfetto` is the `analysis` extra's
+    rather than a development dependency alone.
   - [ADR-0009](../docs/adr/0009-nanoseconds-canonical-time-unit.md):
     nanoseconds inside gcmon.
   - [ADR-0016](../docs/adr/0016-the-ring-is-the-statistics-unit.md): the ring
@@ -77,8 +82,11 @@ the file.
 `TraceProcessor`.** The lower seam takes a trace and yields the rows it holds:
 slices with their category, name, span and arguments, counter samples, and the
 processes those hang under. The upper seam folds those rows into records. This
-spec declares the `analysis` extra that `perfetto` and `protobuf` arrive in,
-and importing either seam without it fails with a message naming the extra.
+spec declares the `analysis` extra that `perfetto` and `protobuf` arrive in.
+Without it, opening a trace fails with a message naming the extra. The import
+itself succeeds, the way `stats.stats` takes `ddsketch`: `cli.main` imports
+every command's module eagerly, so a failing import would stop every command,
+not only this one.
 
 Two seams rather than one because the split is where the optional dependency
 stops. Below the lower seam is `TraceProcessor`, which the `analysis` extra
@@ -100,14 +108,24 @@ exists for. One call per file opens the file once, runs the several queries
 the rows need and closes it, so no caller holds a session and the cost that
 argued for the alternative is the implementation's to pay once.
 
+**The implementation launches the v58.2 trace processor, pinned.** The
+`perfetto` package ships protos generated at v58.2 and a
+`trace_processor_shell` prebuilt at v57.2. That shell skips
+`zstd_compressed_packets`, field 133, and loads a trace gcmon wrote with
+`compression.zstd` as an empty one, with no error (ADR-0022). The pin the
+suite uses, `tests.perfetto_prebuilt`, moves into `analysis` beside the
+implementation, and the suite imports it from there. The download, the SHA-256
+check and the cache stay the package's own `get_perfetto_prebuilt`.
+
 Rejected for now, and worth naming because it is close: a hand-rolled decoder
 mirroring the hand-rolled encoder, sharing the field numbers in
 `perfetto_proto` and needing no dependency at all. It reads only traces gcmon
 wrote, interning was declined in spec 0056 so there is no incremental state to
-rebuild, and `zlib` undoes ADR-0022's batches. Against it: `perfetto` works
-today, and the decoder is a second place that has to track the wire format.
-The protocol above is what makes the choice reversible, and the round-trip
-test in section 5 is what would validate the replacement.
+rebuild, and `compression.zstd` and `zlib` undo ADR-0022's two batch forms.
+Against it: `perfetto` works today once its shell is pinned, and the decoder
+is a second place that has to track the wire format. The protocol above is
+what makes the choice reversible, and the round-trip test in section 5 is what
+would validate the replacement.
 
 **The upper seam returns `dict[int, list[TItem]]`,** the type `read_jsonl`
 already returns. Folding a capture's records back into a `StreamingStats`
@@ -136,11 +154,10 @@ They reach it as `flat_key` and `display_value` pairs and leave it as a
 mapping. A consumer wanting one string joins them; one wanting a value does
 not parse it back out.
 
-**Two joins the reader has to make.** The cumulative `duration` that
-`observe_cumulative` needs is a sample on the `G{gen} duration` counter track,
-not an argument on the pause slice, and the sub-phase slices are separate
-slices inside the pause they belong to. Both are joined by timestamp on one
-track.
+**One join the reader has to make.** The sub-phase slices are separate slices
+inside the pause they belong to, joined by timestamp on one track. The
+cumulative `duration` that `observe_cumulative` needs is an argument on the
+pause slice, beside the counts.
 
 **The command is `report`, and its view flag is `--view`.** `--stats` stays
 the flag on `monitor` and `run`, where a table is one thing a run can also do;
@@ -175,10 +192,12 @@ for metadata that cannot be known: absent rather than guessed.
      note. This is the guard the whole spec rests on.
   3. A trace from a run that lost records reports the same `Cov` and `F` as
      the session did.
-  4. Importing either seam without the extra fails with a message naming the
-     extra, and every other command still runs.
+  4. Opening a trace without the extra fails with a message naming the extra,
+     and every other command still runs.
   5. The lower seam reads back every slice, counter sample and process the
      encoder wrote, with a slice's arguments keyed rather than concatenated.
+  6. A trace written with `compression.zstd` reads back in full, not as an
+     empty trace.
 
 ## 6. Out of scope
 
@@ -189,8 +208,8 @@ for metadata that cannot be known: absent rather than guessed.
   gcmon's own output, and nothing checks a foreign trace for the tracks it
   expects.
 - **Whole-file compressed input.** ADR-0022 compresses each batch inside the
-  file, which the trace processor already undoes. A `.pftrace.zst` wrapper is
-  a different thing and is not read.
+  file, which the pinned trace processor undoes. A `.pftrace.zst` wrapper is a
+  different thing and is not read.
 - **Reading JSONL through `report`.** `combine` already turns captures into a
   trace, and a second path into the same table earns nothing.
 - **A hand-rolled decoder**, for the reasons in section 4. The protocol is
