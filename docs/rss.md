@@ -42,8 +42,12 @@ unaffected.
   by `--rate`. If `--rss-interval` is shorter than `--rate`, a warning is
   logged and RSS is sampled at the poll rate. Samples are evenly spaced,
   because the poll loop holds its schedule.
-- Only PIDs that returned a successful GC poll status are sampled; no stale
-  data for dead processes.
+- gcmon samples RSS at the start of each tick, before it polls, for the PIDs
+  that returned a successful GC poll status on the previous tick. A process
+  that died since gives no sample, and gcmon first samples a process it has
+  just found on the tick after.
+- Every `GC Pause` slice carries the process's latest sample as an `rss` arg,
+  in bytes. A pause read before the process's first sample carries none.
 - In both layouts the counter belongs to the process: it sits on the process
   track, outside the `GC Metrics` group, named `rss`, in bytes.
 - A `full` trace, the default, draws it a second time under the top-level

@@ -24,7 +24,10 @@ Both layouts carry these:
 
 - **`GC Pauses` track**: one row per interpreter, under that interpreter's
   group, holding one **`GC Pause(gen)` slice** per GC run gcmon read, carrying
-  that run's counters as args.
+  that run's counters as args. Under `--rss` a pause also carries `rss`, the
+  process's latest RSS sample in bytes when gcmon read the pause. With
+  `--rss-interval` longer than `--rate`, that sample can be up to one interval
+  old.
 - **Sub-phase slices** nested inside a pause, each named for its generation
   the way the pause is: `GC Mark Alive`, `GC Fill Increment`,
   `GC Deduce Unreachable`, `GC Handle Weakrefs Callbacks`,
@@ -333,7 +336,9 @@ The remaining columns are the fields a `GC Pause` slice carries, named as in a
 does not carry is an empty cell, so a stock build's table has the same
 columns. `collections`, `collected`, `uncollectable`, `candidates` and
 `duration` are written as the record holds them: running totals per process,
-interpreter and generation.
+interpreter and generation. The last column, `rss`, is the pause's `rss` arg,
+empty for a pause that carries none and for every pause of a trace recorded
+without `--rss`.
 
 ### The `.meta.json` sidecar
 
