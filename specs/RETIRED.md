@@ -42,6 +42,7 @@ rows.
 | 0071 | **Landed** 2026-09-20 (enhancement) | M | Two processes whose lifetimes crossed could not both keep their width on the `Processes` row, and `dur` there was not a duration gcmon observed. Every process draws its span on a track of its own now, merged into one row by the shared name, and a span that overlaps another sits in a lane of it. [ADR-0011](../docs/adr/0011-process-lifetime-and-ordering.md) |
 | 0074 | **Landed** 2026-10-18 (reporting) | XS | Without the `[stats]` extra a row's percentiles covered its latest 1024 values while `Count`, `Sum` and `Avg` covered all of them, and nothing said so. A footer note says so now. [ADR-0016](../docs/adr/0016-the-ring-is-the-statistics-unit.md) |
 | 0076 | **Landed** 2026-10-26 (enhancement) | M | Getting a pyperformance trace's records out as a table took a pinned trace processor, SQL against the track layout and a benchmark-name join gcmon did not ship. `gcmon extract` writes them as CSV now. [ADR-0030](../docs/adr/0030-name-a-workers-benchmark-by-overlap-in-time.md) |
+| 0077 | **Landed** 2026-10-26 (enhancement) | S | A pause did not say its process's RSS, and a sample was stamped up to a poll phase before its read. Pauses carry `rss` now, `gcmon extract` writes it, and sampling precedes the poll. [ADR-0013](../docs/adr/0013-rss-sampling.md) |
 
 ## Gaps
 
