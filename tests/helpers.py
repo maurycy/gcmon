@@ -50,6 +50,8 @@ from gcmon.model.phases import (
     NewIncrementalFields,
     OldWorkField,
     Phase,
+    ReasonFields,
+    ThresholdFields,
 )
 from gcmon.model.process import Process
 from gcmon.model.protocol import TGCStatsInfo, TInstantMsg, TLossMsg, is_gc_stats
@@ -465,6 +467,11 @@ SUB_PHASES: Final[dict[str, int]] = {
     NewIncrementalFields.AGING_SPACES: 4,
     NewIncrementalFields.AGING_NEXT: 2,
     HeapSizeStopField.HEAP_SIZE_STOP: 41943040,
+    ReasonFields.REASON: 0,
+    ReasonFields.GC_TYPE: 2,
+    ThresholdFields.THRESHOLD0: 2000,
+    ThresholdFields.THRESHOLD1: 10,
+    ThresholdFields.THRESHOLD2: 20,
 }
 """Every sub-phase a record can carry, in collector order, inside the
 pause `create_mock_stats_item` draws by default."""

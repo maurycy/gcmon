@@ -39,7 +39,9 @@ from gcmon.model.phases import (
     OldWorkField,
     PauseField,
     PausePhase,
+    ReasonFields,
     SubPhase,
+    ThresholdFields,
 )
 from gcmon.model.protocol import (
     is_gc_stats,
@@ -96,6 +98,8 @@ class TestChecks:
         (IncrementSizeField, {IncrementSizeField.INCREMENT_SIZE: 500}),
         (OldWorkField, {OldWorkField.OLD_WORK: 500}),
         (NewIncrementalFields, {NewIncrementalFields.AUTO_COLLECT: 1}),
+        (ReasonFields, {ReasonFields.REASON: 0}),
+        (ThresholdFields, {ThresholdFields.THRESHOLD0: 2000}),
         (FillIncrementSubPhase, {FillIncrementSubPhase.TS_FILL_INCREMENT_START: 100}),
         (MarkAliveSubPhase, {MarkAliveSubPhase.ALIVE_SIZE: 300}),
         (DeduceUnreachableSubPhase, {DeduceUnreachableSubPhase.TS_DEDUCE_UNREACHABLE_START: 100}),
